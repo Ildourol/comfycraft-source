@@ -49,6 +49,7 @@
 #include "MapManager.h"
 #include "ScriptMgr.h"
 #include "LuaScene.h"
+#include "DialogDest.h"
 #include "ScriptObjects.h"
 #include "CreatureAIRegistry.h"
 #include "Policies/SingletonImp.h"
@@ -2300,6 +2301,8 @@ void LoadPlayerEggLoot();
 
     sLog.outString("Loading dialog scenes and spots...");
     LuaScene::LoadAll();                                    // dialog_lua + dialog_spot
+    sLog.outString("Loading teleport destinations...");
+    DialogDest::LoadAll();                                  // dialog_dest_list + dialog_dest
     sObjectMgr.LoadGossipMenus();
     sLog.outString("Loading vendor templates...");
     sLog.outString("Loading Vendor Costs...");

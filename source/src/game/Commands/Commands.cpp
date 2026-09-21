@@ -19,6 +19,7 @@
 #include "CreatureGroups.h"
 #include "DBCStores.h"
 #include "LuaScene.h"
+#include "DialogDest.h"
 #include "DBCStructure.h"
 #include "Database/DatabaseEnv.h"
 #include "Database/DatabaseImpl.h"
@@ -14573,6 +14574,247 @@ bool ChatHandler::HandleSpotCommand(char* args)
 }
 
 /*
+ * .dest                       every list, and how many places are in each
+ * .dest <list>                what is in one list
+ * .dest <list> <name>         remember where you are standing, in that list
+ * .dest del <list> <name>     forget it
+ *
+ * The capture end of the dialog editor's "teleports to one of" action, and the
+ * same bargain `.spot` makes one command along: there is no way to pick a point
+ * in the world from a browser, so the point is picked HERE, by standing on it.
+ *
+ * FIRST WORD IS THE LIST, THE REST IS THE NAME. The line has to split
+ * somewhere and this is the split that needs no punctuation, at the price of a
+ * list name being one word. Hyphens and underscores are words.
+ *
+ * NAMING A LIST IS HOW YOU CREATE ONE. A form to declare a list before you are
+ * allowed to stand in it would be a round trip for nothing, and the same
+ * "just type it" that makes `.spot` worth using. The cost is that a typo makes
+ * a new list, which is what the bare `.dest` is for.
+ *
+ * THERE IS NO WAY TO DELETE A LIST FROM HERE, only a place in one. A
+ * `gossip_scripts` row holds the LIST ID -- unlike a spot, whose coordinates
+ * get copied into the script -- so deleting a list is deleting the meaning of
+ * every button that names it, silently, from a chat command typed in the field.
+ * An empty list is harmless by comparison: one line in the log when somebody
+ * presses the button, and it can be refilled from where you are standing.
+ *
+ * NOT `.spot`, AND THE REASON IS IN THE HEADER OF sql/custom/105. The short
+ * version: a spot is where an NPC walks, same map, owned by the NPC you have
+ * selected. None of those three is true of a place a player is sent to, and the
+ * last one is impossible to satisfy from the other side of a continent.
+ *
+ * In game only. There is nowhere for a console session to be standing.
+ */
+bool ChatHandler::HandleDestCommand(char* args)
+{
+    if (!m_session)
+    {
+        SendSysMessage("A destination is where you are standing, so this one needs a character.");
+        SetSentErrorMessage(true);
+        return false;
+    }
+
+    bool const forget = !!ExtractLiteralArg(&args, "del");
+
+    char* rest = args ? args : (char*)"";
+    while (*rest == ' ') ++rest;
+    std::string line = rest;
+    while (!line.empty() && line.back() == ' ') line.pop_back();
+
+    auto data = DialogDest::Data();
+
+    // Bare `.dest`: every list, so a typo has somewhere to show up. Also the
+    // only place the id is printed, which is what a hand-written gossip_scripts
+    // row needs.
+    if (line.empty() && !forget)
+    {
+        if (data->lists.empty())
+        {
+            SendSysMessage("No destination lists yet. Stand somewhere and type: .dest <list> <name>");
+            return true;
+        }
+        SendSysMessage("Destination lists:");
+        for (auto const& l : data->lists)
+        {
+            PSendSysMessage("  %s (%u) -- %u place%s", l.second.name.c_str(), l.first,
+                (uint32)l.second.points.size(), l.second.points.size() == 1 ? "" : "s");
+        }
+        // EVERY PATH THAT PRINTS A LIST SAYS HOW TO CHANGE ONE. A listing is
+        // where somebody goes to find out what is there, which is the same
+        // moment they want to add or drop one, and the usage text above is
+        // reached only by getting the line wrong.
+        SendSysMessage("Add: .dest <list> <name>, where you stand.");
+        SendSysMessage("Remove: .dest del <list> <name>");
+        return true;
+    }
+
+    // Split off the first word. Everything after it is the name, spaces and all,
+    // so "the old well" is one name.
+    std::string listName = line;
+    std::string name;
+    size_t const cut = line.find(' ');
+    if (cut != std::string::npos)
+    {
+        listName = line.substr(0, cut);
+        name = line.substr(cut + 1);
+        while (!name.empty() && name.front() == ' ') name.erase(name.begin());
+    }
+
+    if (listName.empty())
+    {
+        SendSysMessage("Usage: .dest <list> <name>   or   .dest del <list> <name>");
+        SendSysMessage("Stand where the player should land, then name it. The list is made by naming it.");
+        SendSysMessage("Or .dest on its own for every list, .dest <list> for what is in one.");
+        SetSentErrorMessage(true);
+        return false;
+    }
+
+    // Which list, by name. Looked up in the LOADED block rather than the table:
+    // every writer below reloads, so the two cannot drift, and this way the
+    // listing and the lookup agree about what exists.
+    uint32 listId = 0;
+    DialogDestList const* found = nullptr;
+    for (auto const& l : data->lists)
+    {
+        if (l.second.name == listName)
+        {
+            listId = l.first;
+            found = &l.second;
+            break;
+        }
+    }
+
+    // One word and no name: show what is in it.
+    if (name.empty() && !forget)
+    {
+        if (!found)
+        {
+            PSendSysMessage("There is no list \"%s\". Stand somewhere and type: .dest %s <name>",
+                listName.c_str(), listName.c_str());
+            SetSentErrorMessage(true);
+            return false;
+        }
+        if (found->points.empty())
+        {
+            PSendSysMessage("\"%s\" (%u) is empty. A button using it does nothing.", listName.c_str(), listId);
+            PSendSysMessage("Add: .dest %s <name>, where you stand.", listName.c_str());
+            return true;
+        }
+        PSendSysMessage("\"%s\" (%u):", listName.c_str(), listId);
+        for (auto const& p : found->points)
+            PSendSysMessage("  %s -- map %u, %.0f %.0f %.0f", p.name.c_str(), p.map, p.x, p.y, p.z);
+        PSendSysMessage("Add: .dest %s <name>, where you stand.", listName.c_str());
+        PSendSysMessage("Remove: .dest del %s <name>", listName.c_str());
+        return true;
+    }
+
+    if (name.empty())
+    {
+        SendSysMessage("Usage: .dest del <list> <name>. Name the place, not just the list.");
+        SetSentErrorMessage(true);
+        return false;
+    }
+
+    // REFUSED, NOT CUT, the same as a spot name: trimming two long names to the
+    // same 48 characters would quietly make the second overwrite the first
+    // through the UNIQUE key below.
+    if (listName.size() > 48 || name.size() > 48)
+    {
+        SendSysMessage("A list name and a place name are at most 48 characters each. Pick a shorter one.");
+        SetSentErrorMessage(true);
+        return false;
+    }
+
+    std::string safeList = listName;
+    std::string safeName = name;
+    WorldDatabase.escape_string(safeList);
+    WorldDatabase.escape_string(safeName);
+
+    if (forget)
+    {
+        if (!listId)
+        {
+            PSendSysMessage("There is no list \"%s\".", listName.c_str());
+            SetSentErrorMessage(true);
+            return false;
+        }
+        WorldDatabase.DirectPExecute("DELETE FROM `dialog_dest` WHERE `list` = %u AND `name` = '%s'",
+            listId, safeName.c_str());
+        DialogDest::LoadAll();
+        PSendSysMessage("Forgot \"%s\" in \"%s\".", name.c_str(), listName.c_str());
+        return true;
+    }
+
+    Player* pl = m_session->GetPlayer();
+    std::string author = m_session->GetUsername();
+    WorldDatabase.escape_string(author);
+
+    /*
+     * DIRECT, NOT PExecute, AND THAT IS THE WHOLE REASON THIS READS BACK.
+     *
+     * WorldDatabase runs its queue on another thread, so an async INSERT
+     * followed by the SELECT below is a race the SELECT usually loses -- it
+     * would find no list, and the place would be written under id 0 and
+     * dropped by the loader as an orphan. Everything here is one statement
+     * ahead of the next, so all of it is Direct.
+     */
+    if (!listId)
+    {
+        WorldDatabase.DirectPExecute(
+            "INSERT INTO `dialog_dest_list` (`name`, `author`) VALUES ('%s', '%s')",
+            safeList.c_str(), author.c_str());
+
+        if (std::unique_ptr<QueryResult> res{ WorldDatabase.PQuery(
+                "SELECT `id` FROM `dialog_dest_list` WHERE `name` = '%s'", safeList.c_str()) })
+            listId = res->Fetch()[0].GetUInt32();
+
+        if (!listId)
+        {
+            PSendSysMessage("Could not make a list called \"%s\".", listName.c_str());
+            SetSentErrorMessage(true);
+            return false;
+        }
+    }
+
+    /*
+     * REPLACE, not INSERT: naming a place that already exists is how you MOVE
+     * it, and standing somewhere better and typing the same name again is the
+     * obvious way to want to. `(list, name)` is the unique key, so the old row
+     * goes.
+     *
+     * UNLIKE A SPOT, MOVING ONE MOVES EVERY BUTTON THAT USES IT, immediately.
+     * A script holds the list, not the place, so there is nothing written down
+     * anywhere else that could go on pointing at the old ground.
+     */
+    WorldDatabase.DirectPExecute(
+        "REPLACE INTO `dialog_dest` (`list`, `name`, `map`, `x`, `y`, `z`, `o`, `author`) "
+        "VALUES (%u, '%s', %u, %f, %f, %f, %f, '%s')",
+        listId, safeName.c_str(), pl->GetMapId(),
+        pl->GetPositionX(), pl->GetPositionY(), pl->GetPositionZ(), pl->GetOrientation(),
+        author.c_str());
+
+    // AND RELOADED HERE, which `.spot` does not need to do. A spot's numbers are
+    // copied into a script by the website, so the running server never reads the
+    // table again; a destination is read when the button is pressed, so without
+    // this you would capture five places and the button would still teleport to
+    // none of them. Cheap: two small tables, on the world thread, by hand.
+    DialogDest::LoadAll();
+
+    uint32 count = 0;
+    {
+        auto now = DialogDest::Data();
+        auto it = now->lists.find(listId);
+        if (it != now->lists.end())
+            count = (uint32)it->second.points.size();
+    }
+
+    PSendSysMessage("\"%s\" is here, on map %u. \"%s\" (%u) now has %u place%s.",
+        name.c_str(), pl->GetMapId(), listName.c_str(), listId, count, count == 1 ? "" : "s");
+    return true;
+}
+
+/*
  * .spotfrom -- where you are standing, as yards ahead of and to the right of the
  * selected NPC's post. Added 2026-09-16.
  *
@@ -19293,6 +19535,24 @@ bool ChatHandler::HandleReloadDialogScenesCommand(char* /*args*/)
     sLog.outInfo("Re-Loading `dialog_lua` and `dialog_spot`!");
     LuaScene::LoadAll();
     SendSysMessage("Dialog scenes and spots reloaded.");
+    return true;
+}
+
+/*
+ * reload dialog_dests -- dialog_dest_list and dialog_dest, together.
+ *
+ * `.dest` reloads by itself, so this is for the other two ways the tables
+ * change: a hand-written SQL file, and an import from another box.
+ *
+ * NOTHING ELSE HAS TO BE RELOADED WITH IT. A gossip script holds a list id and
+ * resolves it every time the button is pressed, so scripts already in memory
+ * pick up a changed list with no help at all.
+ */
+bool ChatHandler::HandleReloadDialogDestsCommand(char* /*args*/)
+{
+    sLog.outInfo("Re-Loading `dialog_dest_list` and `dialog_dest`!");
+    DialogDest::LoadAll();
+    SendSysMessage("Teleport destinations reloaded.");
     return true;
 }
 

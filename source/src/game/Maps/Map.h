@@ -1074,6 +1074,7 @@ class Map : public GridRefManager<NGridType>
         bool ScriptCommand_LoadCreatureSpawn(ScriptInfo const& script, WorldObject* source, WorldObject* target);
         bool ScriptCommand_StartScriptOnZone(ScriptInfo const& script, WorldObject* source, WorldObject* target);
         bool ScriptCommand_TakeMoney(ScriptInfo const& script, WorldObject* source, WorldObject* target);
+        bool ScriptCommand_TeleportRandom(ScriptInfo const& script, WorldObject* source, WorldObject* target);
 
         // Add any new script command functions to the array.
         const ScriptCommandFunction m_ScriptCommands[SCRIPT_COMMAND_MAX] =
@@ -1178,6 +1179,7 @@ class Map : public GridRefManager<NGridType>
             &Map::ScriptCommand_SetBusy,                // 97
             &Map::ScriptCommand_WalkFromPost,           // 98
             &Map::ScriptCommand_TakeMoney,              // 99
+            &Map::ScriptCommand_TeleportRandom,         // 100
         };
 
     public:

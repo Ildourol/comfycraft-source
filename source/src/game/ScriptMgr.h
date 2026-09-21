@@ -395,6 +395,8 @@ enum eScriptCommand
     SCRIPT_COMMAND_TAKE_MONEY               = 99,           // source = Player (from provided source or target)
                                                             // datalong = copper amount
                                                             // Upstream numbers this 93, which is RECRUIT_BOT here.
+    SCRIPT_COMMAND_TELEPORT_RANDOM          = 100,          // source = Player (from provided source or target)
+                                                            // datalong = dialog_dest_list.id
 
     SCRIPT_COMMAND_MAX,
 
@@ -1207,6 +1209,11 @@ struct ScriptInfo
         {
             uint32 amount;                                  // datalong
         } takeMoney;
+
+        struct                                              // SCRIPT_COMMAND_TELEPORT_RANDOM (100)
+        {
+            uint32 listId;                                  // datalong: a row in dialog_dest_list
+        } teleportRandom;
 
         struct
         {

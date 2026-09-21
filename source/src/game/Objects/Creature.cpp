@@ -1627,8 +1627,10 @@ void Creature::SelectLevel(const CreatureInfo *cinfo, float percentHealth, float
     // creature respawned like that is alive at 0 HP: the client draws a corpse
     // that wanders, and Unit::Kill refuses a victim already at 0, so it can
     // never die and never respawn again. Rate.Creature.Normal.HP = 0.75 did
-    // this to 1,744 spawns.
-    health = std::max<uint32>(health, 1);
+    // this to 1,744 spawns. Only rescue templates that meant to have health;
+    // a template that really says 0 keeps it.
+    if (!health && maxhealth)
+        health = 1;
 
     if (sWorld.IsAprilFools())
     {

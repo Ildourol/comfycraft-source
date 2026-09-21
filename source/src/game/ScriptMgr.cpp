@@ -812,6 +812,20 @@ void ScriptMgr::LoadScripts(ScriptMapMap& scripts, const char* tablename)
                 }
                 break;
             }
+            case SCRIPT_COMMAND_TELEPORT_RANDOM:
+            {
+                // Whether the LIST exists is checked at run time, not here, for
+                // the same reason RUN_LUA checks its scene there: dialog_dest is
+                // loaded by its own loader and the order the two run in is not
+                // something this validation should depend on. Zero is the only
+                // value that cannot be a list.
+                if (!tmp.teleportRandom.listId)
+                {
+                    sLog.outErrorDb("Table `%s` has datalong = 0 in SCRIPT_COMMAND_TELEPORT_RANDOM for script id %u, which is not a dialog_dest_list row.", tablename, tmp.id);
+                    continue;
+                }
+                break;
+            }
             case SCRIPT_COMMAND_SET_BUSY:
             {
                 // Zero would clear the flags and put them back in the same

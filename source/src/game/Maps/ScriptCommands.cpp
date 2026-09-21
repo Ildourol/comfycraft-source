@@ -18,6 +18,7 @@
 
 #include "Map.h"
 #include "LuaScene.h"
+#include "DialogDest.h"
 #include "BotNpc.h"
 #include "ScriptMgr.h"
 #include "GridSearchers.h"
@@ -1495,6 +1496,78 @@ bool Map::ScriptCommand_WalkFromPost(const ScriptInfo& script, WorldObject* sour
     }
 
     pSource->MonsterMoveWithSpeed(x, y, z, o, 0.0f, script.walkFromPost.movementOptions);
+    return false;
+}
+
+/*
+ * SCRIPT_COMMAND_TELEPORT_RANDOM (100)
+ *
+ * Sends the player to one of a named list of places, picked when the button is
+ * pressed. `datalong` is a dialog_dest_list row.
+ *
+ * THE LIST, NOT THE PLACE, AND THAT IS THE WHOLE REASON THIS COMMAND EXISTS.
+ * Everywhere else in this editor a script stores coordinates -- MOVE_TO does,
+ * TELEPORT_TO does -- so renaming or deleting a spot cannot reach back into a
+ * script already written. A random pick cannot work that way: the choice has to
+ * happen at press time, so the row holds a reference and DialogDest resolves it.
+ * The cost is the one that rule was avoiding, and it is paid knowingly: delete a
+ * list and every button naming it does nothing but write a log line.
+ *
+ * THE PLAYER, FROM EITHER SIDE. A gossip script arrives source = NPC,
+ * target = player, so taking the source the way TELEPORT_TO (6) does would
+ * teleport the NPC -- which is why a hand-written teleport needs data_flags = 1
+ * to swap them first. This is the CREATE_ITEM shape instead: ask both, take
+ * whichever is a Player. Nothing to remember, and it behaves the same started
+ * from a generic script with the player on the other side.
+ *
+ * A BOT NPC IS A Player AND MUST NOT BE ONE HERE. ToPlayer would happily hand
+ * one back, and a button on a bot NPC's own menu would then teleport the NPC
+ * itself away from its post rather than the person who pressed it -- silently,
+ * because from the core's side that is a perfectly good teleport.
+ */
+bool Map::ScriptCommand_TeleportRandom(ScriptInfo const& script, WorldObject* source, WorldObject* target)
+{
+    Player* pPlayer = ToPlayer(target);
+    if (!pPlayer || pPlayer->IsBotNpc())
+        pPlayer = ToPlayer(source);
+
+    if (!pPlayer || pPlayer->IsBotNpc())
+    {
+        sLog.outError("SCRIPT_COMMAND_TELEPORT_RANDOM (script id %u) call for a nullptr or non-player source and target (TypeIdSource: %u)(TypeIdTarget: %u), skipping.", script.id, source ? source->GetTypeId() : 0, target ? target->GetTypeId() : 0);
+        return ShouldAbortScript(script);
+    }
+
+    auto data = DialogDest::Data();
+    auto it = data->lists.find(script.teleportRandom.listId);
+    if (it == data->lists.end())
+    {
+        sLog.outError("SCRIPT_COMMAND_TELEPORT_RANDOM (script id %u) wants dialog_dest_list %u, which is not loaded.", script.id, script.teleportRandom.listId);
+        return ShouldAbortScript(script);
+    }
+
+    // An EMPTY LIST is the ordinary state of one just named in game, so this is
+    // the failure a button hits most often. It says which list by name, because
+    // the number is not what the person who typed `.dest` is holding.
+    if (it->second.points.empty())
+    {
+        sLog.outError("SCRIPT_COMMAND_TELEPORT_RANDOM (script id %u): destination list \"%s\" (%u) is empty, skipping.", script.id, it->second.name.c_str(), script.teleportRandom.listId);
+        return ShouldAbortScript(script);
+    }
+
+    DialogDestPoint const& p = it->second.points[urand(0, (uint32)it->second.points.size() - 1)];
+
+    /*
+     * UNIFORM, AND IT MAY PICK WHERE THEY ALREADY ARE. Pressing twice and not
+     * moving is what a fair coin does; the alternatives all need either state
+     * or a rule about how near is too near, and neither is something a button
+     * labelled "send me somewhere" has promised.
+     */
+    if (!pPlayer->TeleportTo(p.map, p.x, p.y, p.z, p.o))
+    {
+        sLog.outError("SCRIPT_COMMAND_TELEPORT_RANDOM (script id %u): %s could not be sent to \"%s\" on map %u.", script.id, pPlayer->GetName(), p.name.c_str(), p.map);
+        return ShouldAbortScript(script);
+    }
+
     return false;
 }
 

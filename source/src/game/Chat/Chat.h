@@ -210,6 +210,7 @@ class ChatHandler
         bool HandleAhBotCommand(char* args);
         bool HandleEffectCommand(char* args);
         bool HandleEmoteCommand(char* args);
+        bool HandleDestCommand(char* args);
         bool HandleSpotCommand(char* args);
         bool HandleSpotFromCommand(char* args);
         bool HandleSceneCommand(char* args);
@@ -349,6 +350,7 @@ class ChatHandler
         bool HandleReloadModuleStringCommand(char* args);
         bool HandleReloadBroadcastTextCommand(char* args);
         bool HandleReloadDialogScenesCommand(char* args);
+        bool HandleReloadDialogDestsCommand(char* args);
         bool HandleReloadNpcGossipCommand(char* args);
         bool HandleReloadNpcTextCommand(char* args);
         bool HandleReloadNpcTrainerCommand(char* args);
