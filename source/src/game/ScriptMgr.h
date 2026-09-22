@@ -397,6 +397,20 @@ enum eScriptCommand
                                                             // Upstream numbers this 93, which is RECRUIT_BOT here.
     SCRIPT_COMMAND_TELEPORT_RANDOM          = 100,          // source = Player (from provided source or target)
                                                             // datalong = dialog_dest_list.id
+    /*
+     * OURS. sql/custom/106 and 107.
+     *
+     * A durable per-character fact, so what an NPC does can outlive the script
+     * that did it: bow to the priestess and she remembers, and the quest she
+     * was holding back appears.
+     *
+     * READ BY CONDITION_STORY_FLAG, which is how it reaches the two surfaces
+     * that gate on `conditions` already -- a gossip button and a quest.
+     * Nothing else in the core looks at the flag itself.
+     */
+    SCRIPT_COMMAND_SET_STORY_FLAG           = 101,          // source = Player (from provided source or target)
+                                                            // datalong = story_flag.id, 300000-300999
+                                                            // datalong2 = 0 set, 1 forget
 
     SCRIPT_COMMAND_MAX,
 
@@ -1214,6 +1228,12 @@ struct ScriptInfo
         {
             uint32 listId;                                  // datalong: a row in dialog_dest_list
         } teleportRandom;
+
+        struct                                              // SCRIPT_COMMAND_SET_STORY_FLAG (101)
+        {
+            uint32 flagId;                                  // datalong: story_flag.id, 300000-300999
+            uint32 forget;                                  // datalong2: 0 set, 1 forget
+        } storyFlag;
 
         struct
         {

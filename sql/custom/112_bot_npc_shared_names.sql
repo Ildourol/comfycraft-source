@@ -1,0 +1,22 @@
+-- ============================================================================
+--  TWO DESIGNS MAY SHARE A NAME  (tw_char)
+-- ============================================================================
+--  Applied with:
+--
+--    Get-Content sql\custom\112_bot_npc_shared_names.sql | `
+--      DB\bin\mariadb.exe -h 127.0.0.1 -P 3307 -u root tw_char
+--
+--  Order does not matter against the binary: nothing in the core relies on the
+--  key, it only ever refused an INSERT.
+--
+--  The core and the website were changed on 2026-09-21 to let two designs wear
+--  one name (the same NPC at both ends of a teleport, saying different things),
+--  addressed as `.npcbot place #<id>` once the name is ambiguous. This key was
+--  the one thing left refusing it: the website's save hit ER_DUP_ENTRY on the
+--  second design of a name.
+--
+--  Kept as a plain index, since `.npcbot` and the website both look designs up
+--  by name.
+-- ============================================================================
+
+ALTER TABLE `bot_npc` DROP INDEX `name`, ADD INDEX `name` (`name`);

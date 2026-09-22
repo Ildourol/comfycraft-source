@@ -43,6 +43,7 @@
 
 #include <openssl/md5.h>
 #include <ctime>
+#include <atomic>
 
 #include <ace/OS_NS_unistd.h>
 #include <ace/OS_NS_fcntl.h>
@@ -195,6 +196,32 @@ AccountTypes AuthSocket::GetSecurityOn(uint32 realmId) const
         return _accountDefaultSecurityLevel;
 
     return it->second;
+}
+
+// True when closed beta is on and this account is not on its list. The caller
+// has already let staff through.
+//
+// A query against a missing table asserts in HandleMySQLError and takes realmd
+// down, so the tables are probed first. The probe is repeated until they are
+// found and then never again, which means sql/custom/111 can be applied to a
+// running realmd and start working at the next login.
+bool AuthSocket::IsClosedBetaRefused(uint32 accountId)
+{
+    static std::atomic<bool> tablesPresent(false);
+    if (!tablesPresent)
+    {
+        std::unique_ptr<QueryResult> probe(LoginDatabase.Query(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() "
+            "AND table_name IN ('closed_beta', 'closed_beta_account')"));
+        if (!probe || (*probe)[0].GetUInt32() != 2)
+            return false;
+        tablesPresent = true;
+    }
+
+    std::unique_ptr<QueryResult> result(LoginDatabase.PQuery(
+        "SELECT 1 FROM closed_beta WHERE id = 1 AND enabled = 1 "
+        "AND NOT EXISTS (SELECT 1 FROM closed_beta_account WHERE account_id = %u)", accountId));
+    return !!result;
 }
 
 /// Accept the connection and set the s random value for SRP6
@@ -483,6 +510,18 @@ bool AuthSocket::_HandleLogonChallenge()
             {
                 BASIC_LOG("[AuthChallenge] Account '%s' ('%s) and local IP %u 'email address requires email verification - rejecting login", _login.c_str(), get_remote_address().c_str(), ch->ip);
                 pkt << (uint8)WOW_FAIL_PARENTCONTROL;
+                send((char const*)pkt.contents(), pkt.size());
+                return true;
+            }
+
+            // Closed beta (sql/custom/111, edited at /admin/beta): while it is
+            // on, only listed accounts and staff (rank >= 1) get in. Read on
+            // every challenge so the switch needs no restart. The client has no
+            // string of its own for this, so it is told "try again later".
+            if (fields[11].GetUInt32() == 0 && IsClosedBetaRefused(fields[1].GetUInt32()))
+            {
+                BASIC_LOG("[AuthChallenge] Account '%s' using IP '%s' is not on the closed beta list - rejecting login", _login.c_str(), get_remote_address().c_str());
+                pkt << (uint8)WOW_FAIL_DB_BUSY;
                 send((char const*)pkt.contents(), pkt.size());
                 return true;
             }

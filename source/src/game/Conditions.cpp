@@ -115,6 +115,7 @@ uint8 const ConditionTargetsInternal[] =
         CONDITION_REQ_MAP_OR_WORLDOBJECT, //  59
         CONDITION_REQ_TARGET_UNIT,        //  60
         CONDITION_REQ_TARGET_PLAYER,      //  61
+        CONDITION_REQ_TARGET_PLAYER,      //  62  CONDITION_STORY_FLAG
 };
 
 // Starts from 4th element so that -3 will return first element.
@@ -699,6 +700,13 @@ bool inline ConditionEntry::Evaluate(WorldObject const* target, Map const* map, 
             }
 
             return true;
+        }
+        case CONDITION_STORY_FLAG:
+        {
+            // sql/custom/106. The reverse flag turns this into "has not", which
+            // is handled generically above and is the form a button offering
+            // the thing you have not done yet wants.
+            return target->ToPlayer()->HasStoryFlag(m_value1);
         }
     }
     return false;
@@ -1348,6 +1356,25 @@ bool ConditionEntry::IsValid()
             if (m_value2 || m_value3 || m_value4)
             {
                 sLog.outErrorDb("CONDITION_LUNATIC (entry %u, type %u) has unused data in value2, value3, or value4, skipped", m_entry, m_condition);
+                return false;
+            }
+            break;
+        }
+        case CONDITION_STORY_FLAG:
+        {
+            // sql/custom/107 holds the names, in tw_world. NOT checked against
+            // it: this is the world database and that table is editor metadata,
+            // so a flag whose NAME was deleted must keep gating what it gates
+            // rather than quietly opening the door.
+            if (!m_value1)
+            {
+                sLog.outErrorDb("CONDITION_STORY_FLAG (entry %u, type %u) has no flag in value1, skipped", m_entry, m_condition);
+                return false;
+            }
+
+            if (m_value2 || m_value3 || m_value4)
+            {
+                sLog.outErrorDb("CONDITION_STORY_FLAG (entry %u, type %u) has unused data in value2, value3, or value4, skipped", m_entry, m_condition);
                 return false;
             }
             break;

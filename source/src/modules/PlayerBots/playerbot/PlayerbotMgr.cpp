@@ -2535,6 +2535,7 @@ void PlayerbotHolder::CreateBot(Player* master, const std::string param, std::li
     uint32 level = 0;
     bool autoAdd = master;
     bool temporary = false;
+    bool naked = false;
     uint8 gender = GENDER_NONE;
     Team team = Team::TEAM_BOTH_ALLOWED;
     BotRoles role = BotRoles::BOT_ROLE_NONE;
@@ -2578,6 +2579,8 @@ void PlayerbotHolder::CreateBot(Player* master, const std::string param, std::li
         }
         else if (key == "temporary")
             temporary = (value == "1" || value == "true" || value == "yes");
+        else if (key == "naked")
+            naked = (value == "1" || value == "true" || value == "yes");
     }
 
     // A player may only have so many companions out. The party cap of 5 bounds
@@ -2759,6 +2762,33 @@ void PlayerbotHolder::CreateBot(Player* master, const std::string param, std::li
         {
             newBot->SetMap(master->GetMap());
             newBot->SetPosition(master->GetPositionX(), master->GetPositionY(), master->GetPositionZ(), master->GetOrientation());
+        }
+
+        /*
+         * NAKED: THE STARTER KIT NEVER REACHES THE DATABASE.
+         *
+         * Player::Create has just equipped the class's starting clothes and
+         * weapon on this object. A bot NPC and a companion both get their real
+         * clothes later (the dressing room, the gear roll), and until 2026-09-22
+         * that "later" happened in front of people: the body logged in wearing
+         * the kit and changed on the spot, and one of those changes (a warrior's
+         * shield coming off) never reached a client already watching, which kept
+         * drawing it.
+         *
+         * Taken off HERE, before the first save and before the character has
+         * ever been in the world, so there is nothing to send and nobody to send
+         * it to, and no write that could race the save. `update` is false for the
+         * same reason. The backpack (hearthstone, food) is left alone: nobody
+         * sees it.
+         *
+         * Opt in, not the default: `.bot create` for an alt still wants a
+         * character that can fight at level 1.
+         */
+        if (naked)
+        {
+            for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
+                if (newBot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+                    newBot->DestroyItem(INVENTORY_SLOT_BAG_0, slot, false);
         }
 
         newBot->SaveToDB();

@@ -954,7 +954,8 @@ void RandomPlayerbotMgr::LoginFreeBots()
                         // no aura to put them back.
                         BotNpc_ApplyInvulnerability(bot, true);
 
-                        if (!npc->look.empty() && npc->look != npc->lookApplied)
+                        BotNpcSpawn const* spawn = sBotNpcMgr.GetSpawn(botGuid);
+                        if (spawn && !npc->look.empty() && npc->look != spawn->lookApplied)
                         {
                             std::string error;
                             std::string want = npc->look;
@@ -962,7 +963,7 @@ void RandomPlayerbotMgr::LoginFreeBots()
                             if (BotNpc_Dress(bot, want, error))
                             {
                                 bot->SaveToDB();
-                                sBotNpcMgr.MarkLookApplied(npc->id, want);
+                                sBotNpcMgr.MarkLookApplied(botGuid, want);
                             }
                             else
                             {

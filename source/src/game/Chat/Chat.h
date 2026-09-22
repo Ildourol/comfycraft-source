@@ -206,6 +206,8 @@ class ChatHandler
         bool HandlePerfMonCommand(char* args);
         bool HandlePlayerbotCommand(char* args);
         bool HandleNpcBotCommand(char* args);
+        bool HandleAddDressingRoomCommand(char* args);
+        bool HandleComfyHelpCommand(char* args);
         bool HandleRandomPlayerbotCommand(char* args);
         bool HandleAhBotCommand(char* args);
         bool HandleEffectCommand(char* args);

@@ -1585,7 +1585,7 @@ void Unit::Kill(Unit* pVictim, SpellEntry const *spellProto, bool durabilityLoss
     // loser would watch a corpse and a release prompt appear for the half
     // second before being resurrected out of them.
     if (pPlayerVictim)
-        sInvasionMgr.OnPlayerDeath(pPlayerVictim);
+        sInvasionMgr.OnPlayerDeath(pPlayerVictim, this);
 }
 
 struct PetOwnerKilledUnitHelper

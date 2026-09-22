@@ -8,6 +8,7 @@
 #include <array>
 #include <map>
 #include <string>
+#include <vector>
 
 /*
  * BOT NPCs -- characters that act as NPCs.
@@ -330,6 +331,58 @@ struct BotNpcIdleRule
 // database says so, and an array means a caller never writes a find loop.
 typedef std::array<BotNpcIdleRule, BOT_NPC_IDLE_TRIGGERS> BotNpcIdleRules;
 
+/*
+ * AND THE ONE THAT IS A LIST. sql/custom/108.
+ *
+ * Somebody emoted AT this NPC -- /bow at the priestess and she bows back. The
+ * 1.12 client's CMSG_TEXT_EMOTE has carried the guid of whatever the player had
+ * targeted since 2005; nothing was listening.
+ *
+ * NOT IN THE ARRAY, AND NOT FORCED INTO IT. The four above are one per design
+ * because a design has one idea of what to do on a timer. This one is
+ * PARAMETERISED by which emote, and an NPC answering /wave, /bow and /dance
+ * differently is the ordinary case rather than an exotic one. A list is the
+ * honest shape, and the UNIQUE key in 108 is widened to match so the other four
+ * keep their one-per-design guarantee.
+ *
+ * `emoteId` is an EmotesText.dbc id (TEXTEMOTE_BOW, TEXTEMOTE_WAVE, ...), NOT
+ * an Emotes.dbc anim id. The two are different numbering and the handler reads
+ * the first kind; SCRIPT_COMMAND_EMOTE writes the second. Mixing them up gives
+ * a rule that simply never fires.
+ *
+ * `period` is the cooldown and is NOT optional. Nothing in this core throttles
+ * emotes: CanSpeak is a mute check, a text emote never touches the ChatFlood
+ * counter, and the only other ceiling is 300 packets per session update. A
+ * held-down /bow macro arrives several times a second.
+ *
+ * There is no `radius`. The trigger is targeted-only and BotNpcIdle applies the
+ * text-emote listen range on top, which is the set of people who saw it happen.
+ */
+struct BotNpcEmoteRule
+{
+    uint32 emoteId;
+    uint32 period;                                          // seconds of cooldown
+    uint32 scriptId;                                        // generic_scripts, 6450000-6459999
+
+    BotNpcEmoteRule() : emoteId(0), period(5), scriptId(0) {}
+};
+
+typedef std::vector<BotNpcEmoteRule> BotNpcEmoteRules;
+
+/*
+ * SOMEBODY EMOTED AT A BOT NPC. Called from HandleTextEmoteOpcode.
+ *
+ * A FREE FUNCTION, exactly as housing's critter pat is, and for the same
+ * reason: the seam two lines above it in that handler is
+ * `Creature::AI()->ReceiveEmote`, which needs an AI class bound through
+ * creature_template.script_name -- and a bot NPC is a Player, so it fails
+ * `unit->IsCreature()` before that ever comes up.
+ *
+ * Returns quietly for anything that is not a bot NPC, which is almost every
+ * emote on the server.
+ */
+void BotNpc_ReceiveEmote(Player* who, uint32 textEmote, ObjectGuid target);
+
 struct BotNpcEntry
 {
     uint32      id;
@@ -340,10 +393,6 @@ struct BotNpcEntry
     // subname is not available to a player. Empty means no bracket.
     std::string subname;
     std::string look;           // the dressing room's query string
-    // The outfit actually ON the character. Dressing is skipped outright while
-    // this equals `look` -- see sql/custom/087 for why the character itself
-    // cannot be asked instead.
-    std::string lookApplied;
     uint32      gossipMenuId;
 
     // npc_vendor_template.entry -- the shop it sells. 0 sells nothing, which is
@@ -358,9 +407,29 @@ struct BotNpcEntry
     uint32      questGiverId;
     uint32      npcFlags;
 
-    // 0 while it is only a design. The core only ever acts on a placed one, but
-    // it loads them all so `.npcbot place` can find a design by name.
-    uint32      characterGuid;
+    BotNpcEntry() : id(0), race(1), gender(0), gossipMenuId(0), vendorTemplateId(0),
+                    questGiverId(0), npcFlags(0) {}
+};
+
+/*
+ * ONE STANDING COPY OF A DESIGN. sql/custom/113.
+ *
+ * A design used to own one body, so the character and the spot were columns on
+ * `bot_npc`. The same NPC in every starting zone is one design with several
+ * bodies, so what belongs to a body moved here: which character it is, where
+ * it stands, and what it is wearing. Everything a player meets (the words, the
+ * shop, the quests, the idle rules) is still the design's, reached through
+ * BotNpcMgr::Get(guid) exactly as before, which is why most of the core never
+ * noticed the split.
+ *
+ * KEYED BY CHARACTER GUID. A spawn always has a body, because placing is what
+ * makes one, so the guid is a natural key and no second id has to be kept in
+ * step with it. Unplacing deletes the row and keeps the character.
+ */
+struct BotNpcSpawn
+{
+    uint32 characterGuid;
+    uint32 designId;
 
     // Where it stands. NOT characters.position_*, which is IGNORED for a bot
     // NPC -- Player::LoadFromDB overrides the saved coordinates with these
@@ -369,11 +438,14 @@ struct BotNpcEntry
     uint32 mapId;
     float  x, y, z, o;
 
-    BotNpcEntry() : id(0), race(1), gender(0), gossipMenuId(0), vendorTemplateId(0),
-                    questGiverId(0), npcFlags(0), characterGuid(0), mapId(0),
-                    x(0.0f), y(0.0f), z(0.0f), o(0.0f) {}
+    // The outfit actually ON this character. Dressing is skipped outright while
+    // this equals the design's `look` -- see sql/custom/087 for why the
+    // character itself cannot be asked instead. Per copy, since each body is
+    // dressed on its own.
+    std::string lookApplied;
 
-    bool IsPlaced() const { return characterGuid != 0; }
+    BotNpcSpawn() : characterGuid(0), designId(0), mapId(0),
+                    x(0.0f), y(0.0f), z(0.0f), o(0.0f) {}
 };
 
 class BotNpcMgr
@@ -392,10 +464,25 @@ class BotNpcMgr
 
         bool IsBotNpc(uint32 characterGuid) const { return Get(characterGuid) != nullptr; }
 
+        // The body itself: where it stands and what it wears. nullptr for
+        // anything that is not a bot NPC.
+        BotNpcSpawn const* GetSpawn(uint32 characterGuid) const;
+
+        // Every standing copy of a design, oldest body first. Empty while it
+        // is only a design.
+        std::vector<BotNpcSpawn const*> SpawnsOf(uint32 designId) const;
+        std::map<uint32 /*character guid*/, BotNpcSpawn> const& AllSpawns() const { return m_spawns; }
+
         // By the name on the design, placed or not. This is how `.npcbot place`
         // finds something with no character yet, so it deliberately does NOT go
-        // through the character index.
-        BotNpcEntry const* FindByName(std::string const& name) const;
+        // through the character index. EVERY match, lowest id first: two designs
+        // may share a name (the same NPC in two places), and the caller decides
+        // what an ambiguous name means rather than this picking one.
+        std::vector<BotNpcEntry const*> FindByName(std::string const& name) const;
+
+        // By design id -- the `#12` form of `.npcbot`, which is the only way to
+        // say which of two designs of the same name you mean.
+        BotNpcEntry const* FindById(uint32 id) const;
 
         // Re-reads the table and re-applies flags to everyone already in world,
         // so a design edited on the website lands without a restart and without
@@ -421,6 +508,21 @@ class BotNpcMgr
         bool AnyIdleRules() const { return !m_idle.empty(); }
 
         /*
+         * WHAT THIS DESIGN ANSWERS AN EMOTE WITH, or nullptr if nothing.
+         *
+         * Loaded from the same `bot_npc_idle` table by the same LoadIdleRules,
+         * so `reload bot_npc` covers these too and there is still no second
+         * command to remember.
+         *
+         * SEPARATE FROM AnyIdleRules ON PURPOSE. That gate decides whether a
+         * map allocates a per-second driver; this one decides whether an emote
+         * handler does a map lookup. A server using only emote rules should not
+         * be paying for a tick it has nothing for, and the other way round.
+         */
+        BotNpcEmoteRules const* EmoteRules(uint32 designId) const;
+        bool AnyEmoteRules() const { return !m_emote.empty(); }
+
+        /*
          * BUMPED BY EVERY Load(), AND THAT IS WHAT RESTARTS A `custom` SCENE.
          *
          * A custom behaviour is started once and never put on a clock, so
@@ -442,11 +544,16 @@ class BotNpcMgr
         // directly and calls `reload bot_npc`, which is the other direction.
         void Save(BotNpcEntry const& entry);
 
-        // Records that a design's outfit is now on its character. Separate from
-        // Save() because the dressing happens in the module, which has no
-        // business rewriting the rest of the row.
-        void MarkLookApplied(uint32 id, std::string const& look);
-        void Remove(uint32 id);
+        // A body's row, added or moved. Written with DirectPExecute: place,
+        // save and unplace can follow each other within a second, and PExecute
+        // is not ordered across worker threads.
+        void SaveSpawn(BotNpcSpawn const& spawn);
+        void RemoveSpawn(uint32 characterGuid);
+
+        // Records that the design's outfit is now on this character. Separate
+        // from SaveSpawn() because the dressing happens in the module, which
+        // has no business rewriting the rest of the row.
+        void MarkLookApplied(uint32 characterGuid, std::string const& look);
 
         std::map<uint32, BotNpcEntry> const& All() const { return m_entries; }
 
@@ -455,16 +562,20 @@ class BotNpcMgr
         // in. Split out because Load() must NOT do it -- see BotNpc.cpp.
         void ApplyToLoggedIn();
 
-        void Reindex();
-
+        void LoadSpawns();
         void LoadIdleRules();
 
         std::map<uint32 /*design id*/, BotNpcEntry> m_entries;
-        // characterGuid -> design id, for the placed ones only.
-        std::map<uint32, uint32> m_byCharacter;
+        // Every body, by its character guid. This is also the character index
+        // Get() answers from.
+        std::map<uint32 /*character guid*/, BotNpcSpawn> m_spawns;
         // design id -> its idle rules. Only designs that actually do something
         // are in here; see IdleRules above.
         std::map<uint32, BotNpcIdleRules> m_idle;
+        // design id -> its emote answers, in the order the table gave them.
+        // Same rule: a design with none is absent rather than holding an empty
+        // vector, so AnyEmoteRules() means what it says.
+        std::map<uint32, BotNpcEmoteRules> m_emote;
         uint32 m_generation = 0;
 };
 

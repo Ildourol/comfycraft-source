@@ -742,6 +742,8 @@ enum PlayerLoginQueryIndex
     PLAYER_LOGIN_QUERY_LOADVARIABLES,
     PLAYER_LOGIN_QUERY_ITEM_LOGS,
     PLAYER_LOGIN_QUERY_SAVED_SPECS,
+    PLAYER_LOGIN_QUERY_STORY_FLAGS,
+    PLAYER_LOGIN_QUERY_CRITTER_PETS,
 
     MAX_PLAYER_LOGIN_QUERY
 };
@@ -1549,6 +1551,16 @@ class Player final: public Unit
         ObjectGuid m_dividerGuid;
         uint32 m_ingametime;
         QuestStatusMap mQuestStatus;
+        // sql/custom/106. Loaded once at login and never reloaded: a flag is
+        // set by this character's own actions, so nothing else can change it
+        // behind us while they are online.
+        std::set<uint32> m_storyFlags;
+        // sql/custom/109, the critter chart. The spawns stop a second pat on
+        // the same animal costing a write; the names are the score, and a new
+        // one is what earns the chat line.
+        std::set<uint32> m_critterSpawnsPetted;
+        std::set<std::string> m_critterNamesPetted;
+        time_t m_critterHeartsAt = 0;                       // wild critters only; see PetCritter
         void AdjustQuestReqItemCount(Quest const* pQuest, QuestStatusData& questStatusData);
         bool CanGiveQuestSourceItemIfNeed(Quest const* pQuest, ItemPosCountVec* dest = nullptr) const;
         void GiveQuestSourceItemIfNeed(Quest const* pQuest);
@@ -1648,6 +1660,30 @@ class Player final: public Unit
         bool CanShareQuest(uint32 quest_id) const;
         QuestStatusMap& getQuestStatusMap() { return mQuestStatus; };
 
+        /*
+         * STORY FLAGS -- a durable per-character fact. sql/custom/106.
+         *
+         * SET OR ABSENT, never a value: the set IS the state, which is what
+         * makes clearing one a DELETE and makes the whole thing safe to read
+         * as a set. Something that needs to count is not a flag.
+         *
+         * Written by SCRIPT_COMMAND_SET_STORY_FLAG, read by
+         * CONDITION_STORY_FLAG -- so the two surfaces that already consult
+         * `conditions` gate on it for free: a gossip button through
+         * gossip_menu_option.condition_id, and a quest through
+         * quest_template.RequiredCondition.
+         */
+        bool HasStoryFlag(uint32 flag) const { return m_storyFlags.find(flag) != m_storyFlags.end(); }
+        void SetStoryFlag(uint32 flag, bool on);
+
+        /*
+         * THE CRITTER CHART. sql/custom/109, docs/features/critter-chart.md.
+         *
+         * Called from HandleTextEmoteOpcode for every targeted text emote;
+         * it decides for itself whether this one counts.
+         */
+        void PetCritter(Unit* target, uint32 textEmote);
+
         void SendQuestCompleteEvent(uint32 quest_id) const;
         void SendQuestReward(Quest const* pQuest, uint32 XP, Object* questGiver) const;
         void SendQuestFailed(uint32 quest_id) const;
@@ -1681,6 +1717,8 @@ class Player final: public Unit
         void _LoadInventory(QueryResult* result, uint32 timediff, bool& has_epic_mount);
         void _LoadItemLoot(QueryResult* result);
         void _LoadQuestStatus(QueryResult* result);
+        void _LoadStoryFlags(QueryResult* result);
+        void _LoadCritterPets(QueryResult* result);
         void _LoadGroup(QueryResult* result);
         void _LoadSkills(QueryResult* result);
         void _LoadForgottenSkills(QueryResult* result);
@@ -3119,7 +3157,9 @@ public:
         uint8 GetChatTag() const;
 
         char const* GetName() const final { return m_name.c_str(); }
-        void SetName(std::string const& newname) { m_name = newname; }
+        // Out of line: a player already in the world is re-keyed in the
+        // ObjectAccessor name maps too (ObjectAccessor::RenameObject).
+        void SetName(std::string const& newname);
 
         float GetYellRange() const;
         void Say(std::string const& text, const uint32 language) const;

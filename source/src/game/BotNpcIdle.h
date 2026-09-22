@@ -84,6 +84,19 @@ class BotNpcIdle
          */
         void NoteTalk(ObjectGuid npc, ObjectGuid player);
 
+        /*
+         * SOMEBODY EMOTED AT THIS NPC. Called from BotNpc_ReceiveEmote, which
+         * HandleTextEmoteOpcode calls, and from nowhere else.
+         *
+         * NOT ON THE TICK, because this is an event and has one. The other four
+         * triggers are moments the server has to go looking for; this one
+         * arrives in a packet with the target guid already in it.
+         *
+         * Still the map's thread: CMSG_TEXT_EMOTE is PACKET_PROCESS_MAP, drained
+         * by Map::Update itself, which is the same argument NoteTalk makes.
+         */
+        void ReceiveEmote(Map* map, Player* bot, Player* who, uint32 textEmote);
+
     private:
         struct State
         {
@@ -136,6 +149,20 @@ class BotNpcIdle
             // button's scene on the same NPC must not be cut off because the
             // idle loop restarted.
             uint32 customScene = 0;
+
+            /*
+             * WHEN EACH EMOTE MAY BE ANSWERED AGAIN. sql/custom/108.
+             *
+             * PER EMOTE RATHER THAN ONE CLOCK FOR ALL OF THEM, because the
+             * rules are independent: answering /bow should not make /wave go
+             * quiet. `busyUntil` is the one that stops two answers overlapping,
+             * and it is shared with the other four the way it always was.
+             *
+             * A map rather than an array, since the key is an EmotesText id and
+             * there are a few hundred of those. It is empty on an NPC nobody
+             * has emoted at, which is nearly all of them.
+             */
+            std::unordered_map<uint32, time_t> emoteNext;
         };
 
         void Tick(Map* map, Player* bot, BotNpcIdleRules const& rules, State& st, time_t now);

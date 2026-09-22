@@ -623,8 +623,23 @@ bool Map::ScriptCommand_CastSpell(const ScriptInfo& script, WorldObject* source,
         return ShouldAbortScript(script);
     }
 
+    /*
+     * BOTH FAILURES HERE USED TO BE SILENT, and that is a bug in its own right.
+     * A row that casts nothing, says nothing and logs nothing is indis-
+     * tinguishable from a row that was never reached -- which cost an
+     * afternoon on 2026-09-20, reported as "the cast in an emote trigger does
+     * not work" with no way to tell whether the script had even run.
+     *
+     * Every other handler in this file says why it gave up. These two now do
+     * too. If this turns out to be noisy on Turtle's own 1,975 generic
+     * scripts, the answer is to fix the rows it names, not to go quiet again.
+     */
     if (!pUnitTarget)
+    {
+        sLog.outError("SCRIPT_COMMAND_CAST_SPELL (script id %u, spell %u) call for a nullptr or non-unit target (TypeId: %u), skipping.",
+                      script.id, script.castSpell.spellId, target ? target->GetTypeId() : 0);
         return ShouldAbortScript(script);
+    }
 
     if ((script.castSpell.flags & CF_INTERRUPT_PREVIOUS) && pUnitSource && pUnitSource->IsNonMeleeSpellCasted(false))
         pUnitSource->InterruptNonMeleeSpells(false);
@@ -638,8 +653,18 @@ bool Map::ScriptCommand_CastSpell(const ScriptInfo& script, WorldObject* source,
     else
         result = source->CastSpell(pUnitTarget, script.castSpell.spellId, (script.castSpell.flags & CF_TRIGGERED) != 0);
 
+    // The NUMBER is the whole point: SpellCastResult says exactly which check
+    // refused, and guessing between "wrong target", "out of range", "does not
+    // know it" and "immune" is otherwise a rebuild each time. See SharedDefines.h.
     if (result != SPELL_CAST_OK)
+    {
+        sLog.outError("SCRIPT_COMMAND_CAST_SPELL (script id %u) failed to cast spell %u from %s at %s: SpellCastResult %u.",
+                      script.id, script.castSpell.spellId,
+                      source->GetName() ? source->GetName() : "?",
+                      pUnitTarget->GetName() ? pUnitTarget->GetName() : "?",
+                      uint32(result));
         return ShouldAbortScript(script);
+    }
 
     return false;
 }
@@ -1568,6 +1593,52 @@ bool Map::ScriptCommand_TeleportRandom(ScriptInfo const& script, WorldObject* so
         return ShouldAbortScript(script);
     }
 
+    return false;
+}
+
+/*
+ * SCRIPT_COMMAND_SET_STORY_FLAG (101)
+ *
+ * Remembers, on this character, that something happened -- or forgets it.
+ * `datalong` is a story_flag.id, `datalong2` is 0 to set and 1 to forget.
+ * sql/custom/106 and 107.
+ *
+ * THE PLAYER, FROM EITHER SIDE, AND NEVER A BOT NPC. Exactly the shape
+ * TELEPORT_RANDOM (100) needed one command earlier, and for a sharper reason:
+ * a bot NPC IS a Player, so a bare ToPlayer on the source of a gossip script
+ * hands back the NPC, and the flag would be written on the NPC's own character
+ * row. Nothing would complain. The person standing in front of it would press
+ * the button, see the line, and find the door still shut -- with the flag
+ * sitting in the database under the wrong guid.
+ *
+ * NO CHECK AGAINST story_flag. That table is in tw_world and is editor
+ * metadata; the core deals in numbers here, and a flag whose name was deleted
+ * is still a flag somebody's condition is testing. The id is refused only when
+ * it is zero, which is a row that was never filled in.
+ *
+ * SetStoryFlag does the rest, including telling the client -- the `!` over a
+ * questgiver's head does not refresh itself for a player guid, which is the
+ * measurement in docs/ai/content/quests.md.
+ */
+bool Map::ScriptCommand_SetStoryFlag(ScriptInfo const& script, WorldObject* source, WorldObject* target)
+{
+    Player* pPlayer = ToPlayer(target);
+    if (!pPlayer || pPlayer->IsBotNpc())
+        pPlayer = ToPlayer(source);
+
+    if (!pPlayer || pPlayer->IsBotNpc())
+    {
+        sLog.outError("SCRIPT_COMMAND_SET_STORY_FLAG (script id %u) call for a nullptr or non-player source and target (TypeIdSource: %u)(TypeIdTarget: %u), skipping.", script.id, source ? source->GetTypeId() : 0, target ? target->GetTypeId() : 0);
+        return ShouldAbortScript(script);
+    }
+
+    if (!script.storyFlag.flagId)
+    {
+        sLog.outError("SCRIPT_COMMAND_SET_STORY_FLAG (script id %u) has no flag in datalong, skipping.", script.id);
+        return ShouldAbortScript(script);
+    }
+
+    pPlayer->SetStoryFlag(script.storyFlag.flagId, script.storyFlag.forget == 0);
     return false;
 }
 

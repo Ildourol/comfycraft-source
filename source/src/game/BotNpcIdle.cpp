@@ -64,7 +64,7 @@ void BotNpcIdle::Update(Map* map, uint32 diff)
     }
     m_timer = 1000;
 
-    if (!sBotNpcMgr.AnyIdleRules())
+    if (!sBotNpcMgr.AnyIdleRules() && !sBotNpcMgr.AnyEmoteRules())
     {
         // Somebody deleted the last rule on the server. Let the state go rather
         // than keeping it for ever against the chance one comes back -- a stale
@@ -86,11 +86,27 @@ void BotNpcIdle::Update(Map* map, uint32 diff)
         if (!design)
             continue;
 
-        BotNpcIdleRules const* rules = sBotNpcMgr.IdleRules(design->id);
-        if (!rules)
+        if (BotNpcIdleRules const* rules = sBotNpcMgr.IdleRules(design->id))
+        {
+            Tick(map, bot, *rules, m_state[bot->GetObjectGuid()], now);
             continue;
+        }
 
-        Tick(map, bot, *rules, m_state[bot->GetObjectGuid()], now);
+        /*
+         * AN NPC WITH ONLY EMOTE RULES STILL HAS TO BE STAMPED, and forgetting
+         * this is what would make its cooldowns useless: the sweep below drops
+         * anything it did not see this pass, so a row created by an emote would
+         * be erased one second later and the next /bow would fire again.
+         *
+         * `find`, not operator[]. An NPC nobody has ever emoted at has no row,
+         * and the point of this branch is not to give it one.
+         */
+        if (sBotNpcMgr.EmoteRules(design->id))
+        {
+            auto itr = m_state.find(bot->GetObjectGuid());
+            if (itr != m_state.end())
+                itr->second.seenAt = now;
+        }
     }
 
     /*
@@ -139,6 +155,102 @@ void BotNpcIdle::NoteTalk(ObjectGuid npc, ObjectGuid player)
 
     itr->second.talker = player;
     itr->second.talkedAt = sWorld.GetGameTime();
+}
+
+/*
+ * SOMEBODY EMOTED AT THIS NPC. sql/custom/108.
+ *
+ * The fifth trigger, and the only one that is an EVENT rather than a moment the
+ * server went looking for -- CMSG_TEXT_EMOTE arrives carrying the guid of
+ * whatever the player had targeted, so there is nothing to search for and no
+ * reason to be on the tick.
+ *
+ * WHAT IT REFUSES, AND WHY EACH ONE IS HERE:
+ *
+ *  - A BOT EMOTER. The playerbots module emits text emotes by calling
+ *    HandleTextEmoteOpcode directly, so without this a companion standing in a
+ *    party could set an NPC off with nobody watching. Same rule `near` makes.
+ *  - AN INVISIBLE GM. Also `near`'s rule: somebody who cannot be seen testing
+ *    something should not be starting scenes for an empty room.
+ *  - ANYBODY TOO FAR AWAY. A target stays selected across a zone, so
+ *    targeted-only is not on its own a proximity test. The text-emote listen
+ *    range is the right number because it is exactly the set of people who saw
+ *    the emote happen; anything else would have the NPC answering something
+ *    nobody in the room witnessed.
+ *  - A BUSY NPC. `busyUntil` is shared with the other four, so an emote cannot
+ *    talk over a greeting and a greeting cannot talk over an emote.
+ *  - AN EMOTE INSIDE ITS COOLDOWN, silently. Nothing in this core throttles
+ *    emotes at all, so a held-down /bow macro arrives several times a second;
+ *    housing's critter pat refuses the same way and for the same reason, that
+ *    a refusal message on a held macro is its own spam.
+ */
+void BotNpcIdle::ReceiveEmote(Map* map, Player* bot, Player* who, uint32 textEmote)
+{
+    BotNpcEntry const* design = sBotNpcMgr.Get(bot->GetGUIDLow());
+    if (!design)
+        return;
+
+    BotNpcEmoteRules const* rules = sBotNpcMgr.EmoteRules(design->id);
+    if (!rules)
+        return;
+
+    BotNpcEmoteRule const* match = nullptr;
+    for (BotNpcEmoteRule const& r : *rules)
+    {
+        if (r.emoteId == textEmote)
+        {
+            match = &r;
+            break;
+        }
+    }
+
+    if (!match)
+        return;
+
+    if (who->GetModuleSlot(MODULE_SLOT_BOT_AI))
+        return;
+
+    if (who->IsGameMaster() && !who->isGMVisible())
+        return;
+
+    if (!bot->IsWithinDistInMap(who, sWorld.getConfig(CONFIG_FLOAT_LISTEN_RANGE_TEXTEMOTE)))
+        return;
+
+    // operator[] here, unlike NoteTalk's find: a matching rule is the whole
+    // reason this NPC needs a row, and without one there is nowhere to keep the
+    // cooldown that stops the next line of a macro.
+    State& st = m_state[bot->GetObjectGuid()];
+
+    time_t const now = sWorld.GetGameTime();
+
+    if (now < st.busyUntil)
+        return;
+
+    time_t& next = st.emoteNext[textEmote];
+    if (now < next)
+        return;
+
+    uint32 const length = ScriptLength(match->scriptId);
+
+    if (!length && sGenericScripts.find(match->scriptId) == sGenericScripts.end())
+    {
+        // The reload order again: a rule names a script id, so
+        // `reload generic_scripts` has to come before `reload bot_npc`. Said
+        // once per cooldown, because the clock moves on below either way.
+        sLog.outError("Bot NPC %s has an emote rule pointing at generic_scripts %u, which is not loaded.",
+                      bot->GetName(), match->scriptId);
+    }
+
+    map->ScriptsStart(sGenericScripts, match->scriptId, bot->GetObjectGuid(), who->GetObjectGuid());
+
+    next = now + match->period;
+    st.busyUntil = now + length;
+
+    // Belt and braces. Update's pass already stamps an emote-only NPC before
+    // the sweep runs, so this is not what keeps the row alive -- it is here so
+    // that a later change to that branch cannot quietly turn every cooldown on
+    // the server into no cooldown at all.
+    st.seenAt = now;
 }
 
 void BotNpcIdle::Tick(Map* map, Player* bot, BotNpcIdleRules const& rules, State& st, time_t now)

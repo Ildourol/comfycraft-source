@@ -79,8 +79,9 @@ class InvasionManager
 
         // End of Unit::Kill, behind the pPlayerVictim null check -- Kill runs on
         // every creature death in the world, so this must never be reached for
-        // one.
-        void OnPlayerDeath(Player* victim);
+        // one. `killer` is Kill's own `this`, and decides whether the other
+        // side WON or the victim merely died (sql/custom/110).
+        void OnPlayerDeath(Player* victim, Unit* killer);
 
         // WorldSession::LogoutPlayer, and it must stay BEFORE the character is
         // saved: an invader logging out is teleported home first so they do not
@@ -127,8 +128,17 @@ class InvasionManager
         // nullptr for "tell this side nothing". delayMs of 0 means the ordinary
         // Invasion.ReturnSeconds; a fallen invader gets the longer linger
         // instead, because lying dead where you fell is the point of it.
+        //
+        // `winner` is empty unless somebody survived and won; a match that
+        // was FIGHTING is written down either way (RecordMatch).
         void Conclude(Invasion& inv, char const* invaderLine, char const* defenderLine,
-                      uint32 delayMs = 0);
+                      uint32 delayMs = 0, ObjectGuid winner = ObjectGuid());
+
+        // THE RESULT, for the Invasion heroes board. sql/custom/110. Written
+        // once, only for a match that reached PHASE_FIGHTING, and never read
+        // back: the no-persistence rule above is about the match, and this
+        // is only its outcome.
+        void RecordMatch(Invasion const& inv, ObjectGuid winner) const;
 
         std::vector<Invasion> m_invasions;
 

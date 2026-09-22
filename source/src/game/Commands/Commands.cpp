@@ -14944,6 +14944,77 @@ bool ChatHandler::HandleEmoteCommand(char* args)
     return true;
 }
 
+/*
+ * `.comfyhelp`: the commands ComfyCraft added, each with one line.
+ *
+ * WHICH ONES ARE OURS was found by diffing this file's command tables against
+ * the fork point (Shyalya 727d06d, Chat.cpp), because nothing in the table
+ * itself says so. That makes this list HAND KEPT: a new command of ours needs a
+ * row here in the same change, and nothing will notice if it does not get one.
+ * The other direction is checked. A row whose command is no longer in the
+ * table says so instead of silently vanishing, so a rename or a removal shows
+ * up the first time anybody looks.
+ *
+ * Each row is filtered by the caller's own access, through the same lookup
+ * the chat parser uses, so a player sees the player half and a GM sees it all.
+ */
+namespace
+{
+    struct ComfyCommandRow
+    {
+        char const* lookup;   // what FindCommand is given
+        char const* line;     // what is printed
+    };
+
+    ComfyCommandRow const COMFY_COMMANDS[] =
+    {
+        { "comfyhelp",         ".comfyhelp   this list" },
+        { "bug",               ".bug <text>   file a bug report to the website" },
+        { "house go",          ".house go | visit <name> | reset   your house, or somebody else's" },
+        { "house edit",        ".house edit | storage | settings   decorating, the shelf, your options" },
+        { "house object",      ".house object ...   place and move furniture" },
+        { "house critter",     ".house critter ...   pets that live in your house" },
+        { "house template",    ".house template | entrance | furniture ...   house building tools" },
+        { "add_dressing_room", ".add_dressing_room <id>   a saved dressing room look, into your bags" },
+        { "setlevel",          ".setlevel <level> [name]   set a level, up or down" },
+        { "npcbot",            ".npcbot place | move | dress | menu | idle | emote | unplace <name>, .npcbot list" },
+        { "scene",             ".scene <id>   run a scene, your target as the NPC" },
+        { "dest",              ".dest <list> <name>   save where you stand as a place a button sends people" },
+        { "spot",              ".spot <name>   save where the selected NPC walks to" },
+        { "spotfrom",          ".spotfrom   how far you stand from the selected NPC's post" },
+        { "effect",            ".effect <visual kit> [name]   play a spell visual" },
+        { "emote",             ".emote <id> [name]   play an emote" },
+        { "modify npcflag",    ".modify npcflag [value]   read or set a unit's NPC flags" },
+        { "reload bot_npc",    "reload bot_npc | broadcast_text | custom_merchant | dialog_dests | dialog_scenes | "
+                               "gameobject_template | rented_mount   (console)" },
+    };
+}
+
+bool ChatHandler::HandleComfyHelpCommand(char* /*args*/)
+{
+    for (size_t i = 0; i < sizeof(COMFY_COMMANDS) / sizeof(COMFY_COMMANDS[0]); ++i)
+    {
+        ComfyCommandRow const& row = COMFY_COMMANDS[i];
+
+        // EXACT names, because the parser's abbreviation matching would let a
+        // row keep "finding" a command that had been renamed to something
+        // longer. A row naming a subtable (`house object`) stops there with the
+        // whole lookup consumed, which the parser reports as an unknown
+        // subcommand; that is found. Text left over means it is not.
+        ChatCommand* command = nullptr;
+        char const* text = row.lookup;
+        ChatCommandSearchResult res = FindCommand(getCommandTable(), text, command, nullptr, nullptr, true, true);
+        bool const found = command && (res == CHAT_COMMAND_OK || (res == CHAT_COMMAND_UNKNOWN_SUBCOMMAND && !*text));
+
+        if (!found)
+            PSendSysMessage(".%s is listed here but is not a command any more.", row.lookup);
+        else if (isAvailable(*command))
+            SendSysMessage(row.line);
+    }
+
+    return true;
+}
+
 bool ChatHandler::HandleSendSpellVisualCommand(char* args)
 {
     Unit* pTarget = GetSelectedUnit();

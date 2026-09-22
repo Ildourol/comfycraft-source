@@ -1088,25 +1088,27 @@ void PlayerbotAIConfig::loadBotNpcs()
 {
     uint32 added = 0;
 
-    for (const auto& itr : sBotNpcMgr.All())
+    // Every body, not every design: one design may stand in several places.
+    for (const auto& itr : sBotNpcMgr.AllSpawns())
     {
-        BotNpcEntry const& npc = itr.second;
-        if (!npc.IsPlaced())
+        BotNpcSpawn const& spawn = itr.second;
+        BotNpcEntry const* npc = sBotNpcMgr.FindById(spawn.designId);
+        if (!npc)
             continue;
 
         uint32 accountId = sObjectMgr.GetPlayerAccountIdByGUID(
-            ObjectGuid(HIGHGUID_PLAYER, npc.characterGuid));
+            ObjectGuid(HIGHGUID_PLAYER, spawn.characterGuid));
 
         if (!accountId)
         {
             sLog.outError("Bot NPC %s is placed on character %u, which has no account. "
-                          "It will not stand up.", npc.name.c_str(), npc.characterGuid);
+                          "It will not stand up.", npc->name.c_str(), spawn.characterGuid);
             continue;
         }
 
         // A design made from somebody's own alt is already in the list from
         // loadFreeAltBotAccounts, and twice would start two logins for one guid.
-        uint32 guid = npc.characterGuid;
+        uint32 guid = spawn.characterGuid;
         bool already = std::find_if(freeAltBots.begin(), freeAltBots.end(),
                                     [guid](std::pair<uint32, uint32> i) { return i.second == guid; })
                        != freeAltBots.end();

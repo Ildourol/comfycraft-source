@@ -654,6 +654,18 @@ class Map : public GridRefManager<NGridType>
          */
         BotNpcIdle* FindBotNpcIdle() { return m_botNpcIdle; }
 
+        /*
+         * And the one that DOES create it, for the emote trigger.
+         *
+         * An emote is an event rather than something the per-second pass goes
+         * looking for, so it can and does arrive on a map whose driver has not
+         * been made yet -- the first /bow after a restart, before the pass has
+         * reached that NPC. Find-only there would drop exactly one emote per
+         * map, silently, and only ever the first, which is the shape of bug
+         * that gets reported as "it works but not the first time".
+         */
+        BotNpcIdle* GetBotNpcIdle();
+
         // Unclickable for this many seconds, then exactly as it was.
         void SetBusy(ObjectGuid guid, uint32 seconds);
         GameObject* GetGameObject(ObjectGuid const& guid) { return GetObject<GameObject>(guid); }
@@ -1075,6 +1087,7 @@ class Map : public GridRefManager<NGridType>
         bool ScriptCommand_StartScriptOnZone(ScriptInfo const& script, WorldObject* source, WorldObject* target);
         bool ScriptCommand_TakeMoney(ScriptInfo const& script, WorldObject* source, WorldObject* target);
         bool ScriptCommand_TeleportRandom(ScriptInfo const& script, WorldObject* source, WorldObject* target);
+        bool ScriptCommand_SetStoryFlag(ScriptInfo const& script, WorldObject* source, WorldObject* target);
 
         // Add any new script command functions to the array.
         const ScriptCommandFunction m_ScriptCommands[SCRIPT_COMMAND_MAX] =
@@ -1180,6 +1193,7 @@ class Map : public GridRefManager<NGridType>
             &Map::ScriptCommand_WalkFromPost,           // 98
             &Map::ScriptCommand_TakeMoney,              // 99
             &Map::ScriptCommand_TeleportRandom,         // 100
+            &Map::ScriptCommand_SetStoryFlag,           // 101
         };
 
     public:

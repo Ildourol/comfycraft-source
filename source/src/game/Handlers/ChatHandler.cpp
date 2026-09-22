@@ -50,6 +50,7 @@
 #include "Shop/ShopMgr.h"
 #include "GMTicketMgr.h"
 #include "Housing/HouseMgr.h"
+#include "BotNpc.h"
 
 
 #include "rapidjson/document.h"
@@ -1004,6 +1005,22 @@ void WorldSession::HandleTextEmoteOpcode(WorldPacket & recv_data)
     // guid test.
     if (guid.IsCreature())
         HouseCritterEmote(GetPlayer(), guid.GetCounter(), textEmote);
+
+    // AND THE CRITTER CHART WRITES IT DOWN. sql/custom/109. Any critter, house
+    // or wild; Player::PetCritter decides which emotes and which animals count.
+    GetPlayer()->PetCritter(unit, textEmote);
+
+    // AND A BOT NPC NOTICES BEING BOWED TO. sql/custom/108.
+    //
+    // The third seam in four lines, for the third kind of thing that cannot use
+    // the first: a bot NPC is a PLAYER, so it never passed `unit->IsCreature()`
+    // above and never will. This is also why the whole feature could be built
+    // at all -- the guid in this packet is the player's own selection, and it
+    // is stripped out of SMSG_TEXT_EMOTE, which carries only a name string.
+    //
+    // AFTER THE BROADCAST ON PURPOSE. The player's /bow plays and is seen by
+    // everyone first; the NPC's answer follows it rather than racing it.
+    BotNpc_ReceiveEmote(GetPlayer(), textEmote, guid);
 }
 
 void WorldSession::HandleChatIgnoredOpcode(WorldPacket& recv_data)

@@ -261,6 +261,27 @@ enum ConditionType
     CONDITION_LUNATIC               = 61,                   // Checks the player's Level One Lunatic challenge mode.
                                                             // Requirement: Player Target
                                                             // Value1: 0 = target player, 1 = target player and reward-distance group members
+    /*
+     * OURS. sql/custom/106 and 107.
+     *
+     * A story flag is a durable per-character fact set by
+     * SCRIPT_COMMAND_SET_STORY_FLAG, so an NPC can remember that somebody bowed
+     * to it and hold a quest back until they have.
+     *
+     * IT IS A CONDITION RATHER THAN A COLUMN ANYWHERE so that it gates the two
+     * surfaces that already read this table and needed no further work:
+     * gossip_menu_option.condition_id hides a button, and
+     * quest_template.RequiredCondition hides a quest from the questgiver.
+     * CONDITION_FLAG_REVERSE_RESULT reads it as "has NOT", which is what a
+     * button offering the thing you have not done wants.
+     *
+     * TARGET_PLAYER IS WHAT MAKES IT LEGAL FROM A QUEST.
+     * Player::SatisfyQuestCondition passes source = nullptr, so any type
+     * needing a source cannot be used there at all.
+     */
+    CONDITION_STORY_FLAG            = 62,                   // Returns true if the player carries this story flag.
+                                                            // Requirement: Player Target
+                                                            // Value1: story_flag.id (tw_world), 300000-300999
 };
 
 enum ConditionFlags

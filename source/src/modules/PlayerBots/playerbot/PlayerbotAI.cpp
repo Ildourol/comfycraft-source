@@ -7587,6 +7587,155 @@ static bool DressBotNpc(Player* bot, BotNpcLook const& look, std::string& error,
 }
 
 /*
+ * `.add_dressing_room <id>`: the items of a saved dressing room look, in your
+ * bags. GM only, because they are conjured for free.
+ *
+ * The same look and the same display -> item resolution `.npcbot dress` uses,
+ * so one look always means the same items whichever way it is fetched. Lowest
+ * entry wins, which can be an item with real stats or a test item; for a GM
+ * trying an outfit on, that is fine.
+ *
+ * Race, sex and customisation are ignored. They are the doll, not the clothes,
+ * and a look drawn on an orc is still a set of items a gnome can carry. Unlike
+ * `.npcbot dress` it does NOT force anything on: the items go in the bags and
+ * wearing them is up to the ordinary rules.
+ *
+ * Kept here rather than in Commands.cpp because DRESS_SLOTS, ParseLook and
+ * ItemForDisplay live in this file's anonymous namespace; PlayerbotStubs.cpp
+ * carries the no-module stub.
+ */
+bool ChatHandler::HandleAddDressingRoomCommand(char* args)
+{
+    Player* me = m_session ? m_session->GetPlayer() : nullptr;
+    if (!me)
+    {
+        SendSysMessage("In game only.");
+        SetSentErrorMessage(true);
+        return false;
+    }
+
+    std::string given = args ? args : "";
+    while (!given.empty() && isspace((unsigned char)given[0]))
+        given.erase(0, 1);
+    while (!given.empty() && isspace((unsigned char)given[given.size() - 1]))
+        given.erase(given.size() - 1);
+
+    if (given.empty())
+    {
+        SendSysMessage("Usage: .add_dressing_room <saved look id>");
+        SetSentErrorMessage(true);
+        return false;
+    }
+
+    // An id, or a raw query string for testing without the website: the same
+    // two forms `.npcbot dress` takes.
+    bool isId = true;
+    for (size_t i = 0; i < given.size(); ++i)
+        if (!isdigit((unsigned char)given[i]))
+            isId = false;
+
+    std::string query;
+    std::string lookName;
+
+    if (isId)
+    {
+        if (!FashionTableReachable())
+        {
+            SendSysMessage("Saved looks are not readable. Apply website/sql/007_fashion_grant.sql.");
+            SetSentErrorMessage(true);
+            return false;
+        }
+
+        uint32 lookId = uint32(atoi(given.c_str()));
+        if (QueryResult* result = LogsDatabase.PQuery(
+                "SELECT `look`, `name` FROM `%s`.`web_fashion` WHERE id = %u", FASHION_DB, lookId))
+        {
+            query = result->Fetch()[0].GetCppString();
+            lookName = result->Fetch()[1].GetCppString();
+            delete result;
+        }
+
+        if (query.empty())
+        {
+            PSendSysMessage("No saved look %u.", lookId);
+            SetSentErrorMessage(true);
+            return false;
+        }
+
+        if (lookName.empty())
+            lookName = "look " + given;
+    }
+    else
+    {
+        query = given;
+        lookName = "that look";
+    }
+
+    BotNpcLook look;
+    if (!ParseLook(query, look) || look.items.empty())
+    {
+        SendSysMessage("That look has no items in it.");
+        SetSentErrorMessage(true);
+        return false;
+    }
+
+    uint32 added = 0;
+    std::vector<std::string> skipped;
+
+    for (size_t s = 0; s < sizeof(DRESS_SLOTS) / sizeof(DRESS_SLOTS[0]); ++s)
+    {
+        DressSlot const& ds = DRESS_SLOTS[s];
+
+        std::map<uint8, uint32>::const_iterator want = look.items.find(ds.slot);
+        if (want == look.items.end())
+            continue;
+
+        uint32 itemId = ItemForDisplay(want->second, ds);
+        if (!itemId)
+        {
+            skipped.push_back(std::string(ds.name) + " (no item)");
+            continue;
+        }
+
+        ItemPosCountVec dest;
+        if (me->CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, itemId, 1) != EQUIP_ERR_OK || dest.empty())
+        {
+            skipped.push_back(std::string(ds.name) + " (bags full)");
+            continue;
+        }
+
+        Item* item = me->StoreNewItem(dest, itemId, true, Item::GenerateItemRandomPropertyId(itemId));
+        if (!item)
+        {
+            skipped.push_back(std::string(ds.name) + " (not created)");
+            continue;
+        }
+
+        // Unbound, the same as .additem does for yourself, so a piece can be
+        // handed on.
+        item->SetBinding(false);
+        me->SendNewItem(item, 1, false, true);
+        ++added;
+    }
+
+    PSendSysMessage("%s: %u item%s added.", lookName.c_str(), added, added == 1 ? "" : "s");
+
+    if (!skipped.empty())
+    {
+        std::string line = "Skipped: ";
+        for (size_t i = 0; i < skipped.size(); ++i)
+        {
+            if (i)
+                line += ", ";
+            line += skipped[i];
+        }
+        SendSysMessage(line.c_str());
+    }
+
+    return true;
+}
+
+/*
  * The core's way in. Declared in game/BotNpc.h and stubbed in
  * src/game/PlayerbotStubs.cpp -- the core never includes playerbot headers, so
  * `reload bot_npc` reaches the dressing through this and nothing else.
@@ -7760,19 +7909,26 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
         {
             BotNpcEntry const& e = itr.second;
 
-            if (!e.IsPlaced())
+            std::vector<BotNpcSpawn const*> copies = sBotNpcMgr.SpawnsOf(e.id);
+
+            if (copies.empty())
             {
                 PSendSysMessage("%s (#%u) -- %s %s, not placed", e.name.c_str(), e.id,
                                 SexName(e.gender), RaceName(e.race).c_str());
                 continue;
             }
 
-            Player* inWorld = sObjectMgr.GetPlayer(ObjectGuid(HIGHGUID_PLAYER, e.characterGuid), false);
-
-            PSendSysMessage("%s (#%u) -- %s %s, menu %u, map %u at %.0f %.0f %.0f -- %s",
+            PSendSysMessage("%s (#%u) -- %s %s, menu %u",
                             e.name.c_str(), e.id, SexName(e.gender), RaceName(e.race).c_str(),
-                            e.gossipMenuId, e.mapId, e.x, e.y, e.z,
-                            inWorld ? "standing" : "not logged in");
+                            e.gossipMenuId);
+
+            // One line per body: a design may stand in several places.
+            for (BotNpcSpawn const* c : copies)
+            {
+                Player* inWorld = sObjectMgr.GetPlayer(ObjectGuid(HIGHGUID_PLAYER, c->characterGuid), false);
+                PSendSysMessage("  map %u at %.0f %.0f %.0f -- %s", c->mapId, c->x, c->y, c->z,
+                                inWorld ? "standing" : "not logged in");
+            }
         }
         return true;
     }
@@ -7786,10 +7942,16 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
         return false;
     }
 
+    // `del` is `unplace` by another name: it is the word people reach for, and
+    // what it does is exactly unplace -- the body goes, the design stays.
+    if (action == "del")
+        action = "unplace";
+
     if (action != "place" && action != "move" && action != "reset" && action != "save" &&
-        action != "unplace" && action != "menu" && action != "dress" && action != "idle")
+        action != "unplace" && action != "menu" && action != "dress" && action != "idle" &&
+        action != "emote")
     {
-        SendSysMessage("Usage: .npcbot place|move|reset|save|dress|menu|idle|unplace <name>, or .npcbot list");
+        SendSysMessage("Usage: .npcbot place|move|reset|save|dress|menu|idle|emote|unplace <name or #id>, or .npcbot list");
         SendSysMessage("  .npcbot place <name>      stand the design called <name> here, for good");
         SendSysMessage("  .npcbot move <name>       bring it here for now; its post does not change");
         SendSysMessage("  .npcbot reset <name>      send it back to its post");
@@ -7797,6 +7959,9 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
         SendSysMessage("  .npcbot dress <name>      re-wear the look on its design");
         SendSysMessage("  .npcbot menu <name> <id>  give it a gossip_menu to say");
         SendSysMessage("  .npcbot idle <name>       what it does unprompted; add a trigger to run one now");
+        SendSysMessage("  .npcbot emote <name>      what it answers emotes with; add an emote id to run one now");
+        SendSysMessage("  .npcbot unplace [name]    put the body away, the design stays; also .npcbot del");
+        SendSysMessage("Leave out the name on place, move, reset, save, dress and unplace to use the bot NPC you have selected.");
         // Not .npcbot subcommands, but they are the other half of giving an NPC
         // somewhere to walk, and this is where somebody looks for that.
         SendSysMessage("With the NPC selected:");
@@ -7813,19 +7978,97 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
     // out as "Which one?" and looked like the design was missing rather than
     // like the name never reached the lookup.
     char* nameArg = ExtractQuotedOrLiteralArg(&args);
+    BotNpcEntry const* found = nullptr;
+
     if (!nameArg || !*nameArg)
     {
-        PSendSysMessage("Which one? .npcbot %s <name>   (quote it if it has a space)", action.c_str());
-        SetSentErrorMessage(true);
-        return false;
+        /*
+         * NO NAME MEANS THE SELECTION, for the verbs that take nothing after
+         * the name. You are usually standing in front of the one you mean, and
+         * a selected character is unambiguous where a shared name is not.
+         * GetSelectedPlayer answers with YOU when nothing is selected, which
+         * finds no design, so that falls to the same refusal.
+         *
+         * NOT menu, idle or emote: their own argument would be read as the NPC
+         * (`.npcbot emote 17` is design #17, not emote 17 on the selection).
+         * `place` works on a selection only to re-post one already standing --
+         * a design with no body has nothing to select.
+         */
+        if (action == "unplace" || action == "move" || action == "reset" || action == "save" ||
+            action == "dress" || action == "place")
+        {
+            Player* target = GetSelectedPlayer();
+            found = target ? sBotNpcMgr.Get(target->GetGUIDLow()) : nullptr;
+
+            if (!found)
+            {
+                PSendSysMessage("Select a bot NPC, or .npcbot %s <name or #id>.", action.c_str());
+                SetSentErrorMessage(true);
+                return false;
+            }
+        }
+        else
+        {
+            PSendSysMessage("Which one? .npcbot %s <name or #id>   (quote a name with a space)", action.c_str());
+            SetSentErrorMessage(true);
+            return false;
+        }
     }
 
-    BotNpcEntry const* found = sBotNpcMgr.FindByName(nameArg);
+    /*
+     * BY NAME OR BY #ID. Two designs may share a name since 2026-09-21 -- the
+     * same NPC standing in two places, saying two different things -- and the
+     * id is the only way to tell them apart. `#12` or a bare `12`; a name that
+     * matches more than one design is REFUSED with the ids listed, never
+     * resolved to whichever came first, because picking silently is how you
+     * end up moving the wrong one of a pair that look identical in game.
+     */
     if (!found)
     {
-        PSendSysMessage("No bot NPC called %s. Design one on the website first.", nameArg);
-        SetSentErrorMessage(true);
-        return false;
+        char const* idText = nameArg[0] == '#' ? nameArg + 1 : nameArg;
+        bool isId = *idText != 0;
+        for (char const* c = idText; *c; ++c)
+            if (!isdigit((unsigned char)*c))
+                isId = false;
+
+        if (isId)
+        {
+            found = sBotNpcMgr.FindById(uint32(atoi(idText)));
+            if (!found)
+            {
+                PSendSysMessage("No bot NPC #%s. .npcbot list shows them.", idText);
+                SetSentErrorMessage(true);
+                return false;
+            }
+        }
+        else
+        {
+            std::vector<BotNpcEntry const*> matches = sBotNpcMgr.FindByName(nameArg);
+            if (matches.empty())
+            {
+                PSendSysMessage("No bot NPC called %s. Design one on the website first.", nameArg);
+                SetSentErrorMessage(true);
+                return false;
+            }
+
+            if (matches.size() > 1)
+            {
+                PSendSysMessage("%u bot NPCs are called %s. Say which: .npcbot %s #<id>",
+                                uint32(matches.size()), nameArg, action.c_str());
+                for (BotNpcEntry const* m : matches)
+                {
+                    std::vector<BotNpcSpawn const*> copies = sBotNpcMgr.SpawnsOf(m->id);
+                    if (copies.empty())
+                        PSendSysMessage("  #%u: not placed", m->id);
+                    for (BotNpcSpawn const* c : copies)
+                        PSendSysMessage("  #%u: map %u at %.0f %.0f %.0f", m->id, c->mapId, c->x, c->y, c->z);
+                }
+                SetSentErrorMessage(true);
+                return false;
+            }
+
+            found = matches.front();
+        }
     }
 
     // A working copy: everything below edits this and hands it to Save(), so a
@@ -7833,28 +8076,116 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
     BotNpcEntry entry = *found;
     std::string name = entry.name;
 
-    Player* bot = entry.IsPlaced()
-        ? sObjectMgr.GetPlayer(ObjectGuid(HIGHGUID_PLAYER, entry.characterGuid), false)
-        : nullptr;
+    // What to TYPE to reach this one again, for the hints below: its name while
+    // that is unambiguous, its #id once another design shares the name.
+    std::string handle;
+    if (sBotNpcMgr.FindByName(name).size() > 1)
+        handle = "#" + std::to_string(entry.id);
+    else if (name.find(' ') != std::string::npos)
+        handle = "\"" + name + "\"";
+    else
+        handle = name;
 
-    // ---------------------------------------------------------- unplace
-    if (action == "unplace")
+    /*
+     * WHICH BODY. One design may stand in several places since sql/custom/113
+     * (the same NPC in every starting zone), so a name says which NPC and not
+     * which copy of it. The selection says which copy, and it wins whenever it
+     * is one of this design's; a design with exactly one copy needs no
+     * selection at all, which keeps every single NPC working the way it did.
+     *
+     * `chosen` stays null when there are several and none is selected. The
+     * verbs that act on ONE body (unplace, move, reset, save, and place on a
+     * selection) refuse then and list the copies; the rest pick for
+     * themselves, below.
+     */
+    std::vector<BotNpcSpawn const*> const spawns = sBotNpcMgr.SpawnsOf(entry.id);
+    BotNpcSpawn const* chosen = nullptr;
+
+    if (Player* selected = me ? GetSelectedPlayer() : nullptr)
+        if (BotNpcSpawn const* s = sBotNpcMgr.GetSpawn(selected->GetGUIDLow()))
+            if (s->designId == entry.id)
+                chosen = s;
+
+    // `place` needs to know: on a selected copy it re-posts that copy, and
+    // otherwise it stands up a new one.
+    bool const chosenBySelection = chosen != nullptr;
+
+    if (!chosen && spawns.size() == 1)
+        chosen = spawns.front();
+
+    auto bodyOf = [](BotNpcSpawn const* s) -> Player*
     {
-        if (!entry.IsPlaced())
+        return s ? sObjectMgr.GetPlayer(ObjectGuid(HIGHGUID_PLAYER, s->characterGuid), false) : nullptr;
+    };
+
+    // Every copy in world, for the verbs that change what the DESIGN says and
+    // so have to reach all of them: menu and dress.
+    std::vector<Player*> standing;
+    for (BotNpcSpawn const* s : spawns)
+        if (Player* p = bodyOf(s))
+            if (p->IsInWorld())
+                standing.push_back(p);
+
+    Player* bot = bodyOf(chosen);
+
+    // Idle and emote run a rule on one body to watch it. With no copy chosen,
+    // the nearest one standing on your map, else any one standing.
+    if (!bot && !standing.empty())
+    {
+        bot = standing.front();
+        if (me)
         {
-            PSendSysMessage("%s is not placed.", name.c_str());
+            float best = -1.0f;
+            for (Player* p : standing)
+            {
+                if (p->GetMapId() != me->GetMapId())
+                    continue;
+                float d = me->GetDistance(p);
+                if (best < 0.0f || d < best)
+                {
+                    best = d;
+                    bot = p;
+                }
+            }
+        }
+    }
+
+    // The refusal for a verb that needs ONE body and was not told which.
+    auto needOneCopy = [&]() -> bool
+    {
+        if (spawns.empty())
+        {
+            PSendSysMessage("%s is not placed. .npcbot place %s stands it here.", name.c_str(), handle.c_str());
             SetSentErrorMessage(true);
             return false;
         }
 
-        uint32 wasGuid = entry.characterGuid;
+        if (chosen)
+            return true;
+
+        PSendSysMessage("%s stands in %u places. Select the one you mean:", name.c_str(), uint32(spawns.size()));
+        for (BotNpcSpawn const* s : spawns)
+            PSendSysMessage("  map %u at %.0f %.0f %.0f", s->mapId, s->x, s->y, s->z);
+        SetSentErrorMessage(true);
+        return false;
+    };
+
+    // ---------------------------------------------------------- unplace
+    if (action == "unplace")
+    {
+        if (!needOneCopy())
+            return false;
+
+        uint32 wasGuid = chosen->characterGuid;
+        bot = bodyOf(chosen);
 
         // THE DESIGN SURVIVES. Unplacing gives up the body, not the name, the
         // race, the look or the words -- place it again and it is the same NPC.
         // Deleting the design itself is the website's job, because that is
-        // where it was made.
-        entry.characterGuid = 0;
-        sBotNpcMgr.Save(entry);
+        // where it was made. With several copies this puts away the one you
+        // selected and leaves the others standing.
+        sBotNpcMgr.RemoveSpawn(wasGuid);
+        chosen = nullptr;
 
         // Off the login list. No "always" event is touched: bot NPCs are kept
         // online by their own row, not by that flag -- see
@@ -7872,8 +8203,11 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
             sRandomPlayerbotMgr.LogoutPlayerBot(wasGuid);
         }
 
-        PSendSysMessage("%s is put away. The design is still there; .npcbot place %s brings it back.",
-                        name.c_str(), name.c_str());
+        if (spawns.size() > 1)
+            PSendSysMessage("This %s is put away. %u more still standing.", name.c_str(), uint32(spawns.size() - 1));
+        else
+            PSendSysMessage("%s is put away. The design is still there; .npcbot place %s brings it back.",
+                            name.c_str(), handle.c_str());
         return true;
     }
 
@@ -7883,7 +8217,7 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
         uint32 menuId;
         if (!ExtractUInt32(&args, menuId))
         {
-            PSendSysMessage("Which menu? .npcbot menu %s <gossip_menu id>", name.c_str());
+            PSendSysMessage("Which menu? .npcbot menu %s <gossip_menu id>", handle.c_str());
             SetSentErrorMessage(true);
             return false;
         }
@@ -7891,8 +8225,9 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
         entry.gossipMenuId = menuId;
         sBotNpcMgr.Save(entry);
 
-        if (bot)
-            bot->SetBotNpcGossipMenuId(menuId);
+        // The menu is the design's, so every copy says it.
+        for (Player* p : standing)
+            p->SetBotNpcGossipMenuId(menuId);
 
         PSendSysMessage("%s now shows menu %u.", name.c_str(), menuId);
         return true;
@@ -7959,7 +8294,7 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
                     PSendSysMessage("  %s -- script %u, every %us", kindNames[i], rule.scriptId, rule.period);
             }
 
-            PSendSysMessage("Run one now: .npcbot idle %s <loop|near|after_talk|custom>", name.c_str());
+            PSendSysMessage("Run one now: .npcbot idle %s <loop|near|after_talk|custom>", handle.c_str());
             return true;
         }
 
@@ -7977,7 +8312,7 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
 
         if (!bot)
         {
-            PSendSysMessage("%s is not in world. .npcbot place %s first.", name.c_str(), name.c_str());
+            PSendSysMessage("%s is not in world. .npcbot place %s first.", name.c_str(), handle.c_str());
             SetSentErrorMessage(true);
             return false;
         }
@@ -8036,12 +8371,88 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
         return true;
     }
 
+    // ------------------------------------------------------------ emote
+    /*
+     * WHAT IT ANSWERS AN EMOTE WITH, and running one without a second person.
+     *
+     * A separate subcommand rather than a fifth name under `idle`, because it
+     * is a LIST: `.npcbot idle <name> emote` would have to ask which one, and a
+     * subcommand that sometimes takes another argument is a subcommand people
+     * get wrong. sql/custom/108.
+     *
+     * The bare form lists them. With a number it runs that rule NOW, ignoring
+     * both the cooldown and busyUntil -- somebody typing this has asked for it,
+     * and waiting out a sixty second cooldown to see whether the third line
+     * reads right is the whole reason the command exists.
+     */
+    if (action == "emote")
+    {
+        BotNpcEmoteRules const* emotes = sBotNpcMgr.EmoteRules(entry.id);
+
+        char* which = ExtractLiteralArg(&args);
+        std::string wanted = which ? which : "";
+
+        if (wanted.empty())
+        {
+            if (!emotes || emotes->empty())
+            {
+                PSendSysMessage("%s answers no emotes. Add one on /admin/npcbots/%u.", name.c_str(), entry.id);
+                return true;
+            }
+
+            for (BotNpcEmoteRule const& r : *emotes)
+                PSendSysMessage("  emote %u -- script %u, at most every %us", r.emoteId, r.scriptId, r.period);
+
+            PSendSysMessage("Run one now: .npcbot emote %s <emote>", handle.c_str());
+            return true;
+        }
+
+        uint32 const textEmote = uint32(atoi(wanted.c_str()));
+
+        BotNpcEmoteRule const* match = nullptr;
+        if (emotes)
+            for (BotNpcEmoteRule const& r : *emotes)
+                if (r.emoteId == textEmote)
+                    match = &r;
+
+        if (!match)
+        {
+            PSendSysMessage("%s has no answer for emote %u.", name.c_str(), textEmote);
+            SetSentErrorMessage(true);
+            return false;
+        }
+
+        if (!bot)
+        {
+            PSendSysMessage("%s is not in world. .npcbot place %s first.", name.c_str(), handle.c_str());
+            SetSentErrorMessage(true);
+            return false;
+        }
+
+        if (sGenericScripts.find(match->scriptId) == sGenericScripts.end())
+        {
+            PSendSysMessage("Its answer to emote %u points at generic_scripts %u, which is not loaded. "
+                            "Run `reload generic_scripts` from the console.", textEmote, match->scriptId);
+            SetSentErrorMessage(true);
+            return false;
+        }
+
+        // THE TARGET IS YOU, which is the one the trigger would really pass: an
+        // emote always has somebody behind it, unlike `loop`. A script written
+        // against a target it will not have in the field should fail here too.
+        bot->GetMap()->ScriptsStart(sGenericScripts, match->scriptId, bot->GetObjectGuid(),
+                                    me ? me->GetObjectGuid() : ObjectGuid());
+
+        PSendSysMessage("%s: answering emote %u (script %u).", name.c_str(), textEmote, match->scriptId);
+        return true;
+    }
+
     // ------------------------------------------------------------ dress
     if (action == "dress")
     {
         if (!bot)
         {
-            PSendSysMessage("%s is not in world. .npcbot place %s first.", name.c_str(), name.c_str());
+            PSendSysMessage("%s is not in world. .npcbot place %s first.", name.c_str(), handle.c_str());
             SetSentErrorMessage(true);
             return false;
         }
@@ -8136,7 +8547,24 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
         // What is on the character now. Without this the row still claims the
         // previous outfit is worn, and the next pass would dress it all over
         // again -- which is exactly the loop that orphaned items.
-        sBotNpcMgr.MarkLookApplied(entry.id, query);
+        sBotNpcMgr.MarkLookApplied(bot->GetGUIDLow(), query);
+
+        // The look is the design's, so every other copy standing wears it too.
+        // One not in world picks it up at login, since its look_applied now
+        // differs from the design's look.
+        for (Player* p : standing)
+        {
+            if (p == bot)
+                continue;
+
+            std::string otherError;
+            std::vector<std::string> otherSkipped;
+            if (DressBotNpc(p, look, otherError, otherSkipped))
+            {
+                p->SaveToDB();
+                sBotNpcMgr.MarkLookApplied(p->GetGUIDLow(), query);
+            }
+        }
 
         if (skipped.empty())
         {
@@ -8175,12 +8603,11 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
      */
     if (action == "move" || action == "reset" || action == "save")
     {
-        if (!entry.IsPlaced())
-        {
-            PSendSysMessage("%s is not placed. .npcbot place %s stands it here.", name.c_str(), name.c_str());
-            SetSentErrorMessage(true);
+        if (!needOneCopy())
             return false;
-        }
+
+        bot = bodyOf(chosen);
+        BotNpcSpawn post = *chosen;
 
         if (!bot || !bot->IsInWorld())
         {
@@ -8191,15 +8618,15 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
 
         if (action == "save")
         {
-            entry.mapId = bot->GetMapId();
-            entry.x     = bot->GetPositionX();
-            entry.y     = bot->GetPositionY();
-            entry.z     = bot->GetPositionZ();
+            post.mapId = bot->GetMapId();
+            post.x     = bot->GetPositionX();
+            post.y     = bot->GetPositionY();
+            post.z     = bot->GetPositionZ();
             // ITS OWN facing, not yours the way place takes it: this is the
             // NPC's pose being kept, and it is already facing the way it is
             // facing.
-            entry.o     = bot->GetOrientation();
-            sBotNpcMgr.Save(entry);
+            post.o     = bot->GetOrientation();
+            sBotNpcMgr.SaveSpawn(post);
 
             PSendSysMessage("%s: this is its post now.", name.c_str());
             return true;
@@ -8221,7 +8648,7 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
 
         if (action == "reset")
         {
-            bot->TeleportTo(entry.mapId, entry.x, entry.y, entry.z, entry.o);
+            bot->TeleportTo(post.mapId, post.x, post.y, post.z, post.o);
             PSendSysMessage("%s is back on its post.", name.c_str());
             return true;
         }
@@ -8257,8 +8684,21 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
      * fights or levels -- it wants a body that can hold armour, and a level 60
      * warrior can hold all of it.
      */
-    if (!entry.IsPlaced())
+    BotNpcSpawn spawn;
+    spawn.designId = entry.id;
+
+    // On a SELECTED copy, place re-posts it where you stand, as it always did
+    // for an NPC with one body. Anything else stands up a new copy: that is how
+    // one design comes to be in every starting zone.
+    if (chosen && chosenBySelection)
     {
+        spawn = *chosen;
+        bot = bodyOf(chosen);
+    }
+    else
+    {
+        bot = nullptr;
+
         /*
          * A CHARACTER OF THAT NAME ALREADY THERE IS ADOPTED, NOT REFUSED.
          *
@@ -8276,7 +8716,28 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
          * is still what somebody typing `.npcbot place Marla` meant: there is a
          * Marla, stand her up.
          */
+        /*
+         * BUT NEVER ANOTHER DESIGN'S BODY. Two designs may share a name, and the
+         * first one's character answers to that name too -- adopting it would
+         * put two designs on one body, each re-dressing and re-posting it over
+         * the other. A character some other design already wears is skipped,
+         * and with nothing else to adopt this one gets a body of its own.
+         */
+        /*
+         * AND NEVER A BODY ALREADY STANDING, this design's included. With
+         * copies, the character of that name may be the copy in the next zone
+         * over, and adopting it would move it here rather than add one. So
+         * only a character that is nobody's spawn is up for adoption, which is
+         * what an unplaced former body is.
+         */
+        auto adoptable = [](uint32 guidLow)
+        {
+            return sBotNpcMgr.GetSpawn(guidLow) == nullptr;
+        };
+
         ObjectGuid existing = sObjectMgr.GetPlayerGuidByName(name);
+        if (existing && !adoptable(existing.GetCounter()))
+            existing = ObjectGuid();
 
         /*
          * AND ASK THE TABLE IF THE CACHE SAID NO. GetPlayerGuidByName goes
@@ -8284,7 +8745,8 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
          * fails above it -- so a body called "Innkeeper Allison" is invisible
          * to it, placing would not adopt the character already standing there,
          * and CreateBot would make a SECOND one. That is how a stray "Help"
-         * came to exist the first time round.
+         * came to exist the first time round. Every row, not LIMIT 1: with a
+         * twin standing somewhere the first row may well be its body.
          */
         if (!existing)
         {
@@ -8292,16 +8754,24 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
             CharacterDatabase.escape_string(safe);
 
             if (QueryResult* result = CharacterDatabase.PQuery(
-                    "SELECT guid FROM characters WHERE name = '%s' LIMIT 1", safe.c_str()))
+                    "SELECT guid FROM characters WHERE name = '%s' ORDER BY guid", safe.c_str()))
             {
-                existing = ObjectGuid(HIGHGUID_PLAYER, result->Fetch()[0].GetUInt32());
+                do
+                {
+                    uint32 guidLow = result->Fetch()[0].GetUInt32();
+                    if (adoptable(guidLow))
+                    {
+                        existing = ObjectGuid(HIGHGUID_PLAYER, guidLow);
+                        break;
+                    }
+                } while (result->NextRow());
                 delete result;
             }
         }
 
         if (existing)
         {
-            entry.characterGuid = existing.GetCounter();
+            spawn.characterGuid = existing.GetCounter();
             bot = sObjectMgr.GetPlayer(existing, false);
 
             PSendSysMessage("Using the character %s that is already there.", name.c_str());
@@ -8322,11 +8792,32 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
             std::string createName = name;
             createName.erase(std::remove(createName.begin(), createName.end(), ' '), createName.end());
 
+            /*
+             * A TWIN CANNOT BE CREATED UNDER ITS OWN NAME: CreateBot refuses a
+             * name any character already has, and the first design's body has
+             * it. So it is born under a random bot name -- valid by
+             * construction -- and renamed below like every other body.
+             */
+            {
+                std::string safe = createName;
+                CharacterDatabase.escape_string(safe);
+                if (QueryResult* result = CharacterDatabase.PQuery(
+                        "SELECT 1 FROM characters WHERE name = '%s' LIMIT 1", safe.c_str()))
+                {
+                    delete result;
+                    createName.clear();
+                }
+            }
+
             std::ostringstream param;
-            param << "name=" << createName
-                  << " race=" << entry.race
+            if (!createName.empty())
+                param << "name=" << createName << " ";
+            param << "race=" << entry.race
                   << " gender=" << entry.gender
-                  << " class=1 level=60";
+                  << " class=1 level=60"
+                  // Born without the warrior kit, so the login pass dresses a
+                  // bare body and nobody sees the shield come off.
+                  << " naked=1";
 
             std::list<std::string> messages;
             ObjectGuid made;
@@ -8341,13 +8832,18 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
                 return false;
             }
 
-            entry.characterGuid = made.GetCounter();
+            spawn.characterGuid = made.GetCounter();
             bot = sObjectMgr.GetPlayer(made, false);
 
             // And put the real name on, cache included -- GetPlayerGuidByName
             // answers from that cache, and a body findable only by its stripped
             // name is a body the next `place` will not adopt.
-            BotNpc_RenameCharacter(entry.characterGuid, bot, createName, name);
+            // Read back what it was really born as: a twin's name was picked
+            // by CreateBot, not by us.
+            std::string bornAs = createName;
+            if (PlayerCacheData const* data = sObjectMgr.GetPlayerDataByGUID(spawn.characterGuid))
+                bornAs = data->sName;
+            BotNpc_RenameCharacter(spawn.characterGuid, bot, bornAs, name);
 
             PSendSysMessage("Made a body for %s.", name.c_str());
         }
@@ -8356,17 +8852,18 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
     if (!entry.npcFlags)
         entry.npcFlags = UNIT_NPC_FLAG_GOSSIP;
 
-    entry.mapId = me->GetMapId();
-    entry.x     = me->GetPositionX();
-    entry.y     = me->GetPositionY();
-    entry.z     = me->GetPositionZ();
+    spawn.mapId = me->GetMapId();
+    spawn.x     = me->GetPositionX();
+    spawn.y     = me->GetPositionY();
+    spawn.z     = me->GetPositionZ();
     // Facing the way the placer faces. This used to add a half-turn on the
     // belief that GetOrientation is the direction you look FROM; it is the
     // direction you look, so every NPC stood facing backwards. Stand where it
     // should be and look where it should look.
-    entry.o     = me->GetOrientation();
+    spawn.o     = me->GetOrientation();
 
     sBotNpcMgr.Save(entry);
+    sBotNpcMgr.SaveSpawn(spawn);
 
     /*
      * IT APPEARS NOW; the ROW is what makes it survive a restart.
@@ -8380,9 +8877,9 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
      *
      * So the push below is only about NOW -- it saves waiting for a restart.
      */
-    uint32 accountId = sObjectMgr.GetPlayerAccountIdByGUID(ObjectGuid(HIGHGUID_PLAYER, entry.characterGuid));
+    uint32 accountId = sObjectMgr.GetPlayerAccountIdByGUID(ObjectGuid(HIGHGUID_PLAYER, spawn.characterGuid));
 
-    uint32 wantGuid = entry.characterGuid;
+    uint32 wantGuid = spawn.characterGuid;
     bool queued = std::find_if(sPlayerbotAIConfig.freeAltBots.begin(), sPlayerbotAIConfig.freeAltBots.end(),
                                [wantGuid](std::pair<uint32, uint32> i) { return i.second == wantGuid; })
                   != sPlayerbotAIConfig.freeAltBots.end();
@@ -8409,7 +8906,7 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
         bot->SetUInt32Value(UNIT_NPC_FLAGS, entry.npcFlags);
         bot->SetBotNpcGossipMenuId(entry.gossipMenuId);
         BotNpc_ApplySubname(bot, entry.subname);
-        bot->TeleportTo(entry.mapId, entry.x, entry.y, entry.z, entry.o);
+        bot->TeleportTo(spawn.mapId, spawn.x, spawn.y, spawn.z, spawn.o);
 
         // Dress it on the way in, so placing a design is one step and not two.
         if (!entry.look.empty())
@@ -8418,8 +8915,13 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
             std::string error;
             std::vector<std::string> skipped;
 
-            if (ParseLook(entry.look, look) && !DressBotNpc(bot, look, error, skipped))
-                PSendSysMessage("  (could not dress it: %s)", error.c_str());
+            if (ParseLook(entry.look, look))
+            {
+                if (DressBotNpc(bot, look, error, skipped))
+                    sBotNpcMgr.MarkLookApplied(spawn.characterGuid, entry.look);
+                else
+                    PSendSysMessage("  (could not dress it: %s)", error.c_str());
+            }
         }
 
         bot->SaveToDB();
@@ -8433,6 +8935,10 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
         PSendSysMessage("%s will be along shortly, and stands here from now on%s.",
                         name.c_str(), saySomething);
     }
+
+    uint32 const copies = uint32(sBotNpcMgr.SpawnsOf(entry.id).size());
+    if (copies > 1)
+        PSendSysMessage("%s now stands in %u places. Select one to move or unplace it.", name.c_str(), copies);
 
     return true;
 }

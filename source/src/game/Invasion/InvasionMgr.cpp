@@ -18,6 +18,7 @@
 
 #include "Chat.h"
 #include "Log.h"
+#include "Database/DatabaseEnv.h"
 #include "Map.h"
 #include "ObjectAccessor.h"
 #include "ObjectGuid.h"
@@ -360,9 +361,23 @@ void InvasionManager::SendHome(Invasion const& inv, Player* invader)
     invader->TeleportTo(inv.origin.mapId, inv.origin.x, inv.origin.y, inv.origin.z, inv.origin.o);
 }
 
-void InvasionManager::Conclude(Invasion& inv, char const* invaderLine, char const* defenderLine,
-                               uint32 delayMs)
+void InvasionManager::RecordMatch(Invasion const& inv, ObjectGuid winner) const
 {
+    if (inv.phase != PHASE_FIGHTING)
+        return;
+
+    // One statement with an AUTO_INCREMENT key, so there is no duplicate to
+    // collide with and no partner write for the unordered PExecute to race.
+    CharacterDatabase.PExecute("INSERT INTO character_invasion_match (invader, defender, winner) VALUES ('%u', '%u', '%u')",
+                               inv.invader.GetCounter(), inv.defender.GetCounter(), winner.GetCounter());
+}
+
+void InvasionManager::Conclude(Invasion& inv, char const* invaderLine, char const* defenderLine,
+                               uint32 delayMs, ObjectGuid winner)
+{
+    // Before the phase changes below: only a match that came to blows counts.
+    RecordMatch(inv, winner);
+
     // RESTAMPED AT THE END, AND THE ORDER MATTERS -- inv.phase is still the old
     // one on this line. A fight that ran its full Invasion.DurationSeconds would
     // otherwise use up most of the respite while it was still going on, and the
@@ -381,7 +396,7 @@ void InvasionManager::Conclude(Invasion& inv, char const* invaderLine, char cons
         Tell(sObjectAccessor.FindPlayer(inv.defender), defenderLine);
 }
 
-void InvasionManager::OnPlayerDeath(Player* victim)
+void InvasionManager::OnPlayerDeath(Player* victim, Unit* killer)
 {
     if (!victim)
         return;
@@ -416,6 +431,18 @@ void InvasionManager::OnPlayerDeath(Player* victim)
         // standing a continent away from where they started. Making them corpse
         // run out of the Barrens is not a death penalty, it is a half-hour of
         // walking, and avoiding exactly that is what the origin is FOR.
+        //
+        // A WIN, FOR THE BOARD (sql/custom/110), is the other side surviving
+        // and winning: it was THEM who landed the blow, through a pet or a
+        // totem as well as by hand, and they are still standing. A defender
+        // who falls to a wolf mid-fight has not been beaten by anybody, and a
+        // blow that lands after its striker has died is a draw.
+        ObjectGuid const opponent = victimIsInvader ? inv.defender : inv.invader;
+        Player* const killerPlayer = killer ? killer->GetCharmerOrOwnerPlayerOrPlayerItself() : nullptr;
+        Player* const opponentPlayer = sObjectAccessor.FindPlayer(opponent);
+        ObjectGuid const winner = (killerPlayer && killerPlayer->GetObjectGuid() == opponent &&
+                                   opponentPlayer && opponentPlayer->IsAlive()) ? opponent : ObjectGuid();
+
         if (victimIsInvader)
         {
             // AN INVADER STAYS DEAD, AND THAT IS THE WHOLE SEQUENCE. They lie
@@ -440,11 +467,11 @@ void InvasionManager::OnPlayerDeath(Player* victim)
             // the choice away.
             Conclude(inv, "You have fallen. Lie still -- you will be carried back.",
                           "You have driven off your attacker!",
-                     SecondsConfig(CONFIG_UINT32_INVASION_DEATH_LINGER_SECONDS));
+                     SecondsConfig(CONFIG_UINT32_INVASION_DEATH_LINGER_SECONDS), winner);
         }
         else
         {
-            Conclude(inv, "Your quarry has fallen.", "You have been slain by your invader.");
+            Conclude(inv, "Your quarry has fallen.", "You have been slain by your invader.", 0, winner);
         }
 
         return;
@@ -477,6 +504,10 @@ bool InvasionManager::OnPlayerLogout(Player* player)
                                itr->origin.z, itr->origin.o);
 
             Tell(sObjectAccessor.FindPlayer(itr->defender), "Your invader has fled the world.");
+
+            // Erased below without going through Conclude, so written down
+            // here. Nobody won: fleeing is not losing to anybody.
+            RecordMatch(*itr, ObjectGuid());
         }
         else
         {

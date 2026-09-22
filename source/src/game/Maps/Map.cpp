@@ -2737,9 +2737,20 @@ LuaScene* Map::GetLuaScene()
  * Made on first use past those, like the Lua state next door, so a map that
  * never sees an NPC with something to do never carries a driver for it.
  */
+BotNpcIdle* Map::GetBotNpcIdle()
+{
+    if (!m_botNpcIdle)
+        m_botNpcIdle = new BotNpcIdle();
+
+    return m_botNpcIdle;
+}
+
 void Map::UpdateBotNpcIdle(uint32 diff)
 {
-    if (!sBotNpcMgr.AnyIdleRules() || !HavePlayers())
+    // Emote rules are in the gate too, although they fire from a packet rather
+    // than from here: this pass is what keeps their cooldown rows alive, and
+    // the sweep at the end of it is what drops one whose NPC has left the map.
+    if ((!sBotNpcMgr.AnyIdleRules() && !sBotNpcMgr.AnyEmoteRules()) || !HavePlayers())
         return;
 
     if (!m_botNpcIdle)

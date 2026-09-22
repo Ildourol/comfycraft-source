@@ -45,6 +45,8 @@ bool ChatHandler::HandlePlayerbotCommand(char*)
     { SendSysMessage("Playerbots not built (BUILD_PLAYERBOTS=OFF)."); return true; }
 bool ChatHandler::HandleNpcBotCommand(char*)
     { SendSysMessage("Bot NPCs need the playerbots module (BUILD_PLAYERBOTS=OFF)."); return true; }
+bool ChatHandler::HandleAddDressingRoomCommand(char*)
+    { SendSysMessage("Saved looks need the playerbots module (BUILD_PLAYERBOTS=OFF)."); return true; }
 bool ChatHandler::HandleRandomPlayerbotCommand(char*)
     { SendSysMessage("Random playerbots not built (BUILD_PLAYERBOTS=OFF)."); return true; }
 bool ChatHandler::HandleAhBotCommand(char*)

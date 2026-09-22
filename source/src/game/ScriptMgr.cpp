@@ -826,6 +826,24 @@ void ScriptMgr::LoadScripts(ScriptMapMap& scripts, const char* tablename)
                 }
                 break;
             }
+            case SCRIPT_COMMAND_SET_STORY_FLAG:
+            {
+                // The NAME table is in tw_world and this loader has no business
+                // reaching across for it, the same call RUN_LUA and
+                // TELEPORT_RANDOM make one case up. Zero is the only value that
+                // cannot be a flag, and it means a row nobody filled in.
+                if (!tmp.storyFlag.flagId)
+                {
+                    sLog.outErrorDb("Table `%s` has datalong = 0 in SCRIPT_COMMAND_SET_STORY_FLAG for script id %u, which is not a story flag.", tablename, tmp.id);
+                    continue;
+                }
+                if (tmp.storyFlag.forget > 1)
+                {
+                    sLog.outErrorDb("Table `%s` has datalong2 = %u in SCRIPT_COMMAND_SET_STORY_FLAG for script id %u, which is neither set (0) nor forget (1).", tablename, tmp.storyFlag.forget, tmp.id);
+                    continue;
+                }
+                break;
+            }
             case SCRIPT_COMMAND_SET_BUSY:
             {
                 // Zero would clear the flags and put them back in the same

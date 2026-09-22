@@ -11,6 +11,7 @@
 #include "Guild/Guild.h"
 #include "Guild/GuildMgr.h"
 #include "BotNpc.h"
+#include "BotNpcIdle.h"
 
 #include <cmath>
 
@@ -19,17 +20,17 @@ INSTANTIATE_SINGLETON_1(BotNpcMgr);
 void BotNpcMgr::Load()
 {
     m_entries.clear();
-    m_byCharacter.clear();
+    m_spawns.clear();
     m_idle.clear();
+    m_emote.clear();
 
     // Bumped on every load, which is what restarts a `custom` scene. BotNpc.h
     // has the reasoning.
     ++m_generation;
 
     std::unique_ptr<QueryResult> result(CharacterDatabase.Query(
-        "SELECT id, name, race, gender, subname, look, look_applied, gossip_menu_id, "
-        "vendor_template_id, quest_giver_id, npc_flags, character_guid, "
-        "map, position_x, position_y, position_z, orientation "
+        "SELECT id, name, race, gender, subname, look, gossip_menu_id, "
+        "vendor_template_id, quest_giver_id, npc_flags "
         "FROM bot_npc"));
 
     if (!result)
@@ -38,8 +39,6 @@ void BotNpcMgr::Load()
         sLog.outString();
         return;
     }
-
-    uint32 placed = 0;
 
     do
     {
@@ -52,30 +51,20 @@ void BotNpcMgr::Load()
         entry.gender        = fields[3].GetUInt32();
         entry.subname       = fields[4].GetCppString();
         entry.look          = fields[5].GetCppString();
-        entry.lookApplied   = fields[6].GetCppString();
-        entry.gossipMenuId  = fields[7].GetUInt32();
-        entry.vendorTemplateId = fields[8].GetUInt32();
-        entry.questGiverId  = fields[9].GetUInt32();
-        entry.npcFlags      = fields[10].GetUInt32();
-        entry.characterGuid = fields[11].GetUInt32();
-        entry.mapId         = fields[12].GetUInt32();
-        entry.x             = fields[13].GetFloat();
-        entry.y             = fields[14].GetFloat();
-        entry.z             = fields[15].GetFloat();
-        entry.o             = fields[16].GetFloat();
-
-        if (entry.IsPlaced())
-            ++placed;
+        entry.gossipMenuId  = fields[6].GetUInt32();
+        entry.vendorTemplateId = fields[7].GetUInt32();
+        entry.questGiverId  = fields[8].GetUInt32();
+        entry.npcFlags      = fields[9].GetUInt32();
 
         m_entries[entry.id] = entry;
     }
     while (result->NextRow());
 
-    Reindex();
+    LoadSpawns();
     LoadIdleRules();
 
-    sLog.outString(">> Bot NPCs: %u design(s), %u placed, %u with something to do.",
-                   Count(), placed, uint32(m_idle.size()));
+    sLog.outString(">> Bot NPCs: %u design(s), %u standing, %u with something to do, %u answering an emote.",
+                   Count(), uint32(m_spawns.size()), uint32(m_idle.size()), uint32(m_emote.size()));
     sLog.outString();
 
     /*
@@ -88,6 +77,51 @@ void BotNpcMgr::Load()
      *
      * Reload() is the one that has live players to fix up, and says so.
      */
+}
+
+/*
+ * THE BODIES. sql/custom/113; BotNpc.h has why they are rows of their own.
+ *
+ * A ROW FOR A DESIGN THAT IS GONE IS DROPPED AND SAID SO. The website deletes
+ * spawns with their design, so this is hand-written SQL again; the character
+ * logs in as an ordinary bot, which is what a body with no design is.
+ */
+void BotNpcMgr::LoadSpawns()
+{
+    std::unique_ptr<QueryResult> result(CharacterDatabase.Query(
+        "SELECT character_guid, bot_npc_id, map, position_x, position_y, position_z, orientation, "
+        "look_applied FROM bot_npc_spawn"));
+
+    if (!result)
+        return;
+
+    do
+    {
+        Field* fields = result->Fetch();
+
+        BotNpcSpawn spawn;
+        spawn.characterGuid = fields[0].GetUInt32();
+        spawn.designId      = fields[1].GetUInt32();
+        spawn.mapId         = fields[2].GetUInt32();
+        spawn.x             = fields[3].GetFloat();
+        spawn.y             = fields[4].GetFloat();
+        spawn.z             = fields[5].GetFloat();
+        spawn.o             = fields[6].GetFloat();
+        spawn.lookApplied   = fields[7].GetCppString();
+
+        if (!spawn.characterGuid)
+            continue;
+
+        if (m_entries.find(spawn.designId) == m_entries.end())
+        {
+            sLog.outErrorDb("Table `bot_npc_spawn` has character %u standing for bot NPC #%u, which does not exist. Skipped.",
+                            spawn.characterGuid, spawn.designId);
+            continue;
+        }
+
+        m_spawns[spawn.characterGuid] = spawn;
+    }
+    while (result->NextRow());
 }
 
 /*
@@ -110,8 +144,8 @@ void BotNpcMgr::Load()
 void BotNpcMgr::LoadIdleRules()
 {
     std::unique_ptr<QueryResult> result(CharacterDatabase.Query(
-        "SELECT bot_npc_id, trigger_kind, enabled, period, radius, script_id, scene_id "
-        "FROM bot_npc_idle"));
+        "SELECT bot_npc_id, trigger_kind, enabled, period, radius, script_id, scene_id, emote_id "
+        "FROM bot_npc_idle ORDER BY bot_npc_id, emote_id"));
 
     if (!result)
         return;
@@ -123,6 +157,46 @@ void BotNpcMgr::LoadIdleRules()
         uint32 const designId = fields[0].GetUInt32();
         std::string const kind = fields[1].GetCppString();
 
+        /*
+         * THE EMOTE KIND LEAVES EARLY, because it is a list rather than one of
+         * the four indexed slots and shares almost nothing below this point:
+         * no radius, no scene, and a cooldown that means the same thing on
+         * every row instead of three different things. sql/custom/108.
+         */
+        if (kind == "emote")
+        {
+            BotNpcEmoteRule er;
+            er.emoteId  = fields[7].GetUInt32();
+            er.period   = fields[3].GetUInt32();
+            er.scriptId = fields[5].GetUInt32();
+
+            if (fields[2].GetUInt32() == 0 || !er.scriptId)
+                continue;                                   // switched off, or points at nothing
+
+            if (m_entries.find(designId) == m_entries.end())
+            {
+                sLog.outErrorDb("Table `bot_npc_idle` has an emote rule for bot NPC %u, which is not a design. Ignoring.", designId);
+                continue;
+            }
+
+            // A rule with no emote answers nothing, and would otherwise sit in
+            // the list being compared against every emote that ever arrives.
+            if (!er.emoteId)
+            {
+                sLog.outErrorDb("Table `bot_npc_idle` has an emote rule for bot NPC %u with emote_id 0, which is not an emote. Ignoring.", designId);
+                continue;
+            }
+
+            // Nothing throttles emotes in this core, so a zero here is a script
+            // restarted several times a second by a held-down macro. Clamped
+            // rather than refused, the same call the period below makes.
+            if (er.period < 1)
+                er.period = 1;
+
+            m_emote[designId].push_back(er);
+            continue;
+        }
+
         BotNpcIdleTrigger trigger;
         if (kind == "loop")             trigger = BOT_NPC_IDLE_LOOP;
         else if (kind == "near")        trigger = BOT_NPC_IDLE_NEAR;
@@ -130,7 +204,7 @@ void BotNpcMgr::LoadIdleRules()
         else if (kind == "custom")      trigger = BOT_NPC_IDLE_CUSTOM;
         else
         {
-            sLog.outErrorDb("Table `bot_npc_idle` has trigger_kind '%s' for bot NPC %u, which is not one of loop, near, after_talk, custom. Ignoring.",
+            sLog.outErrorDb("Table `bot_npc_idle` has trigger_kind '%s' for bot NPC %u, which is not one of loop, near, after_talk, custom, emote. Ignoring.",
                             kind.c_str(), designId);
             continue;
         }
@@ -192,7 +266,7 @@ bool BotNpc_Post(Unit const* unit, float& px, float& py, float& pz, float& po)
     if (unit->GetTypeId() == TYPEID_PLAYER)
     {
         Player const* pl = static_cast<Player const*>(unit);
-        if (BotNpcEntry const* post = sBotNpcMgr.Get(pl->GetGUIDLow()))
+        if (BotNpcSpawn const* post = sBotNpcMgr.GetSpawn(pl->GetGUIDLow()))
         {
             // Its row is for another map: there is no post here to measure
             // from, and a point on this map computed from those numbers would
@@ -254,6 +328,12 @@ BotNpcIdleRules const* BotNpcMgr::IdleRules(uint32 designId) const
 {
     std::map<uint32, BotNpcIdleRules>::const_iterator itr = m_idle.find(designId);
     return itr != m_idle.end() ? &itr->second : nullptr;
+}
+
+BotNpcEmoteRules const* BotNpcMgr::EmoteRules(uint32 designId) const
+{
+    std::map<uint32, BotNpcEmoteRules>::const_iterator itr = m_emote.find(designId);
+    return itr != m_emote.end() ? &itr->second : nullptr;
 }
 
 /*
@@ -424,6 +504,43 @@ void BotNpc_ApplyInvulnerability(Player* bot, bool on)
 }
 
 /*
+ * SOMEBODY EMOTED AT A BOT NPC. sql/custom/108.
+ *
+ * Called from HandleTextEmoteOpcode, beside housing's critter pat, and the two
+ * are the same shape deliberately: a free function reaching into a subsystem,
+ * because the seam that handler offers two lines further down --
+ * `Creature::AI()->ReceiveEmote` -- needs an AI class bound through
+ * creature_template.script_name, and a bot NPC is a Player and fails
+ * `unit->IsCreature()` before that ever comes up.
+ *
+ * THE CHEAP CHECKS FIRST, IN THIS ORDER, because this runs on every text emote
+ * every player on the server sends. AnyEmoteRules() is a bool and is false on a
+ * server that has never written one; the guid test is two comparisons; only
+ * then does anything look anything up.
+ */
+void BotNpc_ReceiveEmote(Player* who, uint32 textEmote, ObjectGuid target)
+{
+    if (!who || !sBotNpcMgr.AnyEmoteRules())
+        return;
+
+    // Targeted only, which is the design: /bow at her, not /bow near her. The
+    // client puts the player's current selection in the packet, and a bot NPC
+    // is a player, so this is where everything that is not one leaves.
+    if (!target.IsPlayer() || !sBotNpcMgr.IsBotNpc(target.GetCounter()))
+        return;
+
+    Map* map = who->GetMap();
+    if (!map)
+        return;
+
+    Player* bot = map->GetPlayer(target);
+    if (!bot || !bot->IsInWorld() || !bot->IsAlive())
+        return;
+
+    map->GetBotNpcIdle()->ReceiveEmote(map, bot, who, textEmote);
+}
+
+/*
  * ONE VALUE OUT OF `a=1&b=2`, or empty for a key that is not in there.
  *
  * No unescaping, and none needed: the dressing room is the only thing that
@@ -464,26 +581,34 @@ SheathState BotNpc_SheathFor(std::string const& look)
     return SHEATH_STATE_MELEE;
 }
 
-void BotNpcMgr::Reindex()
+BotNpcEntry const* BotNpcMgr::Get(uint32 characterGuid) const
 {
-    m_byCharacter.clear();
+    BotNpcSpawn const* spawn = GetSpawn(characterGuid);
+    if (!spawn)
+        return nullptr;
 
-    for (const auto& itr : m_entries)
-        if (itr.second.IsPlaced())
-            m_byCharacter[itr.second.characterGuid] = itr.first;
+    std::map<uint32, BotNpcEntry>::const_iterator itr = m_entries.find(spawn->designId);
+    return itr == m_entries.end() ? nullptr : &itr->second;
 }
 
-BotNpcEntry const* BotNpcMgr::Get(uint32 characterGuid) const
+BotNpcSpawn const* BotNpcMgr::GetSpawn(uint32 characterGuid) const
 {
     if (!characterGuid)
         return nullptr;
 
-    std::map<uint32, uint32>::const_iterator at = m_byCharacter.find(characterGuid);
-    if (at == m_byCharacter.end())
-        return nullptr;
+    std::map<uint32, BotNpcSpawn>::const_iterator itr = m_spawns.find(characterGuid);
+    return itr == m_spawns.end() ? nullptr : &itr->second;
+}
 
-    std::map<uint32, BotNpcEntry>::const_iterator itr = m_entries.find(at->second);
-    return itr == m_entries.end() ? nullptr : &itr->second;
+std::vector<BotNpcSpawn const*> BotNpcMgr::SpawnsOf(uint32 designId) const
+{
+    std::vector<BotNpcSpawn const*> found;
+
+    for (const auto& itr : m_spawns)
+        if (itr.second.designId == designId)
+            found.push_back(&itr.second);
+
+    return found;
 }
 
 /*
@@ -508,13 +633,21 @@ static bool BotNpcNameEquals(std::string const& a, std::string const& b)
     return true;
 }
 
-BotNpcEntry const* BotNpcMgr::FindByName(std::string const& name) const
+std::vector<BotNpcEntry const*> BotNpcMgr::FindByName(std::string const& name) const
 {
+    std::vector<BotNpcEntry const*> found;
+
     for (const auto& itr : m_entries)
         if (BotNpcNameEquals(itr.second.name, name))
-            return &itr.second;
+            found.push_back(&itr.second);
 
-    return nullptr;
+    return found;
+}
+
+BotNpcEntry const* BotNpcMgr::FindById(uint32 id) const
+{
+    std::map<uint32, BotNpcEntry>::const_iterator itr = m_entries.find(id);
+    return itr == m_entries.end() ? nullptr : &itr->second;
 }
 
 void BotNpcMgr::ApplyToLoggedIn()
@@ -604,11 +737,12 @@ void BotNpcMgr::ApplyToLoggedIn()
          * identical, and guessing wrong re-equips the outfit and orphans the
          * old one. sql/custom/087.
          */
-        if (entry && !entry->look.empty() && entry->look != entry->lookApplied)
+        BotNpcSpawn const* spawn = GetSpawn(player->GetGUIDLow());
+        if (entry && spawn && !entry->look.empty() && entry->look != spawn->lookApplied)
         {
             std::string error;
             if (BotNpc_Dress(player, entry->look, error))
-                MarkLookApplied(entry->id, entry->look);
+                MarkLookApplied(player->GetGUIDLow(), entry->look);
             else
                 sLog.outError("Bot NPC %s could not be dressed on reload: %s",
                               player->GetName(), error.c_str());
@@ -636,7 +770,6 @@ void BotNpcMgr::Save(BotNpcEntry const& entry)
     }
 
     m_entries[entry.id] = entry;
-    Reindex();
 
     std::string name = entry.name;
     std::string look = entry.look;
@@ -647,31 +780,48 @@ void BotNpcMgr::Save(BotNpcEntry const& entry)
 
     CharacterDatabase.PExecute(
         "UPDATE bot_npc SET name = '%s', race = %u, gender = %u, subname = '%s', look = '%s', "
-        "gossip_menu_id = %u, vendor_template_id = %u, quest_giver_id = %u, npc_flags = %u, character_guid = %u, "
-        "map = %u, position_x = %f, position_y = %f, position_z = %f, orientation = %f "
+        "gossip_menu_id = %u, vendor_template_id = %u, quest_giver_id = %u, npc_flags = %u "
         "WHERE id = %u",
         name.c_str(), entry.race, entry.gender, subname.c_str(), look.c_str(),
-        entry.gossipMenuId, entry.vendorTemplateId, entry.questGiverId, entry.npcFlags, entry.characterGuid,
-        entry.mapId, entry.x, entry.y, entry.z, entry.o, entry.id);
+        entry.gossipMenuId, entry.vendorTemplateId, entry.questGiverId, entry.npcFlags, entry.id);
 }
 
-void BotNpcMgr::MarkLookApplied(uint32 id, std::string const& look)
+void BotNpcMgr::SaveSpawn(BotNpcSpawn const& spawn)
 {
-    std::map<uint32, BotNpcEntry>::iterator itr = m_entries.find(id);
-    if (itr == m_entries.end())
+    if (!spawn.characterGuid || !spawn.designId)
+    {
+        sLog.outError("BotNpcMgr::SaveSpawn called without a character or a design.");
+        return;
+    }
+
+    m_spawns[spawn.characterGuid] = spawn;
+
+    std::string look = spawn.lookApplied;
+    CharacterDatabase.escape_string(look);
+
+    CharacterDatabase.DirectPExecute(
+        "REPLACE INTO bot_npc_spawn (character_guid, bot_npc_id, map, position_x, position_y, "
+        "position_z, orientation, look_applied) VALUES (%u, %u, %u, %f, %f, %f, %f, '%s')",
+        spawn.characterGuid, spawn.designId, spawn.mapId, spawn.x, spawn.y, spawn.z, spawn.o,
+        look.c_str());
+}
+
+void BotNpcMgr::RemoveSpawn(uint32 characterGuid)
+{
+    m_spawns.erase(characterGuid);
+    CharacterDatabase.DirectPExecute("DELETE FROM bot_npc_spawn WHERE character_guid = %u", characterGuid);
+}
+
+void BotNpcMgr::MarkLookApplied(uint32 characterGuid, std::string const& look)
+{
+    std::map<uint32, BotNpcSpawn>::iterator itr = m_spawns.find(characterGuid);
+    if (itr == m_spawns.end())
         return;
 
     itr->second.lookApplied = look;
 
     std::string safe = look;
     CharacterDatabase.escape_string(safe);
-    CharacterDatabase.PExecute("UPDATE bot_npc SET look_applied = '%s' WHERE id = %u",
-                               safe.c_str(), id);
-}
-
-void BotNpcMgr::Remove(uint32 id)
-{
-    m_entries.erase(id);
-    Reindex();
-    CharacterDatabase.PExecute("DELETE FROM bot_npc WHERE id = '%u'", id);
+    CharacterDatabase.DirectPExecute("UPDATE bot_npc_spawn SET look_applied = '%s' WHERE character_guid = %u",
+                                     safe.c_str(), characterGuid);
 }

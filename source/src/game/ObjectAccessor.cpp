@@ -23,6 +23,8 @@
 #include "ObjectMgr.h"
 #include "Policies/SingletonImp.h"
 #include "Player.h"
+#include "MasterPlayer.h"
+#include "WorldSession.h"
 #include "WorldPacket.h"
 #include "Item.h"
 #include "Corpse.h"
@@ -311,10 +313,18 @@ void ObjectAccessor::AddObject(Player *player)
     HashMapHolder<Player>::Insert(player);
     playerNameToPlayerPointer[player->GetName()] = player;
 }
+/*
+ * ONLY WHILE THE NAME STILL POINTS HERE. Two bot NPCs can wear one name, and
+ * the second to log in owns the key; the first logging out used to erase it
+ * and leave the second unfindable by name. Same guard as
+ * ObjectMgr::DeletePlayerFromCache, for the online map rather than the cache.
+ */
 void ObjectAccessor::RemoveObject(Player *player)
 {
     HashMapHolder<Player>::Remove(player);
-    playerNameToPlayerPointer.erase(player->GetName());
+    auto itr = playerNameToPlayerPointer.find(player->GetName());
+    if (itr != playerNameToPlayerPointer.end() && itr->second == player)
+        playerNameToPlayerPointer.erase(itr);
 }
 void ObjectAccessor::AddObject(MasterPlayer *player)
 {
@@ -324,7 +334,51 @@ void ObjectAccessor::AddObject(MasterPlayer *player)
 void ObjectAccessor::RemoveObject(MasterPlayer *player)
 {
     HashMapHolder<MasterPlayer>::Remove(player);
-    playerNameToMasterPlayerPointer.erase(player->GetName());
+    auto itr = playerNameToMasterPlayerPointer.find(player->GetName());
+    if (itr != playerNameToMasterPlayerPointer.end() && itr->second == player)
+        playerNameToMasterPlayerPointer.erase(itr);
+}
+
+/*
+ * RENAMING A PLAYER WHO IS ALREADY IN THE WORLD. Player::SetName calls this.
+ *
+ * Without it the name map kept the OLD name as the key, so the new name could
+ * not be found, and on logout RemoveObject erased by the new name and left a
+ * DANGLING POINTER under the old one: any later lookup of that name read freed
+ * memory. Every bot NPC rename took that path (a twin is always born under a
+ * random name and renamed), and so does upstream's `.rename` on an online
+ * target.
+ *
+ * Re-keyed only if the player is actually registered, so a SetName during
+ * Create or load, before AddObject, stays a plain assignment. The session's
+ * MasterPlayer carries its own copy of the name and its own map, and moves with
+ * it.
+ */
+void ObjectAccessor::RenameObject(Player* player, std::string const& oldName)
+{
+    if (HashMapHolder<Player>::Find(player->GetObjectGuid()) == player)
+    {
+        auto itr = playerNameToPlayerPointer.find(oldName);
+        if (itr != playerNameToPlayerPointer.end() && itr->second == player)
+            playerNameToPlayerPointer.erase(itr);
+        playerNameToPlayerPointer[player->GetName()] = player;
+    }
+
+    WorldSession* session = player->GetSession();
+    MasterPlayer* master = session ? session->GetMasterPlayer() : nullptr;
+    if (master && master->guid == player->GetObjectGuid())
+    {
+        bool const registered = HashMapHolder<MasterPlayer>::Find(master->guid) == master;
+        if (registered)
+        {
+            auto itr = playerNameToMasterPlayerPointer.find(master->name);
+            if (itr != playerNameToMasterPlayerPointer.end() && itr->second == master)
+                playerNameToMasterPlayerPointer.erase(itr);
+        }
+        master->name = player->GetName();
+        if (registered)
+            playerNameToMasterPlayerPointer[master->name] = master;
+    }
 }
 /// Define the static member of HashMapHolder
 

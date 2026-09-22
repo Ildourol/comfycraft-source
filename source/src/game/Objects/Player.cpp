@@ -3498,6 +3498,16 @@ struct SetGameMasterOffHelper
     uint32 faction;
 };
 
+void Player::SetName(std::string const& newname)
+{
+    if (m_name == newname)
+        return;
+
+    std::string const oldName = m_name;
+    m_name = newname;
+    sObjectAccessor.RenameObject(this, oldName);
+}
+
 void Player::SetGameMaster(bool on)
 {
     if (on)
@@ -5832,6 +5842,25 @@ void Player::DeleteFromDB(ObjectGuid playerguid, uint32 accountId, bool updateRe
             CharacterDatabase.PExecute("DELETE FROM character_xp_from_log WHERE guid = '%u'", lowguid);
             CharacterDatabase.PExecute("DELETE FROM character_honor_cp WHERE guid = '%u'", lowguid);
             CharacterDatabase.PExecute("DELETE FROM character_inventory_copy WHERE guid = '%u'", lowguid);
+            // sql/custom/106. GUIDS ARE REUSED, and a companion is created per
+            // hire and deleted per dismiss, so this is not a rare path. Left
+            // behind, these rows do not collide and do not crash -- they are
+            // quietly INHERITED, and a brand new level one turns up already
+            // able to take a quest from somebody they have never met.
+            CharacterDatabase.PExecute("DELETE FROM character_story_flag WHERE guid = '%u'", lowguid);
+            // sql/custom/109, the same reuse. Left behind, a new character
+            // would start on the critter chart with somebody else's score.
+            CharacterDatabase.PExecute("DELETE FROM character_critter_pet WHERE guid = '%u'", lowguid);
+            // sql/custom/110. ZEROED, NOT DELETED: a match has two people in
+            // it, and deleting the row would take a win away from the one who
+            // is still here. One statement, so the three columns cannot land
+            // out of order.
+            CharacterDatabase.PExecute("UPDATE character_invasion_match SET "
+                                       "invader = IF(invader = '%u', 0, invader), "
+                                       "defender = IF(defender = '%u', 0, defender), "
+                                       "winner = IF(winner = '%u', 0, winner) "
+                                       "WHERE invader = '%u' OR defender = '%u'",
+                                       lowguid, lowguid, lowguid, lowguid, lowguid);
             CharacterDatabase.PExecute("DELETE FROM ai_playerbot_db_store WHERE guid = '%u'", lowguid);
             // sql/custom/083, reshaped by 086. UNPLACED, NOT DELETED, and the
             // difference is the point: since 086 a row is a DESIGN -- a name, a
@@ -5844,7 +5873,13 @@ void Player::DeleteFromDB(ObjectGuid playerguid, uint32 accountId, bool updateRe
             // nine above exist: CHARACTER GUIDS ARE REUSED, so a row still
             // naming a dead one would claim whoever is handed that guid next,
             // and the core would quietly treat somebody's new alt as an NPC.
-            CharacterDatabase.PExecute("UPDATE bot_npc SET character_guid = 0 WHERE character_guid = '%u'", lowguid);
+            //
+            // Since sql/custom/113 the body is a row of its own in bot_npc_spawn,
+            // so that row goes and the design is untouched. The in-memory copy
+            // goes too: a stale one would claim the reused guid until a reload.
+            CharacterDatabase.PExecute("DELETE FROM bot_npc_spawn WHERE character_guid = '%u'", lowguid);
+            if (sBotNpcMgr.GetSpawn(lowguid))
+                sBotNpcMgr.RemoveSpawn(lowguid);
 
             CharacterDatabase.CommitTransaction();
             break;
@@ -17531,7 +17566,7 @@ bool Player::LoadFromDB(ObjectGuid guid, SqlQueryHolder *holder)
      * be shoved about, log out, and still come back on its mark. `.npcbot move`
      * is how the mark itself changes. sql/custom/085.
      */
-    if (BotNpcEntry const* npc = sBotNpcMgr.Get(GetGUIDLow()))
+    if (BotNpcSpawn const* npc = sBotNpcMgr.GetSpawn(GetGUIDLow()))
     {
         if (MaNGOS::IsValidMapCoord(npc->x, npc->y, npc->z, npc->o))
         {
@@ -17814,6 +17849,12 @@ bool Player::LoadFromDB(ObjectGuid guid, SqlQueryHolder *holder)
 
     // after spell load, learn rewarded spell if need also
     _LoadQuestStatus(holder->GetResult(PLAYER_LOGIN_QUERY_LOADQUESTSTATUS));
+
+    // Before anything that could ask whether a quest is available: a story flag
+    // is a RequiredCondition on one, and an empty set answers "no" to every gate.
+    _LoadStoryFlags(holder->GetResult(PLAYER_LOGIN_QUERY_STORY_FLAGS));
+
+    _LoadCritterPets(holder->GetResult(PLAYER_LOGIN_QUERY_CRITTER_PETS));
 
     // must be before inventory (some items required reputation check)
     m_reputationMgr.LoadFromDB(holder->GetResult(PLAYER_LOGIN_QUERY_LOADREPUTATION));
@@ -18712,6 +18753,179 @@ void Player::_LoadQuestStatus(QueryResult *result)
     // clear quest log tail
     for (uint16 i = slot; i < MAX_QUEST_LOG_SIZE; ++i)
         SetQuestSlot(i, 0);
+}
+
+/*
+ * STORY FLAGS. sql/custom/106.
+ *
+ * A row is "this character has this flag" and there is no value, so the whole
+ * load is a set of ints. Nothing is validated against tw_world.story_flag: the
+ * name table lives in the other database, it is editor metadata, and a flag
+ * whose name was deleted should still gate what it was gating rather than
+ * silently opening.
+ */
+void Player::_LoadStoryFlags(QueryResult* result)
+{
+    m_storyFlags.clear();
+
+    if (!result)
+        return;
+
+    do
+    {
+        m_storyFlags.insert(result->Fetch()[0].GetUInt32());
+    }
+    while (result->NextRow());
+}
+
+/*
+ * SET OR FORGET ONE, AND TELL THE CLIENT.
+ *
+ * THE UpdateForQuestWorldObjects CALL IS THE LOAD-BEARING LINE, and it is here
+ * rather than at the call site so that no future caller can forget it.
+ *
+ * A story flag gates quest availability through
+ * quest_template.RequiredCondition, and the 1.12 client asks
+ * CMSG_QUESTGIVER_STATUS_QUERY for a PLAYER guid exactly once, when the unit
+ * comes into view, and never again -- measured 2026-09-15, see
+ * docs/ai/content/quests.md. So without this the quest really does become
+ * available and the `!` stays missing until you walk out of range and back,
+ * which reads as the whole feature not working.
+ *
+ * That sweep already walks m_visibleGUIDs and pushes SMSG_QUESTGIVER_STATUS to
+ * every bot NPC in it, which is exactly the set worth telling.
+ *
+ * ONE STATEMENT, so the asynchronous-and-unordered PExecute has no partner
+ * whose order could matter. Idempotent at both ends: setting a flag twice is
+ * one row, clearing one that was never set deletes nothing.
+ */
+void Player::SetStoryFlag(uint32 flag, bool on)
+{
+    if (!flag)
+        return;
+
+    if (on)
+    {
+        if (!m_storyFlags.insert(flag).second)
+            return;                                         // already had it
+
+        CharacterDatabase.PExecute("REPLACE INTO character_story_flag (guid, flag) VALUES ('%u', '%u')",
+                                   GetGUIDLow(), flag);
+    }
+    else
+    {
+        if (!m_storyFlags.erase(flag))
+            return;                                         // never had it
+
+        CharacterDatabase.PExecute("DELETE FROM character_story_flag WHERE guid = '%u' AND flag = '%u'",
+                                   GetGUIDLow(), flag);
+    }
+
+    UpdateForQuestWorldObjects();
+}
+
+/*
+ * THE CRITTER CHART. sql/custom/109, docs/features/critter-chart.md.
+ *
+ * A row is one spawn; the score is the number of distinct NAMES, so the three
+ * Toad entries are one toad. The name comes from the template now rather than
+ * being stored, so a row whose template has since gone simply stops counting.
+ */
+void Player::_LoadCritterPets(QueryResult* result)
+{
+    m_critterSpawnsPetted.clear();
+    m_critterNamesPetted.clear();
+
+    if (!result)
+        return;
+
+    do
+    {
+        Field* fields = result->Fetch();
+        m_critterSpawnsPetted.insert(fields[0].GetUInt32());
+        if (CreatureInfo const* info = sObjectMgr.GetCreatureTemplate(fields[1].GetUInt32()))
+            m_critterNamesPetted.insert(info->name);
+    }
+    while (result->NextRow());
+}
+
+/*
+ * PATTING A CRITTER, for the chart.
+ *
+ * THE SAME FOUR EMOTES the house critters answer (HouseCritterEmote), and
+ * the same reach. A critter across the field that happens to be selected
+ * does not count.
+ *
+ * ONLY A GUID THAT SURVIVES A RESTART IS RECORDED: a `creature` row, or a
+ * house critter in its own block. Anything else is summoned and gets a new
+ * guid each time, and would pile up rows for ever. It costs the score
+ * nothing, since the score is names and a summoned critter's name is almost
+ * always one that also lives in the wild.
+ *
+ * INSERT IGNORE, NOT INSERT. A duplicate key asserts on this core, and the
+ * in-memory set is the only thing that would otherwise stand between a
+ * second pat and a crash. One statement, so the unordered PExecute has
+ * nothing to race.
+ */
+void Player::PetCritter(Unit* target, uint32 textEmote)
+{
+    switch (textEmote)
+    {
+        case TEXTEMOTE_PAT:
+        case TEXTEMOTE_LOVE:
+        case TEXTEMOTE_CUDDLE:
+        case TEXTEMOTE_KISS:
+            break;
+        default:
+            return;
+    }
+
+    if (!target || !target->IsCreature() || !target->IsAlive())
+        return;
+
+    Creature* critter = static_cast<Creature*>(target);
+    if (critter->GetCreatureType() != CREATURE_TYPE_CRITTER)
+        return;
+
+    if (!IsWithinDist(critter, INTERACTION_DISTANCE))
+        return;
+
+    uint32 const spawn = critter->GetGUIDLow();
+    bool const houseCritter = spawn >= HOUSE_CRITTER_GUID_MIN && spawn <= HOUSE_CRITTER_GUID_MAX;
+
+    // HEARTS FOR A WILD ONE TOO, on every pat, not only the first: the same
+    // turn and the same visual a house critter gives, so an animal in the
+    // open does not read as ignoring you. A house critter already got its
+    // hearts from HouseCritterEmote, which keeps its own cooldown per animal.
+    // This one is per PLAYER, since there is no per-animal state to hang it
+    // on, and it is what stops a held-down macro storming the zone.
+    if (!houseCritter)
+    {
+        time_t const now = time(nullptr);
+        if (m_critterHeartsAt <= now)
+        {
+            m_critterHeartsAt = now + HOUSE_CRITTER_PAT_COOLDOWN;
+            critter->SetFacingToObject(this);
+            critter->SendPlaySpellVisual(HOUSE_CRITTER_HEART_VISUAL);
+        }
+    }
+
+    if (!houseCritter && !critter->HasStaticDBSpawnData())
+        return;
+
+    if (!m_critterSpawnsPetted.insert(spawn).second)
+        return;                                             // this one, again
+
+    CharacterDatabase.PExecute("INSERT IGNORE INTO character_critter_pet (guid, spawn, entry) VALUES ('%u', '%u', '%u')",
+                               GetGUIDLow(), spawn, critter->GetEntry());
+
+    std::string const& name = critter->GetCreatureInfo()->name;
+    if (m_critterNamesPetted.insert(name).second)
+    {
+        uint32 const count = uint32(m_critterNamesPetted.size());
+        ChatHandler(this).PSendSysMessage("New friend: %s! That's %u %s befriended.",
+                                          name.c_str(), count, count == 1 ? "critter" : "critters");
+    }
 }
 
 void Player::_LoadSpells(QueryResult *result)

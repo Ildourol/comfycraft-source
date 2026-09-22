@@ -831,8 +831,10 @@ void ObjectMgr::DeletePlayerFromCache(uint32 lowGuid)
     {
         uint32 AccId = itr->second->uiAccount;
         m_accountPlayersCacheData[AccId].erase(itr->second);
+        // Only if the name still points HERE. Two bot NPCs can share a name,
+        // and deleting one must not unhook the other from its own name.
         auto itr2 = m_playerNameToGuid.find(itr->second->sName);
-        if (itr2 != m_playerNameToGuid.end())
+        if (itr2 != m_playerNameToGuid.end() && itr2->second == lowGuid)
             m_playerNameToGuid.erase(itr2);
         delete itr->second;
         m_playerCacheData.erase(itr);
@@ -851,7 +853,11 @@ void ObjectMgr::ChangePlayerNameInCache(uint32 guidLow, std::string const& oldNa
     auto itr = m_playerCacheData.find(guidLow);
     if (itr != m_playerCacheData.end())
     {
-        m_playerNameToGuid.erase(oldName);
+        // Same guard as DeletePlayerFromCache: a shared old name may belong to
+        // the other bot NPC wearing it.
+        auto old = m_playerNameToGuid.find(oldName);
+        if (old != m_playerNameToGuid.end() && old->second == guidLow)
+            m_playerNameToGuid.erase(old);
         m_playerNameToGuid[newName] = guidLow;
         itr->second->sName = newName;
     }

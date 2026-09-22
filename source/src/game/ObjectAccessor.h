@@ -168,6 +168,8 @@ class ObjectAccessor : public MaNGOS::Singleton<ObjectAccessor, MaNGOS::ClassLev
         void RemoveObject(Player *object);
         void RemoveObject(Transport* object) { HashMapHolder<Transport>::Remove(object); }
         void RemoveObject(MasterPlayer *object);
+        // Player::SetName only: re-keys the name maps for a player already in them.
+        void RenameObject(Player* player, std::string const& oldName);
 
     private:
         Player2CorpsesMapType   i_player2corpse;

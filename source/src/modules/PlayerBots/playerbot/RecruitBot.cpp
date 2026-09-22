@@ -219,6 +219,14 @@ bool Playerbot_RecruitBotForPlayer(Player* player, uint32 role, uint32 classId)
           << " role="  << ChatHelper::formatRole(wanted)
           << " group=" << player->GetName();
 
+    // Out of the starter kit before its first save, so it arrives in the gear
+    // it rolls and never changes clothes in front of anyone
+    // (PlayerbotHolder::CreateBot). ONLY ABOVE LEVEL 1: the gear roll is
+    // queued only when level > 1, so a level 1 hire's starter kit IS its gear
+    // and taking it would send it into a fight with its fists.
+    if (player->GetLevel() > 1)
+        param << " naked=1";
+
     // CreateBot on the PLAYER'S holder, never sRandomPlayerbotMgr: that is what
     // makes this a companion rather than population - the COMPANION account
     // pool, the ownership row and the per-player cap all hang off
