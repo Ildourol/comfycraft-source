@@ -97,7 +97,7 @@ namespace nsMariella
         ACHIEVEMENT_FAILED
     };
 
-    const std::string [[nodiscard]] CombatNotification(const CombatNotifications& combatNotifications)
+    [[nodiscard]] const std::string CombatNotification(const CombatNotifications& combatNotifications)
     {
         switch (combatNotifications)
         {
@@ -155,7 +155,7 @@ namespace nsMariella
         }
     }
 
-    const std::string [[nodiscard]] SayOnPlayersDeath(const uint8 uiRandomNumber)
+    [[nodiscard]] const std::string SayOnPlayersDeath(const uint8 uiRandomNumber)
     {
         switch (uiRandomNumber)
         {

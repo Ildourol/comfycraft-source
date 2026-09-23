@@ -45,7 +45,7 @@ bool GuildShareItemAction::Execute(Event& event)
             if (msg != EQUIP_ERR_OK)
             {
                 sLog.outDetail("Bot #%d <%s> cannot give %s to %s - bags full",
-                    bot->GetGUIDLow(), bot->GetName(), item->GetProto()->Name1, receiver->GetName());
+                    bot->GetGUIDLow(), bot->GetName(), item->GetProto()->Name1.c_str(), receiver->GetName());
                 return false;
             }
 
@@ -64,7 +64,7 @@ bool GuildShareItemAction::Execute(Event& event)
             if (msg != EQUIP_ERR_OK)
             {
                 sLog.outDetail("Bot #%d <%s> cannot give %s to %s - bags full",
-                    bot->GetGUIDLow(), bot->GetName(), item->GetProto()->Name1, receiver->GetName());
+                    bot->GetGUIDLow(), bot->GetName(), item->GetProto()->Name1.c_str(), receiver->GetName());
                 return false;
             }
 

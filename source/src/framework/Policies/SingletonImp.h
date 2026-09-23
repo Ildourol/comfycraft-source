@@ -71,9 +71,17 @@ void MaNGOS::Singleton<T, ThreadingModel, CreatePolicy, LifeTimePolicy>::Destroy
     si_destroyed = true;
 }
 
+// The two statics are defined here for every Singleton, and the macro below
+// only instantiates. It used to specialise them instead, and an explicit
+// specialisation after a first use is ill-formed: any header that calls
+// sFoo inline instantiates Instance() before the INSTANTIATE_SINGLETON line.
+// GCC and MSVC let that pass; clang rejects it (PlayerbotAIConfig.cpp).
+template <typename T, class ThreadingModel, class CreatePolicy, class LifeTimePolicy>
+T* MaNGOS::Singleton<T, ThreadingModel, CreatePolicy, LifeTimePolicy>::si_instance = nullptr;
+template <typename T, class ThreadingModel, class CreatePolicy, class LifeTimePolicy>
+bool MaNGOS::Singleton<T, ThreadingModel, CreatePolicy, LifeTimePolicy>::si_destroyed = false;
+
 #define INSTANTIATE_SINGLETON_4(TYPE, THREADINGMODEL, CREATIONPOLICY, OBJECTLIFETIME) \
-    template <> TYPE* MaNGOS::Singleton<TYPE, THREADINGMODEL, CREATIONPOLICY, OBJECTLIFETIME >::si_instance = 0; \
-    template <> bool MaNGOS::Singleton<TYPE, THREADINGMODEL, CREATIONPOLICY, OBJECTLIFETIME >::si_destroyed = false; \
     template class MaNGOS::Singleton<TYPE, THREADINGMODEL, CREATIONPOLICY, OBJECTLIFETIME >;
 
 #define INSTANTIATE_SINGLETON_3(TYPE, THREADINGMODEL, CREATIONPOLICY) \

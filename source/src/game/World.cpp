@@ -3241,6 +3241,11 @@ namespace MaNGOS
     }
 }
 
+bool World::IsPlayerInWorldForText(Player* player)
+{
+    return player->IsInWorld();
+}
+
 /// Send a System Message to all players (except self if mentioned)
 void World::SendWorldText(int32 string_id, ...)
 {

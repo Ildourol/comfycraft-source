@@ -164,7 +164,7 @@ bool ItemBag::Add(ItemPrototype const* proto)
     }
 
     if (!contains)
-        sLog.outDetail("Item %s does not included in any category", proto->Name1);
+        sLog.outDetail("Item %s does not included in any category", proto->Name1.c_str());
 
     return contains;
 }

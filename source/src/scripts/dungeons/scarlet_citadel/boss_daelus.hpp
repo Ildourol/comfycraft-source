@@ -88,7 +88,7 @@ namespace nsDaelus
         LIFEDRAIN
     };
 
-    const std::string [[nodiscard]] CombatNotification(const CombatNotifications& combatNotifications)
+    [[nodiscard]] const std::string CombatNotification(const CombatNotifications& combatNotifications)
     {
         switch (combatNotifications)
         {

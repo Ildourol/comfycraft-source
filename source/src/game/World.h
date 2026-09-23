@@ -1083,7 +1083,12 @@ class World
                     for (size_t j = 0; j < i_data_cache[i].size(); ++j)
                         delete i_data_cache[i][j];
             }
-            void operator()(Player* p)
+            // A template on the player type so the body is checked where it is
+            // used, when Player is complete. World.h reaches some translation
+            // units (the scripts PCH) before Player.h, and clang checks a
+            // non-dependent `p->...` at the definition.
+            template <class PlayerT>
+            void operator()(PlayerT* p)
             {
                 int32 loc_idx = p->GetSession()->GetSessionDbLocaleIndex();
                 uint32 cache_idx = loc_idx + 1;
@@ -1113,7 +1118,10 @@ class World
         };
 
         void SendWorldText(int32 string_id, ...);
-        
+        // For SendWorldTextChecked below: a template body in this header must
+        // not touch Player members, for the reason given at LocalizedPacketListDo.
+        static bool IsPlayerInWorldForText(Player* player);
+
         template <typename F>
         void SendWorldTextChecked(int32 string_id, F checker, ...)
         {
@@ -1127,7 +1135,7 @@ class World
                 if (WorldSession* session = itr.second)
                 {
                     Player* player = session->GetPlayer();
-                    if (player && player->IsInWorld() && checker(player))
+                    if (player && IsPlayerInWorldForText(player) && checker(player))
                         wt_do(player);
                 }
             }

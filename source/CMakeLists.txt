@@ -494,6 +494,11 @@ if(UNIX)
   endif()
 
   set(BUILD_ADDITIONAL_FLAGS "${BUILD_ADDITIONAL_FLAGS} --no-warnings -fexceptions -fnon-call-exceptions -march=native -O3 -pipe ")
+  # AllocatorWithCategory.h calls the sized operator delete, which GCC enables
+  # by default and clang 18 does not.
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    set(BUILD_ADDITIONAL_FLAGS "${BUILD_ADDITIONAL_FLAGS} -fsized-deallocation")
+  endif()
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     if(PROFILE_GENERATE)
       set(BUILD_ADDITIONAL_FLAGS "${BUILD_ADDITIONAL_FLAGS} -fprofile-generate")

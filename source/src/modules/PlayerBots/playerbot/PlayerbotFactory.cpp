@@ -3697,8 +3697,8 @@ void PlayerbotFactory::InitEquipment(bool incremental, bool syncWithMaster, bool
                         if (incremental)
                         {
                             if (oldItem)
-                                sLog.outDetail("Bot #%d %s:%d <%s>: Old Item: slot: %u, id: %u, value: %u (%s)", bot->GetGUIDLow(), bot->GetTeam() == ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName(), slot, oldProto->ItemId, oldStatValue, oldProto->Name1);
-                            sLog.outDetail("Bot #%d %s:%d <%s>: New Item: slot: %u, id: %u, value: %u (%s)", bot->GetGUIDLow(), bot->GetTeam() == ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName(), slot, proto->ItemId, newStatValue, proto->Name1);
+                                sLog.outDetail("Bot #%d %s:%d <%s>: Old Item: slot: %u, id: %u, value: %u (%s)", bot->GetGUIDLow(), bot->GetTeam() == ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName(), slot, oldProto->ItemId, oldStatValue, oldProto->Name1.c_str());
+                            sLog.outDetail("Bot #%d %s:%d <%s>: New Item: slot: %u, id: %u, value: %u (%s)", bot->GetGUIDLow(), bot->GetTeam() == ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName(), slot, proto->ItemId, newStatValue, proto->Name1.c_str());
                         }
                         break;
                     }
@@ -5090,7 +5090,7 @@ void PlayerbotFactory::InitReagents()
 
         Item* newItem = bot->StoreNewItemInInventorySlot(*i, randCount);
 
-        sLog.outDetail("Bot %d got reagent %s x%d", bot->GetGUIDLow(), proto->Name1, randCount);
+        sLog.outDetail("Bot %d got reagent %s x%d", bot->GetGUIDLow(), proto->Name1.c_str(), randCount);
     }
 
     for (PlayerSpellMap::iterator itr = bot->GetSpellMap().begin(); itr != bot->GetSpellMap().end(); ++itr)
@@ -5120,7 +5120,7 @@ void PlayerbotFactory::InitReagents()
 
                 Item* newItem = bot->StoreNewItemInInventorySlot(totem, 1);
 
-                sLog.outDetail("Bot %d got totem %s x%d", bot->GetGUIDLow(), proto->Name1, 1);
+                sLog.outDetail("Bot %d got totem %s x%d", bot->GetGUIDLow(), proto->Name1.c_str(), 1);
             }
         }
 #ifndef MANGOSBOT_ZERO
