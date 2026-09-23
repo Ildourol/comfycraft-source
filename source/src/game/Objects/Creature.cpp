@@ -3194,6 +3194,13 @@ TrainerSpellData const* Creature::GetTrainerTemplateSpells(Player const* player)
 
 TrainerSpellData const* Creature::GetTrainerSpells() const
 {
+    // ComfyCraft: a group trainer was a stock class trainer, and its own
+    // npc_trainer rows are still that one class's list. The per class lists
+    // replace them; left in, a warrior's spells would sit in a paladin's
+    // window, and the buy handler takes any spell it finds in either list.
+    if (IsGroupTrainer())
+        return nullptr;
+
     return sObjectMgr.GetNpcTrainerSpells(GetEntry());
 }
 
