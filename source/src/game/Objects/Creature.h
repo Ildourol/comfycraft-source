@@ -782,8 +782,10 @@ class Creature : public Unit
         VendorItemData const* GetVendorItems() const;
         VendorItemData const* GetVendorTemplateItems() const;
 
-        TrainerSpellData const* GetTrainerTemplateSpells() const;
+        // The player picks the list only on a group trainer (IsGroupTrainer).
+        TrainerSpellData const* GetTrainerTemplateSpells(Player const* player) const;
         TrainerSpellData const* GetTrainerSpells() const;
+        bool IsGroupTrainer() const;
 
         CreatureInfo const *GetCreatureInfo() const { return m_creatureInfo; }
         CreatureDataAddon const* GetCreatureAddon() const;

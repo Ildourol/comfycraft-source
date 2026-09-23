@@ -68,7 +68,7 @@ bool TrainerAction::Iterate(Player* requester, Creature* creature, TrainerSpellA
     bool hasTrainable = false;
 
     TrainerSpellData const* cSpells = creature->GetTrainerSpells();
-    TrainerSpellData const* tSpells = creature->GetTrainerTemplateSpells();
+    TrainerSpellData const* tSpells = creature->GetTrainerTemplateSpells(bot);
     float fDiscountMod =  bot->GetReputationPriceDiscount(creature);
     uint32 totalCost = 0;
 
@@ -228,7 +228,7 @@ bool TrainerAction::Execute(Event& event)
 
     // check present spell in trainer spell list
     TrainerSpellData const* cSpells = creature->GetTrainerSpells();
-    TrainerSpellData const* tSpells = creature->GetTrainerTemplateSpells();
+    TrainerSpellData const* tSpells = creature->GetTrainerTemplateSpells(bot);
     if (!cSpells && !tSpells)
     {
         if (!ai->GetMaster() || sServerFacade.GetDistance2d(bot, ai->GetMaster()) < sPlayerbotAIConfig.reactDistance || ai->HasStrategy("debug", BotState::BOT_STATE_NON_COMBAT))

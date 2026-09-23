@@ -181,7 +181,7 @@ void WorldSession::SendTrainerList(ObjectGuid guid)
         return;
 
     TrainerSpellData const* cSpells = unit->GetTrainerSpells();
-    TrainerSpellData const* tSpells = unit->GetTrainerTemplateSpells();
+    TrainerSpellData const* tSpells = unit->GetTrainerTemplateSpells(_player);
 
     if (!cSpells && !tSpells)
     {
@@ -301,7 +301,7 @@ void WorldSession::HandleTrainerBuySpellOpcode(WorldPacket & recv_data)
 
     // Check if the spell is present in the trainer's spell list.
     TrainerSpellData const* cSpells = unit->GetTrainerSpells();
-    TrainerSpellData const* tSpells = unit->GetTrainerTemplateSpells();
+    TrainerSpellData const* tSpells = unit->GetTrainerTemplateSpells(_player);
 
     if (!cSpells && !tSpells)
     {

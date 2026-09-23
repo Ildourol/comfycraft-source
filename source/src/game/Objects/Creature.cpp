@@ -1253,8 +1253,15 @@ bool Creature::IsTrainerOf(Player* pPlayer, bool msg) const
     if (!IsTrainer())
         return false;
 
+    // ComfyCraft: a group trainer takes only the classes in its mask. It is
+    // checked before the list, because a class outside the mask has no list
+    // here and that is not the "empty trainer" error below.
+    // See docs/features/every-race-every-class.md, "Group trainers".
+    if (IsGroupTrainer() && !(pPlayer->GetClassMask() & GetCreatureInfo()->trainer_spell))
+        return false;
+
     TrainerSpellData const* cSpells = GetTrainerSpells();
-    TrainerSpellData const* tSpells = GetTrainerTemplateSpells();
+    TrainerSpellData const* tSpells = GetTrainerTemplateSpells(pPlayer);
 
     // for not pet trainer expected not empty trainer list always
     if ((!cSpells || cSpells->spellList.empty()) && (!tSpells || tSpells->spellList.empty()))
@@ -1267,7 +1274,7 @@ bool Creature::IsTrainerOf(Player* pPlayer, bool msg) const
     switch (GetCreatureInfo()->trainer_type)
     {
         case TRAINER_TYPE_CLASS:
-            if (pPlayer->GetClass() != GetCreatureInfo()->trainer_class)
+            if (!IsGroupTrainer() && pPlayer->GetClass() != GetCreatureInfo()->trainer_class)
             {
                 if (msg)
                 {
@@ -1420,9 +1427,14 @@ bool Creature::CanInteractWithBattleMaster(Player* pPlayer, bool msg) const
 
 bool Creature::CanTrainAndResetTalentsOf(Player* pPlayer) const
 {
-    return pPlayer->GetLevel() >= 10
-           && GetCreatureInfo()->trainer_type == TRAINER_TYPE_CLASS
-           && pPlayer->GetClass() == GetCreatureInfo()->trainer_class;
+    if (pPlayer->GetLevel() < 10 || GetCreatureInfo()->trainer_type != TRAINER_TYPE_CLASS)
+        return false;
+
+    // ComfyCraft: a group trainer resets the talents of every class it trains.
+    if (IsGroupTrainer())
+        return (pPlayer->GetClassMask() & GetCreatureInfo()->trainer_spell) != 0;
+
+    return pPlayer->GetClass() == GetCreatureInfo()->trainer_class;
 }
 
 /**
@@ -3141,10 +3153,43 @@ VendorItemData const* Creature::GetVendorTemplateItems() const
     return vendorId ? sObjectMgr.GetNpcVendorTemplateItemList(vendorId) : nullptr;
 }
 
-TrainerSpellData const* Creature::GetTrainerTemplateSpells() const
+/*
+ * ComfyCraft: A GROUP TRAINER teaches several classes, each from its own list.
+ *
+ * It is a class trainer (trainer_type 0) with trainer_class 0 and a CLASS MASK
+ * in trainer_spell, which is read only for tradeskill trainers. Not trainer_race:
+ * that column is a tinyint, and the Wizard mask is 400. Its trainer_id is a
+ * base: a player of class C gets the npc_trainer_template list trainer_id + C.
+ *
+ * One list per class, not one merged list. The trainer window drops spells that
+ * fail IsSpellFitByClassAndRace, but the buy handler does not ask again, and a
+ * spell with no SkillLineAbility row passes that check for every class. With a
+ * merged list, a warrior could buy Redemption.
+ *
+ * The 11 stock creatures with trainer_class 0 have trainer_spell 0, so they are
+ * not group trainers and nothing changes for them.
+ * See docs/features/every-race-every-class.md, "Group trainers".
+ */
+bool Creature::IsGroupTrainer() const
+{
+    CreatureInfo const* cInfo = GetCreatureInfo();
+    return cInfo->trainer_type == TRAINER_TYPE_CLASS && cInfo->trainer_class == 0 && cInfo->trainer_spell != 0;
+}
+
+TrainerSpellData const* Creature::GetTrainerTemplateSpells(Player const* player) const
 {
     uint32 trainerId = GetCreatureInfo()->trainer_id;
-    return trainerId ? sObjectMgr.GetNpcTrainerTemplateSpells(trainerId) : nullptr;
+    if (!trainerId)
+        return nullptr;
+
+    if (IsGroupTrainer())
+    {
+        if (!player || !(player->GetClassMask() & GetCreatureInfo()->trainer_spell))
+            return nullptr;
+        trainerId += player->GetClass();
+    }
+
+    return sObjectMgr.GetNpcTrainerTemplateSpells(trainerId);
 }
 
 TrainerSpellData const* Creature::GetTrainerSpells() const

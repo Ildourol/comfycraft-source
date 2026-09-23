@@ -8230,7 +8230,7 @@ void ObjectMgr::LoadTrainerTemplates()
         trainer_ids.insert(tItr.first);
 
     // We need to use a query to get all used trainer ids because of progression.
-    std::unique_ptr<QueryResult> result(WorldDatabase.Query("SELECT `entry`, `trainer_id` FROM `creature_template` WHERE `trainer_id` != 0"));
+    std::unique_ptr<QueryResult> result(WorldDatabase.Query("SELECT `entry`, `trainer_id`, `trainer_type`, `trainer_class`, `trainer_spell` FROM `creature_template` WHERE `trainer_id` != 0"));
 
     if (result)
     {
@@ -8242,6 +8242,13 @@ void ObjectMgr::LoadTrainerTemplates()
             uint32 trainer_id = fields[1].GetUInt32();
             if (m_CacheTrainerTemplateSpellMap.find(trainer_id) != m_CacheTrainerTemplateSpellMap.end())
                 trainer_ids.erase(trainer_id);
+
+            // ComfyCraft: a group trainer uses trainer_id + class for each class
+            // in its mask (Creature::GetTrainerTemplateSpells).
+            if (fields[2].GetUInt32() == TRAINER_TYPE_CLASS && fields[3].GetUInt32() == 0)
+                for (uint32 cls = 1; cls < MAX_CLASSES; ++cls)
+                    if (fields[4].GetUInt32() & (1 << (cls - 1)))
+                        trainer_ids.erase(trainer_id + cls);
         } while (result->NextRow());
     }
 
