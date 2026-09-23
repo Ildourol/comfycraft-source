@@ -1,5 +1,6 @@
 
 #include "playerbot/playerbot.h"
+#include "playerbot/PlayerbotChatHandler.h"
 #include "ReviveFromCorpseAction.h"
 #include "playerbot/PlayerbotFactory.h"
 #include "playerbot/PlayerbotAIConfig.h"

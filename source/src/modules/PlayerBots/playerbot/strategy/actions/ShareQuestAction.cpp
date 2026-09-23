@@ -1,5 +1,6 @@
 
 #include "playerbot/playerbot.h"
+#include "playerbot/PlayerbotChatHandler.h"
 #include "ShareQuestAction.h"
 
 using namespace ai;

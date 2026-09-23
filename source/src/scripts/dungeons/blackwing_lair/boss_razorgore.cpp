@@ -15,6 +15,7 @@
  */
 
 #include "scriptPCH.h"
+#include "Chat.h"
 #include "blackwing_lair.h"
 
 // Razorgore Phase 2 Script

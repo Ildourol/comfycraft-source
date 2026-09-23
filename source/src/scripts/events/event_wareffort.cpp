@@ -20,6 +20,7 @@
 */
 
 #include "scriptPCH.h"
+#include "Chat.h"
 #include "event_wareffort.h"
 #include <array>
 

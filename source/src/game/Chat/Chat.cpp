@@ -39,12 +39,18 @@
 #include "GameEventMgr.h"
 #include "HardcodedEvents.h"
 #include "ScriptObjects.h"
+#include "ComfyCommands.h"
 
 #include <vector>
 
 #if defined(_MSC_VER) || defined(_WIN32)
 #define strtok_r strtok_s
 #endif
+
+bool ChatCommandHandler::Call(ChatHandler* handler, char* args) const
+{
+    return m_free ? m_free(handler, args) : (handler->*m_member)(args);
+}
 
 ChatCommand * ChatHandler::getCommandTable()
 {
@@ -286,7 +292,7 @@ ChatCommand * ChatHandler::getCommandTable()
         { "rename",         SEC_DEVELOPER,     true,  &ChatHandler::HandleGuildRenameCommand,         "", nullptr },
         { "leader",         SEC_DEVELOPER,     false, &ChatHandler::HandleGuildLeaderCommand,         "", nullptr },
         { "listen",         SEC_DEVELOPER,     false, &ChatHandler::HandleGuildListenCommand,         "", nullptr },
-        { "house",          SEC_DEVELOPER,     false, &ChatHandler::HandleGuildHouseCommand,          "", nullptr },
+        { "house",          SEC_DEVELOPER,     false, &ComfyCommands::HandleGuildHouseCommand,        "", nullptr },
         { nullptr,          0,                 false, nullptr,                                        "", nullptr }
     };
 
@@ -302,20 +308,20 @@ ChatCommand * ChatHandler::getCommandTable()
     // prefix abbreviation at each level.
     static ChatCommand houseObjectCommandTable[] =
     {
-        { "add",            SEC_PLAYER,        false, &ChatHandler::HandleHouseObjectAddCommand,      "", nullptr },
-        { "drag",           SEC_PLAYER,        false, &ChatHandler::HandleHouseObjectDragCommand,     "", nullptr },
-        { "move",           SEC_PLAYER,        false, &ChatHandler::HandleHouseObjectMoveCommand,     "", nullptr },
-        { "rotate",         SEC_PLAYER,        false, &ChatHandler::HandleHouseObjectRotateCommand,   "", nullptr },
-        { "scale",          SEC_PLAYER,        false, &ChatHandler::HandleHouseObjectScaleCommand,    "", nullptr },
-        { "del",            SEC_PLAYER,        false, &ChatHandler::HandleHouseObjectDelCommand,      "", nullptr },
-        { "clear",          SEC_PLAYER,        false, &ChatHandler::HandleHouseObjectClearCommand,    "", nullptr },
-        { "list",           SEC_PLAYER,        false, &ChatHandler::HandleHouseObjectListCommand,     "", nullptr },
-        { "select",         SEC_PLAYER,        false, &ChatHandler::HandleHouseObjectSelectCommand,   "", nullptr },
-        { "unselect",       SEC_PLAYER,        false, &ChatHandler::HandleHouseObjectUnselectCommand, "", nullptr },
-        { "chalk",          SEC_PLAYER,        false, &ChatHandler::HandleHouseObjectChalkCommand,    "", nullptr },
-        { "edit",           SEC_PLAYER,        false, &ChatHandler::HandleHouseObjectEditCommand,     "", nullptr },
+        { "add",            SEC_PLAYER,        false, &ComfyCommands::HandleHouseObjectAddCommand,    "", nullptr },
+        { "drag",           SEC_PLAYER,        false, &ComfyCommands::HandleHouseObjectDragCommand,   "", nullptr },
+        { "move",           SEC_PLAYER,        false, &ComfyCommands::HandleHouseObjectMoveCommand,   "", nullptr },
+        { "rotate",         SEC_PLAYER,        false, &ComfyCommands::HandleHouseObjectRotateCommand, "", nullptr },
+        { "scale",          SEC_PLAYER,        false, &ComfyCommands::HandleHouseObjectScaleCommand,  "", nullptr },
+        { "del",            SEC_PLAYER,        false, &ComfyCommands::HandleHouseObjectDelCommand,    "", nullptr },
+        { "clear",          SEC_PLAYER,        false, &ComfyCommands::HandleHouseObjectClearCommand,  "", nullptr },
+        { "list",           SEC_PLAYER,        false, &ComfyCommands::HandleHouseObjectListCommand,   "", nullptr },
+        { "select",         SEC_PLAYER,        false, &ComfyCommands::HandleHouseObjectSelectCommand, "", nullptr },
+        { "unselect",       SEC_PLAYER,        false, &ComfyCommands::HandleHouseObjectUnselectCommand, "", nullptr },
+        { "chalk",          SEC_PLAYER,        false, &ComfyCommands::HandleHouseObjectChalkCommand,  "", nullptr },
+        { "edit",           SEC_PLAYER,        false, &ComfyCommands::HandleHouseObjectEditCommand,   "", nullptr },
         // Dev-only in a player table -- fine, security is enforced on the leaf.
-        { "marker",         SEC_DEVELOPER,     false, &ChatHandler::HandleHouseObjectMarkerCommand,   "", nullptr },
+        { "marker",         SEC_DEVELOPER,     false, &ComfyCommands::HandleHouseObjectMarkerCommand, "", nullptr },
         { nullptr,          0,                 false, nullptr,                                        "", nullptr }
     };
 
@@ -325,17 +331,17 @@ ChatCommand * ChatHandler::getCommandTable()
     // and mixing the two would make `.house object list` a half-truth.
     static ChatCommand houseCritterCommandTable[] =
     {
-        { "add",            SEC_PLAYER,        false, &ChatHandler::HandleHouseCritterAddCommand,    "", nullptr },
-        { "drag",           SEC_PLAYER,        false, &ChatHandler::HandleHouseCritterDragCommand,   "", nullptr },
-        { "wander",         SEC_PLAYER,        false, &ChatHandler::HandleHouseCritterWanderCommand, "", nullptr },
-        { "del",            SEC_PLAYER,        false, &ChatHandler::HandleHouseCritterDelCommand,    "", nullptr },
-        { "list",           SEC_PLAYER,        false, &ChatHandler::HandleHouseCritterListCommand,   "", nullptr },
+        { "add",            SEC_PLAYER,        false, &ComfyCommands::HandleHouseCritterAddCommand,  "", nullptr },
+        { "drag",           SEC_PLAYER,        false, &ComfyCommands::HandleHouseCritterDragCommand, "", nullptr },
+        { "wander",         SEC_PLAYER,        false, &ComfyCommands::HandleHouseCritterWanderCommand, "", nullptr },
+        { "del",            SEC_PLAYER,        false, &ComfyCommands::HandleHouseCritterDelCommand,  "", nullptr },
+        { "list",           SEC_PLAYER,        false, &ComfyCommands::HandleHouseCritterListCommand, "", nullptr },
         // After "list", so `.house critter l` keeps meaning list.
-        { "name",           SEC_PLAYER,        false, &ChatHandler::HandleHouseCritterNameCommand,   "", nullptr },
+        { "name",           SEC_PLAYER,        false, &ComfyCommands::HandleHouseCritterNameCommand, "", nullptr },
         // Dev-only in a player table -- fine, security is enforced on the leaf.
-        { "visual",         SEC_DEVELOPER,     false, &ChatHandler::HandleHouseCritterVisualCommand, "", nullptr },
+        { "visual",         SEC_DEVELOPER,     false, &ComfyCommands::HandleHouseCritterVisualCommand, "", nullptr },
         // Console-safe, so Reload-Server.ps1 can drive it with nobody logged in.
-        { "reload",         SEC_DEVELOPER,     true,  &ChatHandler::HandleHouseCritterReloadCommand, "", nullptr },
+        { "reload",         SEC_DEVELOPER,     true,  &ComfyCommands::HandleHouseCritterReloadCommand, "", nullptr },
         { nullptr,          0,                 false, nullptr,                                       "", nullptr }
     };
 
@@ -347,28 +353,28 @@ ChatCommand * ChatHandler::getCommandTable()
     // rows below is documentation.
     static ChatCommand houseTemplateCommandTable[] =
     {
-        { "create",         SEC_DEVELOPER,     false, &ChatHandler::HandleHouseTemplateCreateCommand, "", nullptr },
+        { "create",         SEC_DEVELOPER,     false, &ComfyCommands::HandleHouseTemplateCreateCommand, "", nullptr },
         // The way out is the template's, not the resident's -- so it is authored
         // here, between create and save, and stamps out with everything else.
-        { "exit",           SEC_DEVELOPER,     false, &ChatHandler::HandleHouseTemplateExitCommand,   "", nullptr },
-        { "save",           SEC_DEVELOPER,     false, &ChatHandler::HandleHouseTemplateSaveCommand,   "", nullptr },
-        { "goto",           SEC_DEVELOPER,     false, &ChatHandler::HandleHouseTemplateGotoCommand,   "", nullptr },
-        { "delete",         SEC_DEVELOPER,     false, &ChatHandler::HandleHouseTemplateDeleteCommand, "", nullptr },
-        { "list",           SEC_DEVELOPER,     false, &ChatHandler::HandleHouseTemplateListCommand,   "", nullptr },
+        { "exit",           SEC_DEVELOPER,     false, &ComfyCommands::HandleHouseTemplateExitCommand, "", nullptr },
+        { "save",           SEC_DEVELOPER,     false, &ComfyCommands::HandleHouseTemplateSaveCommand, "", nullptr },
+        { "goto",           SEC_DEVELOPER,     false, &ComfyCommands::HandleHouseTemplateGotoCommand, "", nullptr },
+        { "delete",         SEC_DEVELOPER,     false, &ComfyCommands::HandleHouseTemplateDeleteCommand, "", nullptr },
+        { "list",           SEC_DEVELOPER,     false, &ComfyCommands::HandleHouseTemplateListCommand, "", nullptr },
         { nullptr,          0,                 false, nullptr,                                        "", nullptr }
     };
 
     static ChatCommand houseEntranceCommandTable[] =
     {
-        { "create",         SEC_DEVELOPER,     false, &ChatHandler::HandleHouseEntranceCreateCommand,   "", nullptr },
-        { "list",           SEC_DEVELOPER,     false, &ChatHandler::HandleHouseEntranceListCommand,     "", nullptr },
-        { "move",           SEC_DEVELOPER,     false, &ChatHandler::HandleHouseEntranceMoveCommand,     "", nullptr },
-        { "remove",         SEC_DEVELOPER,     false, &ChatHandler::HandleHouseEntranceRemoveCommand,   "", nullptr },
-        { "where",          SEC_DEVELOPER,     false, &ChatHandler::HandleHouseEntranceWhereCommand,    "", nullptr },
-        { "home",           SEC_DEVELOPER,     false, &ChatHandler::HandleHouseEntranceHomeCommand,     "", nullptr },
-        { "template",       SEC_DEVELOPER,     false, &ChatHandler::HandleHouseEntranceTemplateCommand, "", nullptr },
-        { "model",          SEC_DEVELOPER,     false, &ChatHandler::HandleHouseEntranceModelCommand,    "", nullptr },
-        { "handle",         SEC_DEVELOPER,     false, &ChatHandler::HandleHouseEntranceHandleCommand,   "", nullptr },
+        { "create",         SEC_DEVELOPER,     false, &ComfyCommands::HandleHouseEntranceCreateCommand, "", nullptr },
+        { "list",           SEC_DEVELOPER,     false, &ComfyCommands::HandleHouseEntranceListCommand,   "", nullptr },
+        { "move",           SEC_DEVELOPER,     false, &ComfyCommands::HandleHouseEntranceMoveCommand,   "", nullptr },
+        { "remove",         SEC_DEVELOPER,     false, &ComfyCommands::HandleHouseEntranceRemoveCommand, "", nullptr },
+        { "where",          SEC_DEVELOPER,     false, &ComfyCommands::HandleHouseEntranceWhereCommand,  "", nullptr },
+        { "home",           SEC_DEVELOPER,     false, &ComfyCommands::HandleHouseEntranceHomeCommand,   "", nullptr },
+        { "template",       SEC_DEVELOPER,     false, &ComfyCommands::HandleHouseEntranceTemplateCommand, "", nullptr },
+        { "model",          SEC_DEVELOPER,     false, &ComfyCommands::HandleHouseEntranceModelCommand,  "", nullptr },
+        { "handle",         SEC_DEVELOPER,     false, &ComfyCommands::HandleHouseEntranceHandleCommand, "", nullptr },
         { nullptr,          0,                 false, nullptr,                                          "", nullptr }
     };
 
@@ -376,17 +382,17 @@ ChatCommand * ChatHandler::getCommandTable()
     // there is somewhere for a `list` to go later.
     static ChatCommand houseFurnitureCommandTable[] =
     {
-        { "reload",         SEC_DEVELOPER,     true,  &ChatHandler::HandleHouseFurnitureReloadCommand,  "", nullptr },
+        { "reload",         SEC_DEVELOPER,     true,  &ComfyCommands::HandleHouseFurnitureReloadCommand,"", nullptr },
         { nullptr,          0,                 false, nullptr,                                          "", nullptr }
     };
 
     static ChatCommand houseCommandTable[] =
     {
-        { "go",             SEC_PLAYER,        false, &ChatHandler::HandleHouseGoCommand,             "", nullptr },
-        { "reset",          SEC_PLAYER,        false, &ChatHandler::HandleHouseResetCommand,          "", nullptr },
+        { "go",             SEC_PLAYER,        false, &ComfyCommands::HandleHouseGoCommand,           "", nullptr },
+        { "reset",          SEC_PLAYER,        false, &ComfyCommands::HandleHouseResetCommand,        "", nullptr },
         // Before entrance, so `.house e` keeps meaning edit.
-        { "edit",           SEC_PLAYER,        false, &ChatHandler::HandleHouseEditCommand,           "", nullptr },
-        { "visit",          SEC_PLAYER,        false, &ChatHandler::HandleHouseVisitCommand,          "", nullptr },
+        { "edit",           SEC_PLAYER,        false, &ComfyCommands::HandleHouseEditCommand,         "", nullptr },
+        { "visit",          SEC_PLAYER,        false, &ComfyCommands::HandleHouseVisitCommand,        "", nullptr },
         { "object",         SEC_PLAYER,        false, nullptr,                                        "", houseObjectCommandTable },
         // Nothing else in this table begins with c, so `.house c a 721` works.
         { "critter",        SEC_PLAYER,        false, nullptr,                                        "", houseCritterCommandTable },
@@ -395,7 +401,7 @@ ChatCommand * ChatHandler::getCommandTable()
         { "furniture",      SEC_DEVELOPER,     true,  nullptr,                                        "", houseFurnitureCommandTable },
         // `.house g` still means go, which used to need "guest" sitting between
         // them to be worth saying.
-        { "storage",        SEC_PLAYER,        false, &ChatHandler::HandleHouseStorageCommand,        "", nullptr },
+        { "storage",        SEC_PLAYER,        false, &ComfyCommands::HandleHouseStorageCommand,      "", nullptr },
         // After "storage", so `.house s` keeps meaning storage. `.house se` is
         // the shortest thing that reaches here, which is the right way round:
         // storage is opened constantly and a setting is changed once.
@@ -406,7 +412,7 @@ ChatCommand * ChatHandler::getCommandTable()
         // row unchanged. Registering both spellings (built 2026-09-03, removed
         // the same day) was two rows doing one row's job; the longer name is
         // the one to keep, because it is the only one that covers both.
-        { "settings",       SEC_PLAYER,        false, &ChatHandler::HandleHouseSettingCommand,        "", nullptr },
+        { "settings",       SEC_PLAYER,        false, &ComfyCommands::HandleHouseSettingCommand,      "", nullptr },
         { nullptr,          0,                 false, nullptr,                                        "", nullptr }
     };
 
@@ -487,7 +493,7 @@ ChatCommand * ChatHandler::getCommandTable()
         { "speed",          SEC_DEVELOPER,     false, &ChatHandler::HandleModifyASpeedCommand,        "", nullptr },
         { "scale",          SEC_DEVELOPER,     false, &ChatHandler::HandleModifyScaleCommand,         "", nullptr },
         { "faction",        SEC_DEVELOPER,     false, &ChatHandler::HandleModifyFactionCommand,       "", nullptr },
-        { "npcflag",        SEC_DEVELOPER,     false, &ChatHandler::HandleModifyNpcFlagCommand,       "", nullptr },
+        { "npcflag",        SEC_DEVELOPER,     false, &ComfyCommands::HandleModifyNpcFlagCommand,     "", nullptr },
         { "rep",            SEC_DEVELOPER,     false, &ChatHandler::HandleModifyRepCommand,           "", nullptr },
         { "drunk",          SEC_DEVELOPER,     false, &ChatHandler::HandleModifyDrunkCommand,         "", nullptr },
         { "morph",          SEC_DEVELOPER,     false, &ChatHandler::HandleModifyMorphCommand,         "", nullptr },
@@ -660,12 +666,12 @@ ChatCommand * ChatHandler::getCommandTable()
         { "areatrigger_involvedrelation",SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadQuestAreaTriggersCommand,       "", nullptr },
         { "areatrigger_tavern",          SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadAreaTriggerTavernCommand,       "", nullptr },
         { "areatrigger_teleport",        SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadAreaTriggerTeleportCommand,     "", nullptr },
-        { "broadcast_text",              SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadBroadcastTextCommand,           "", nullptr },
-        { "dialog_scenes",               SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadDialogScenesCommand,            "", nullptr },
-        { "dialog_dests",                SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadDialogDestsCommand,             "", nullptr },
+        { "broadcast_text",              SEC_ADMINISTRATOR, true,  &ComfyCommands::HandleReloadBroadcastTextCommand,         "", nullptr },
+        { "dialog_scenes",               SEC_ADMINISTRATOR, true,  &ComfyCommands::HandleReloadDialogScenesCommand,          "", nullptr },
+        { "dialog_dests",                SEC_ADMINISTRATOR, true,  &ComfyCommands::HandleReloadDialogDestsCommand,           "", nullptr },
         { "character_pet",               SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadCharacterPetCommand,            "", nullptr },
         { "conditions",                  SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadConditionsCommand,              "", nullptr },
-        { "custom_merchant",             SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadCustomMerchantCommand,          "", nullptr },
+        { "custom_merchant",             SEC_ADMINISTRATOR, true,  &ComfyCommands::HandleReloadCustomMerchantCommand,        "", nullptr },
         { "config",                      SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadConfigCommand,                  "", nullptr },
         { "creature",                    SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadCreatureCommand,                "", nullptr },
         { "creature_ai_events",          SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadEventAIEventsCommand,           "", nullptr },
@@ -683,7 +689,7 @@ ChatCommand * ChatHandler::getCommandTable()
         { "game_tele",                   SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadGameTeleCommand,                "", nullptr },
         { "taxi_path_transitions",       SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadTaxiPathTransitionsCommand,     "", nullptr },
         { "gameobject",                  SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadGameObjectCommand,              "", nullptr },
-        { "gameobject_template",         SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadGameObjectTemplateCommand,      "", nullptr },
+        { "gameobject_template",         SEC_ADMINISTRATOR, true,  &ComfyCommands::HandleReloadGameObjectTemplateCommand,    "", nullptr },
         { "gameobject_involvedrelation", SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadGOQuestInvRelationsCommand,     "", nullptr },
         { "gameobject_loot_template",    SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadLootTemplatesGameobjectCommand, "", nullptr },
         { "gameobject_questrelation",    SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadGOQuestRelationsCommand,        "", nullptr },
@@ -725,7 +731,7 @@ ChatCommand * ChatHandler::getCommandTable()
         { "reserved_name",               SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadReservedNameCommand,            "", nullptr },
         { "reputation_reward_rate",      SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadReputationRewardRateCommand,    "", nullptr },
         { "reputation_spillover_template", SEC_ADMINISTRATOR, true, &ChatHandler::HandleReloadReputationSpilloverTemplateCommand, "", nullptr },
-        { "rented_mount",                SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadRentedMountCommand,             "", nullptr },
+        { "rented_mount",                SEC_ADMINISTRATOR, true,  &ComfyCommands::HandleReloadRentedMountCommand,           "", nullptr },
         { "skill_fishing_base_level",    SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadSkillFishingBaseLevelCommand,   "", nullptr },
         { "skinning_loot_template",      SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadLootTemplatesSkinningCommand,   "", nullptr },
         { "spell_affect",                SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadSpellAffectCommand,             "", nullptr },
@@ -759,7 +765,7 @@ ChatCommand * ChatHandler::getCommandTable()
         { "player_factionchange_quests", SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadFactionChangeQuests,            "", nullptr },
         { "player_factionchange_mounts", SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadFactionChangeMounts,            "", nullptr },
         { "creature_display_info_addon", SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadCreatureDisplayInfoAddon,       "", nullptr },
-        { "bot_npc",        SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadBotNpcCommand,                  "", nullptr },
+        { "bot_npc",        SEC_ADMINISTRATOR, true,  &ComfyCommands::HandleReloadBotNpcCommand,                "", nullptr },
         { "ip_banned",                   SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadIPBanList,                      "", nullptr },
         { "account_banned",              SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadAccountBanList,                 "", nullptr },
         { "instance_buff_removal",       SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadInstanceBuffRemoval,            "", nullptr },
@@ -968,12 +974,12 @@ ChatCommand * ChatHandler::getCommandTable()
         { "castcustom",     SEC_DEVELOPER,       false, &ChatHandler::HandleCastCustomCommand,          "", nullptr },
         { "character",      SEC_DEVELOPER,       true,  nullptr,                                        "", characterCommandTable},
         { "rename",         SEC_MODERATOR,       true,  &ChatHandler::HandleCharacterRenameCommand,     "", nullptr},
-        { "effect",         SEC_DEVELOPER,       true,  &ChatHandler::HandleEffectCommand,              "", nullptr },
-        { "emote",          SEC_DEVELOPER,       true,  &ChatHandler::HandleEmoteCommand,               "", nullptr },
-        { "dest",           SEC_DEVELOPER,       false, &ChatHandler::HandleDestCommand,                "", nullptr },
-        { "spot",           SEC_DEVELOPER,       false, &ChatHandler::HandleSpotCommand,                "", nullptr },
-        { "spotfrom",       SEC_DEVELOPER,       false, &ChatHandler::HandleSpotFromCommand,            "", nullptr },
-        { "scene",          SEC_DEVELOPER,       false, &ChatHandler::HandleSceneCommand,               "", nullptr },
+        { "effect",         SEC_DEVELOPER,       true,  &ComfyCommands::HandleEffectCommand,            "", nullptr },
+        { "emote",          SEC_DEVELOPER,       true,  &ComfyCommands::HandleEmoteCommand,             "", nullptr },
+        { "dest",           SEC_DEVELOPER,       false, &ComfyCommands::HandleDestCommand,              "", nullptr },
+        { "spot",           SEC_DEVELOPER,       false, &ComfyCommands::HandleSpotCommand,              "", nullptr },
+        { "spotfrom",       SEC_DEVELOPER,       false, &ComfyCommands::HandleSpotFromCommand,          "", nullptr },
+        { "scene",          SEC_DEVELOPER,       false, &ComfyCommands::HandleSceneCommand,             "", nullptr },
         { "event",          SEC_DEVELOPER,       false, nullptr,                                        "", eventCommandTable    },
         { "gm",             SEC_OBSERVER,        true,  nullptr,                                        "", gmCommandTable       },
         { "honor",          SEC_ADMINISTRATOR,   false, nullptr,                                        "", honorCommandTable    },
@@ -1049,7 +1055,7 @@ ChatCommand * ChatHandler::getCommandTable()
         { "explorecheat",   SEC_DEVELOPER,       false, &ChatHandler::HandleExploreCheatCommand,        "", nullptr },
         { "hover",          SEC_ADMINISTRATOR,   false, &ChatHandler::HandleHoverCommand,               "", nullptr },
         { "levelup",        SEC_DEVELOPER,       false, &ChatHandler::HandleLevelUpCommand,             "", nullptr },
-        { "setlevel",       SEC_DEVELOPER,       false, &ChatHandler::HandleSetLevelCommand,            "", nullptr },
+        { "setlevel",       SEC_DEVELOPER,       false, &ComfyCommands::HandleSetLevelCommand,          "", nullptr },
         { "showarea",       SEC_ADMINISTRATOR,   false, &ChatHandler::HandleShowAreaCommand,            "", nullptr },
         { "hidearea",       SEC_ADMINISTRATOR,   false, &ChatHandler::HandleHideAreaCommand,            "", nullptr },
         { "additem",        SEC_DEVELOPER,       false, &ChatHandler::HandleAddItemCommand,             "", nullptr },
@@ -1058,7 +1064,7 @@ ChatCommand * ChatHandler::getCommandTable()
         { "bank",           SEC_DEVELOPER,       false, &ChatHandler::HandleBankCommand,                "", nullptr },
         // SEC_PLAYER: reporting a bug is not a GM action, and the client's own
         // report window submits this as a chat command.
-        { "bug",            SEC_PLAYER,          false, &ChatHandler::HandleBugCommand,                 "Syntax: .bug <what went wrong>\r\nFiles a bug report. It shows up on the website with your character and where you were standing.", nullptr },
+        { "bug",            SEC_PLAYER,          false, &ComfyCommands::HandleBugCommand,               "Syntax: .bug <what went wrong>\r\nFiles a bug report. It shows up on the website with your character and where you were standing.", nullptr },
         { "wchange",        SEC_DEVELOPER,       false, &ChatHandler::HandleChangeWeatherCommand,       "", nullptr },
         { "ticket",         SEC_MODERATOR,       true,  nullptr,                                        "",ticketCommandTable },
         { "maxskill",       SEC_DEVELOPER,       false, &ChatHandler::HandleMaxSkillCommand,            "", nullptr },
@@ -1141,9 +1147,9 @@ ChatCommand * ChatHandler::getCommandTable()
         // manage their own random-bot pool without keeping a GM alt logged in;
         // a server operator who wants tighter control can raise it.
         { "bot",            SEC_PLAYER,           false, &ChatHandler::HandlePlayerbotCommand,           "", nullptr },
-        { "npcbot",         SEC_DEVELOPER,        true,  &ChatHandler::HandleNpcBotCommand,              "", nullptr },
-        { "add_dressing_room", SEC_DEVELOPER,    false, &ChatHandler::HandleAddDressingRoomCommand,     "", nullptr },
-        { "comfyhelp",      SEC_PLAYER,           true,  &ChatHandler::HandleComfyHelpCommand,           "", nullptr },
+        { "npcbot",         SEC_DEVELOPER,        true,  &ComfyCommands::HandleNpcBotCommand,            "", nullptr },
+        { "add_dressing_room", SEC_DEVELOPER,    false, &ComfyCommands::HandleAddDressingRoomCommand,   "", nullptr },
+        { "comfyhelp",      SEC_PLAYER,           true,  &ComfyCommands::HandleComfyHelpCommand,         "", nullptr },
         { "rndbot",         SEC_PLAYER,          true,  &ChatHandler::HandleRandomPlayerbotCommand,     "", nullptr },
         { "ahbot",          SEC_MODERATOR,       true,  &ChatHandler::HandleAhBotCommand,               "", nullptr },
         { "perfmon",        SEC_MODERATOR,       true,  &ChatHandler::HandlePerfMonCommand,             "", nullptr },
@@ -1809,7 +1815,7 @@ void ChatHandler::ExecuteCommand(const char* text)
                 }
             }
 
-            if ((this->*(command->Handler))((char*)text))   // text content destroyed at call
+            if (command->Handler.Call(this, (char*)text))       // text content destroyed at call
             {
                 if (m_session && command->Flags & COMMAND_FLAGS_CRITICAL)
                 {

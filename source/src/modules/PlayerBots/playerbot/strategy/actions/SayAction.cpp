@@ -1,5 +1,6 @@
 
 #include "playerbot/playerbot.h"
+#include "Chat/Chat.h"
 #include "SayAction.h"
 #include "playerbot/PlayerbotTextMgr.h"
 #include "Chat/ChannelMgr.h"

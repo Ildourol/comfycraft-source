@@ -1,4 +1,5 @@
 #include "scriptPCH.h"
+#include "Chat.h"
 #include <array>
 #include "../dungeons/blackwing_lair/blackwing_lair.h"
 

@@ -6,6 +6,7 @@ SDCategory: BG
 EndScriptData */
 
 #include "scriptPCH.h"
+#include "Chat.h"
 #include "World.h"
 #include "GameEventMgr.h"
 

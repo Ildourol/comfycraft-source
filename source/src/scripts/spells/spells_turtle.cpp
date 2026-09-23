@@ -1,4 +1,5 @@
 #include "scriptPCH.h"
+#include "Chat.h"
 #include "CompanionManager.hpp"
 #include "MountManager.hpp"
 #include "ToyManager.hpp"

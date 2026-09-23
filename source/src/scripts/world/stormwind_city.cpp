@@ -28,6 +28,7 @@ npc_lady_katrana_prestor
 EndContentData */
 
 #include "scriptPCH.h"
+#include "Chat.h"
 #include <list>
 
 /*######

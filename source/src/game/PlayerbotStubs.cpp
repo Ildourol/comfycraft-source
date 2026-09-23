@@ -15,6 +15,7 @@
 #include "World.h"
 #include "WorldPacket.h"
 #include "Chat/Chat.h"
+#include "ComfyCommands.h"
 #include <string>
 
 // The single call the core makes into the module: it registers the hook
@@ -43,10 +44,10 @@ bool BotNpc_Dress(Player*, std::string const&, std::string& error)
 // when the bot module isn't compiled in. Return true and inform the user.
 bool ChatHandler::HandlePlayerbotCommand(char*)
     { SendSysMessage("Playerbots not built (BUILD_PLAYERBOTS=OFF)."); return true; }
-bool ChatHandler::HandleNpcBotCommand(char*)
-    { SendSysMessage("Bot NPCs need the playerbots module (BUILD_PLAYERBOTS=OFF)."); return true; }
-bool ChatHandler::HandleAddDressingRoomCommand(char*)
-    { SendSysMessage("Saved looks need the playerbots module (BUILD_PLAYERBOTS=OFF)."); return true; }
+bool ComfyCommands::HandleNpcBotCommand(ChatHandler* handler, char*)
+    { handler->SendSysMessage("Bot NPCs need the playerbots module (BUILD_PLAYERBOTS=OFF)."); return true; }
+bool ComfyCommands::HandleAddDressingRoomCommand(ChatHandler* handler, char*)
+    { handler->SendSysMessage("Saved looks need the playerbots module (BUILD_PLAYERBOTS=OFF)."); return true; }
 bool ChatHandler::HandleRandomPlayerbotCommand(char*)
     { SendSysMessage("Random playerbots not built (BUILD_PLAYERBOTS=OFF)."); return true; }
 bool ChatHandler::HandleAhBotCommand(char*)

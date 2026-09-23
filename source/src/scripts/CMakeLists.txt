@@ -550,7 +550,6 @@ else()
       ../game/Spells/SpellAuras.h
       ../game/Objects/TemporarySummon.h
       ../game/AI/NullCreatureAI.h
-      ../game/Chat/Chat.h
       ../game/Battlegrounds/BattleGroundAV.h
       ../game/World.h
       ../game/Weather.h

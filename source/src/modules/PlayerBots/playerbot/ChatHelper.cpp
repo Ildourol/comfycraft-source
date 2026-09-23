@@ -1,5 +1,6 @@
 
 #include "playerbot/playerbot.h"
+#include "playerbot/PlayerbotChatHandler.h"
 #include "ChatHelper.h"
 #include "playerbot/AiFactory.h"
 #include "strategy/values/ItemUsageValue.h"

@@ -22,6 +22,7 @@ SDCategory: Blackwing Lair
 EndScriptData */
 
 #include "scriptPCH.h"
+#include "Chat.h"
 #include "blackwing_lair.h"
 
 struct RazCoords

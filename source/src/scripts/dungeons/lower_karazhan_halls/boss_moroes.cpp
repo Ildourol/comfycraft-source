@@ -1,4 +1,5 @@
 #include "scriptPCH.h"
+#include "Chat.h"
 #include "lower_karazhan_halls.h"
 
 enum MoroesStuff

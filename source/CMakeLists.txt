@@ -568,6 +568,14 @@ if(MSVC)
   # server\ does not have, so the binary would not start at all; they use the
   # debug runtime besides, which /MD objects must not mix with.
   set(CMAKE_MAP_IMPORTED_CONFIG_RELWITHDEBINFO "Release;RelWithDebInfo;")
+  # A full link every time, not CMake's /INCREMENTAL. Measured 2026-09-23: a
+  # full link of mangosd takes 4 to 8 s, but an incremental one after a change
+  # to many objects took up to 101 s, so a Chat.h edit ran 70 to 174 s and now
+  # runs 76 to 85 s. A one-file edit pays about 6 s for it (10 s to 16 s).
+  # /DEBUG:FASTLINK was no faster, and its PDB needs the object files.
+  foreach(_linker EXE SHARED MODULE)
+    set(CMAKE_${_linker}_LINKER_FLAGS_RELWITHDEBINFO "/DEBUG /INCREMENTAL:NO")
+  endforeach()
 endif()
 
 set(CMAKE_SKIP_BUILD_RPATH FALSE)

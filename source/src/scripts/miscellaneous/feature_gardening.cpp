@@ -1,5 +1,6 @@
 
 #include "scriptPCH.h"
+#include "Chat.h"
 
 enum GardenObjects
 {

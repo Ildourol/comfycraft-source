@@ -1,5 +1,6 @@
 
 #include "playerbot/playerbot.h"
+#include "Chat/Chat.h"
 #include "GuildManagementActions.h"
 #include "playerbot/ServerFacade.h"
 

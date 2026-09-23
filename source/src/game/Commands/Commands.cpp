@@ -9,6 +9,7 @@
 #include "CellImpl.h"
 #include "CharacterDatabaseCache.h"
 #include "Chat.h"
+#include "ComfyCommands.h"
 #include "CustomMerchantMgr.h"
 #include "BotNpc.h"
 #include "Common.h"
@@ -2615,24 +2616,24 @@ bool ChatHandler::HandleGuildDeleteCommand(char* args)
     return true;
 }
 
-bool ChatHandler::HandleGuildHouseCommand(char* args)
+bool ComfyCommands::HandleGuildHouseCommand(ChatHandler* handler, char* args)
 {
     if (!*args)
     {
-        SendSysMessage("Syntax: .guild house on / off");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("Syntax: .guild house on / off");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     bool value;
 
-    if (!ExtractOnOff(&args, value))
+    if (!handler->ExtractOnOff(&args, value))
     {
-        SetSentErrorMessage(true);
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
-    Player* player = m_session->GetPlayer();
+    Player* player = handler->m_session->GetPlayer();
 
     if (!player)
         return false;
@@ -2641,7 +2642,7 @@ bool ChatHandler::HandleGuildHouseCommand(char* args)
 
     if (!guild_id)
     {
-        SendSysMessage("You must be in the guild to add a guild house.");
+        handler->SendSysMessage("You must be in the guild to add a guild house.");
         return false;
     }
 
@@ -2649,15 +2650,15 @@ bool ChatHandler::HandleGuildHouseCommand(char* args)
     {
         CharacterDatabase.PExecute("REPLACE INTO guild_house VALUES (%u, %u, %f, %f, %f, %f);",
             guild_id, player->GetMapId(), player->GetPositionX(), player->GetPositionY(), player->GetPositionZ(), player->GetOrientation());
-        PSendSysMessage("The guild house teleport for %s was created.", sGuildMgr.GetGuildNameById(guild_id).c_str());
+        handler->PSendSysMessage("The guild house teleport for %s was created.", sGuildMgr.GetGuildNameById(guild_id).c_str());
     }
     else
     {
         CharacterDatabase.PExecute("DELETE FROM guild_house WHERE guild_id = %u", guild_id);
-        SendSysMessage("The guild house teleport was removed.");
+        handler->SendSysMessage("The guild house teleport was removed.");
     }
 
-    SendSysMessage("Type .reload housing to reload guild houses.");
+    handler->SendSysMessage("Type .reload housing to reload guild houses.");
     return true;
 }
 
@@ -3621,10 +3622,10 @@ bool ChatHandler::HandleLevelUpCommand(char* args)
 // spellbook and the talents down when the level drops, but it can only hand back what an
 // earlier drop took away - so this fills in the rest, which is what makes ".setlevel 40"
 // on a level 12 character produce a working level 40 instead of a level 40 husk.
-bool ChatHandler::HandleSetLevelCommand(char* args)
+bool ComfyCommands::HandleSetLevelCommand(ChatHandler* handler, char* args)
 {
     int32 newLevel;
-    if (!ExtractInt32(&args, newLevel))
+    if (!handler->ExtractInt32(&args, newLevel))
         return false;
 
     Player* target = nullptr;
@@ -3633,21 +3634,21 @@ bool ChatHandler::HandleSetLevelCommand(char* args)
 
     if (*args)
     {
-        if (!ExtractPlayerTarget(&args, &target, &target_guid, &target_name))
+        if (!handler->ExtractPlayerTarget(&args, &target, &target_guid, &target_name))
             return false;
     }
     else
     {
         // Never a creature. With a mob targeted this still means you, which is the trap
         // .levelup sets every time it is run without deselecting first.
-        target = GetSelectedPlayer();
-        if (!target && m_session)
-            target = m_session->GetPlayer();
+        target = handler->GetSelectedPlayer();
+        if (!target && handler->m_session)
+            target = handler->m_session->GetPlayer();
 
         if (!target)
         {
-            SendSysMessage(LANG_NO_CHAR_SELECTED);
-            SetSentErrorMessage(true);
+            handler->SendSysMessage(LANG_NO_CHAR_SELECTED);
+            handler->SetSentErrorMessage(true);
             return false;
         }
 
@@ -3663,21 +3664,21 @@ bool ChatHandler::HandleSetLevelCommand(char* args)
 
     int32 oldLevel = target ? int32(target->GetLevel()) : int32(Player::GetLevelFromDB(target_guid));
 
-    HandleCharacterLevel(target, target_guid, oldLevel, newLevel);
+    handler->HandleCharacterLevel(target, target_guid, oldLevel, newLevel);
 
     if (!target)
     {
-        PSendSysMessage("%s is offline: level set to %i, spells and skills untouched.", target_name.c_str(), newLevel);
+        handler->PSendSysMessage("%s is offline: level set to %i, spells and skills untouched.", target_name.c_str(), newLevel);
         return true;
     }
 
     target->LearnClassSpellsForLevel();
     target->MaxLevelDependentSkills();
 
-    if (m_session && m_session->GetPlayer() == target)
-        PSendSysMessage("Level %i. Spellbook and weapon skills to match.", newLevel);
+    if (handler->m_session && handler->m_session->GetPlayer() == target)
+        handler->PSendSysMessage("Level %i. Spellbook and weapon skills to match.", newLevel);
     else
-        PSendSysMessage("%s is level %i. Spellbook and weapon skills to match.", GetNameLink(target).c_str(), newLevel);
+        handler->PSendSysMessage("%s is level %i. Spellbook and weapon skills to match.", handler->GetNameLink(target).c_str(), newLevel);
 
     return true;
 }
@@ -7264,11 +7265,11 @@ bool ChatHandler::HandleReplenishCommand(char* args)
  * from the mangosd console, which is SEC_CONSOLE, or through .mangos-command --
  * the same rule CLAUDE.md states for the whole reload family.
  */
-bool ChatHandler::HandleReloadBotNpcCommand(char* /*args*/)
+bool ComfyCommands::HandleReloadBotNpcCommand(ChatHandler* handler, char* /*args*/)
 {
     sLog.outString("Re-Loading bot NPCs...");
     sBotNpcMgr.Reload();
-    SendSysMessage(">> Table `bot_npc` reloaded.");
+    handler->SendSysMessage(">> Table `bot_npc` reloaded.");
     return true;
 }
 
@@ -7287,13 +7288,13 @@ bool ChatHandler::HandleReloadBotNpcCommand(char* /*args*/)
  *
  * 1 is UNIT_NPC_FLAG_GOSSIP. 0 puts a bot back to being a bot.
  */
-bool ChatHandler::HandleModifyNpcFlagCommand(char* args)
+bool ComfyCommands::HandleModifyNpcFlagCommand(ChatHandler* handler, char* args)
 {
-    Unit* target = GetSelectedUnit();
+    Unit* target = handler->GetSelectedUnit();
     if (!target)
     {
-        SendSysMessage(LANG_SELECT_CHAR_OR_CREATURE);
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(LANG_SELECT_CHAR_OR_CREATURE);
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -7301,18 +7302,18 @@ bool ChatHandler::HandleModifyNpcFlagCommand(char* args)
 
     if (!*args)
     {
-        PSendSysMessage("npcflag of %s %s is %u.", kind, target->GetName(),
+        handler->PSendSysMessage("npcflag of %s %s is %u.", kind, target->GetName(),
                         target->GetUInt32Value(UNIT_NPC_FLAGS));
         return true;
     }
 
     uint32 npcflag;
-    if (!ExtractUInt32(&args, npcflag))
+    if (!handler->ExtractUInt32(&args, npcflag))
         return false;
 
     target->SetUInt32Value(UNIT_NPC_FLAGS, npcflag);
 
-    PSendSysMessage("npcflag of %s %s set to %u.", kind, target->GetName(), npcflag);
+    handler->PSendSysMessage("npcflag of %s %s set to %u.", kind, target->GetName(), npcflag);
 
     // The field is now dirty and goes out in the next values update -- but
     // whether the CLIENT re-reads UNIT_NPC_FLAGS on an update, rather than only
@@ -14334,14 +14335,14 @@ bool ChatHandler::HandleReloadAreaTriggerTeleportCommand(char* /*args*/)
  * Console-safe, hence the optional name: `.effect 6512 Bob` works with nobody
  * at the keyboard, which is what `.mangos-command` needs.
  */
-bool ChatHandler::HandleEffectCommand(char* args)
+bool ComfyCommands::HandleEffectCommand(ChatHandler* handler, char* args)
 {
     uint32 kitId = 0;
-    if (!ExtractUInt32(&args, kitId) || !kitId)
+    if (!handler->ExtractUInt32(&args, kitId) || !kitId)
     {
-        SendSysMessage("Usage: .effect <SpellVisualKit id> [player]");
-        SendSysMessage("Plays on your target, or on you, or on the player you name. 6512 is the critter hearts.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("Usage: .effect <SpellVisualKit id> [player]");
+        handler->SendSysMessage("Plays on your target, or on you, or on the player you name. 6512 is the critter hearts.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -14350,34 +14351,34 @@ bool ChatHandler::HandleEffectCommand(char* args)
     if (args && *args)
     {
         Player* named = nullptr;
-        if (!ExtractPlayerTarget(&args, &named))
+        if (!handler->ExtractPlayerTarget(&args, &named))
             return false;
         if (!named)
         {
-            SendSysMessage(LANG_PLAYER_NOT_FOUND);
-            SetSentErrorMessage(true);
+            handler->SendSysMessage(LANG_PLAYER_NOT_FOUND);
+            handler->SetSentErrorMessage(true);
             return false;
         }
         pUnit = named;
     }
-    else if (m_session)
+    else if (handler->m_session)
     {
         // Your selection if you have one -- the point of this command is holding
         // an effect up against the thing that will carry it.
-        pUnit = GetSelectedUnit();
+        pUnit = handler->GetSelectedUnit();
         if (!pUnit)
-            pUnit = m_session->GetPlayer();
+            pUnit = handler->m_session->GetPlayer();
     }
 
     if (!pUnit)
     {
-        SendSysMessage("From the console, name a player: .effect <kit> <player>");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("From the console, name a player: .effect <kit> <player>");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     pUnit->SendPlaySpellVisual(kitId);
-    PSendSysMessage("Effect %u on %s.", kitId, pUnit->GetName());
+    handler->PSendSysMessage("Effect %u on %s.", kitId, pUnit->GetName());
     return true;
 }
 
@@ -14416,21 +14417,21 @@ bool ChatHandler::HandleEffectCommand(char* args)
  *
  * Errors come back as a whisper, the same as they would from a button.
  */
-bool ChatHandler::HandleSceneCommand(char* args)
+bool ComfyCommands::HandleSceneCommand(ChatHandler* handler, char* args)
 {
     uint32 id = 0;
-    if (!ExtractUInt32(&args, id) || !id)
+    if (!handler->ExtractUInt32(&args, id) || !id)
     {
-        SendSysMessage("Usage: .scene <id>");
-        SendSysMessage("Runs a dialog_lua scene with your target as npc and you as player.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("Usage: .scene <id>");
+        handler->SendSysMessage("Runs a dialog_lua scene with your target as npc and you as player.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
-    if (!m_session)
+    if (!handler->m_session)
     {
-        SendSysMessage("A scene needs somebody to run it on, so this one needs a character.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("A scene needs somebody to run it on, so this one needs a character.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -14438,16 +14439,16 @@ bool ChatHandler::HandleSceneCommand(char* args)
     auto it = data->scripts.find(id);
     if (it == data->scripts.end())
     {
-        PSendSysMessage("There is no scene %u loaded. Try: reload dialog_scenes", id);
-        SetSentErrorMessage(true);
+        handler->PSendSysMessage("There is no scene %u loaded. Try: reload dialog_scenes", id);
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
-    Player* me = m_session->GetPlayer();
+    Player* me = handler->m_session->GetPlayer();
 
     // Your selection if you have one, otherwise you are both halves. Running a
     // scene on yourself is a real way to test one.
-    Unit* npc = GetSelectedUnit();
+    Unit* npc = handler->GetSelectedUnit();
     if (!npc)
         npc = me;
 
@@ -14461,20 +14462,20 @@ bool ChatHandler::HandleSceneCommand(char* args)
     if (LuaScene* scene = map->GetLuaScene())
         scene->Run(id, it->second, name, npc->GetObjectGuid(), me->GetObjectGuid());
 
-    PSendSysMessage("Scene %u started on %s.", id, npc->GetName());
+    handler->PSendSysMessage("Scene %u started on %s.", id, npc->GetName());
     return true;
 }
 
-bool ChatHandler::HandleSpotCommand(char* args)
+bool ComfyCommands::HandleSpotCommand(ChatHandler* handler, char* args)
 {
-    if (!m_session)
+    if (!handler->m_session)
     {
-        SendSysMessage("A spot is where you are standing, so this one needs a character.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("A spot is where you are standing, so this one needs a character.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
-    bool forget = !!ExtractLiteralArg(&args, "del");
+    bool forget = !!handler->ExtractLiteralArg(&args, "del");
 
     // The rest of the line, spaces and all: "the fire by the inn" is a name.
     char* rest = args ? args : (char*)"";
@@ -14484,12 +14485,12 @@ bool ChatHandler::HandleSpotCommand(char* args)
 
     if (name.empty())
     {
-        SendSysMessage("Usage: .spot <name>   or   .spot del <name>, with the NPC it is for selected");
-        SendSysMessage("Stand where the NPC should end up, then name it. It is saved as \"<NPC>: <name>\".");
+        handler->SendSysMessage("Usage: .spot <name>   or   .spot del <name>, with the NPC it is for selected");
+        handler->SendSysMessage("Stand where the NPC should end up, then name it. It is saved as \"<NPC>: <name>\".");
         // The other way to say "walk there", and the one to reach for when the
         // walk should move with the NPC rather than stay put in the world.
-        SendSysMessage("Or .spotfrom: how far ahead and right of its post you are, for \"Walks from its post\".");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("Or .spotfrom: how far ahead and right of its post you are, for \"Walks from its post\".");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -14512,15 +14513,15 @@ bool ChatHandler::HandleSpotCommand(char* args)
      * The position is still YOURS, not the NPC's. A spot is where it should
      * end up, and it is standing somewhere else.
      */
-    Player* me = m_session->GetPlayer();
-    Unit* target = GetSelectedUnit();
+    Player* me = handler->m_session->GetPlayer();
+    Unit* target = handler->GetSelectedUnit();
     bool const isNpc = target && target != me &&
         (target->GetTypeId() == TYPEID_UNIT ||
          (target->GetTypeId() == TYPEID_PLAYER && static_cast<Player*>(target)->IsBotNpc()));
     if (!isNpc)
     {
-        SendSysMessage("Select the NPC this spot is for first. It is saved as \"<NPC>: <name>\".");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("Select the NPC this spot is for first. It is saved as \"<NPC>: <name>\".");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -14531,9 +14532,9 @@ bool ChatHandler::HandleSpotCommand(char* args)
     // 48 characters would quietly make the second overwrite the first.
     if (name.size() > 48)
     {
-        PSendSysMessage("\"%s\" is %u characters and a spot name is at most 48. Pick a shorter name.",
+        handler->PSendSysMessage("\"%s\" is %u characters and a spot name is at most 48. Pick a shorter name.",
                         name.c_str(), uint32(name.size()));
-        SetSentErrorMessage(true);
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -14543,12 +14544,12 @@ bool ChatHandler::HandleSpotCommand(char* args)
     if (forget)
     {
         WorldDatabase.PExecute("DELETE FROM `dialog_spot` WHERE `name` = '%s'", safe.c_str());
-        PSendSysMessage("Forgot the spot \"%s\".", name.c_str());
+        handler->PSendSysMessage("Forgot the spot \"%s\".", name.c_str());
         return true;
     }
 
     Player* pl = me;
-    std::string author = m_session->GetUsername();
+    std::string author = handler->m_session->GetUsername();
     WorldDatabase.escape_string(author);
 
     /*
@@ -14569,7 +14570,7 @@ bool ChatHandler::HandleSpotCommand(char* args)
         pl->GetPositionX(), pl->GetPositionY(), pl->GetPositionZ(), pl->GetOrientation(),
         author.c_str());
 
-    PSendSysMessage("Spot \"%s\" is here, on map %u.", name.c_str(), pl->GetMapId());
+    handler->PSendSysMessage("Spot \"%s\" is here, on map %u.", name.c_str(), pl->GetMapId());
     return true;
 }
 
@@ -14606,16 +14607,16 @@ bool ChatHandler::HandleSpotCommand(char* args)
  *
  * In game only. There is nowhere for a console session to be standing.
  */
-bool ChatHandler::HandleDestCommand(char* args)
+bool ComfyCommands::HandleDestCommand(ChatHandler* handler, char* args)
 {
-    if (!m_session)
+    if (!handler->m_session)
     {
-        SendSysMessage("A destination is where you are standing, so this one needs a character.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("A destination is where you are standing, so this one needs a character.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
-    bool const forget = !!ExtractLiteralArg(&args, "del");
+    bool const forget = !!handler->ExtractLiteralArg(&args, "del");
 
     char* rest = args ? args : (char*)"";
     while (*rest == ' ') ++rest;
@@ -14631,21 +14632,21 @@ bool ChatHandler::HandleDestCommand(char* args)
     {
         if (data->lists.empty())
         {
-            SendSysMessage("No destination lists yet. Stand somewhere and type: .dest <list> <name>");
+            handler->SendSysMessage("No destination lists yet. Stand somewhere and type: .dest <list> <name>");
             return true;
         }
-        SendSysMessage("Destination lists:");
+        handler->SendSysMessage("Destination lists:");
         for (auto const& l : data->lists)
         {
-            PSendSysMessage("  %s (%u) -- %u place%s", l.second.name.c_str(), l.first,
+            handler->PSendSysMessage("  %s (%u) -- %u place%s", l.second.name.c_str(), l.first,
                 (uint32)l.second.points.size(), l.second.points.size() == 1 ? "" : "s");
         }
         // EVERY PATH THAT PRINTS A LIST SAYS HOW TO CHANGE ONE. A listing is
         // where somebody goes to find out what is there, which is the same
         // moment they want to add or drop one, and the usage text above is
         // reached only by getting the line wrong.
-        SendSysMessage("Add: .dest <list> <name>, where you stand.");
-        SendSysMessage("Remove: .dest del <list> <name>");
+        handler->SendSysMessage("Add: .dest <list> <name>, where you stand.");
+        handler->SendSysMessage("Remove: .dest del <list> <name>");
         return true;
     }
 
@@ -14663,10 +14664,10 @@ bool ChatHandler::HandleDestCommand(char* args)
 
     if (listName.empty())
     {
-        SendSysMessage("Usage: .dest <list> <name>   or   .dest del <list> <name>");
-        SendSysMessage("Stand where the player should land, then name it. The list is made by naming it.");
-        SendSysMessage("Or .dest on its own for every list, .dest <list> for what is in one.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("Usage: .dest <list> <name>   or   .dest del <list> <name>");
+        handler->SendSysMessage("Stand where the player should land, then name it. The list is made by naming it.");
+        handler->SendSysMessage("Or .dest on its own for every list, .dest <list> for what is in one.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -14690,29 +14691,29 @@ bool ChatHandler::HandleDestCommand(char* args)
     {
         if (!found)
         {
-            PSendSysMessage("There is no list \"%s\". Stand somewhere and type: .dest %s <name>",
+            handler->PSendSysMessage("There is no list \"%s\". Stand somewhere and type: .dest %s <name>",
                 listName.c_str(), listName.c_str());
-            SetSentErrorMessage(true);
+            handler->SetSentErrorMessage(true);
             return false;
         }
         if (found->points.empty())
         {
-            PSendSysMessage("\"%s\" (%u) is empty. A button using it does nothing.", listName.c_str(), listId);
-            PSendSysMessage("Add: .dest %s <name>, where you stand.", listName.c_str());
+            handler->PSendSysMessage("\"%s\" (%u) is empty. A button using it does nothing.", listName.c_str(), listId);
+            handler->PSendSysMessage("Add: .dest %s <name>, where you stand.", listName.c_str());
             return true;
         }
-        PSendSysMessage("\"%s\" (%u):", listName.c_str(), listId);
+        handler->PSendSysMessage("\"%s\" (%u):", listName.c_str(), listId);
         for (auto const& p : found->points)
-            PSendSysMessage("  %s -- map %u, %.0f %.0f %.0f", p.name.c_str(), p.map, p.x, p.y, p.z);
-        PSendSysMessage("Add: .dest %s <name>, where you stand.", listName.c_str());
-        PSendSysMessage("Remove: .dest del %s <name>", listName.c_str());
+            handler->PSendSysMessage("  %s -- map %u, %.0f %.0f %.0f", p.name.c_str(), p.map, p.x, p.y, p.z);
+        handler->PSendSysMessage("Add: .dest %s <name>, where you stand.", listName.c_str());
+        handler->PSendSysMessage("Remove: .dest del %s <name>", listName.c_str());
         return true;
     }
 
     if (name.empty())
     {
-        SendSysMessage("Usage: .dest del <list> <name>. Name the place, not just the list.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("Usage: .dest del <list> <name>. Name the place, not just the list.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -14721,8 +14722,8 @@ bool ChatHandler::HandleDestCommand(char* args)
     // through the UNIQUE key below.
     if (listName.size() > 48 || name.size() > 48)
     {
-        SendSysMessage("A list name and a place name are at most 48 characters each. Pick a shorter one.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("A list name and a place name are at most 48 characters each. Pick a shorter one.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -14735,19 +14736,19 @@ bool ChatHandler::HandleDestCommand(char* args)
     {
         if (!listId)
         {
-            PSendSysMessage("There is no list \"%s\".", listName.c_str());
-            SetSentErrorMessage(true);
+            handler->PSendSysMessage("There is no list \"%s\".", listName.c_str());
+            handler->SetSentErrorMessage(true);
             return false;
         }
         WorldDatabase.DirectPExecute("DELETE FROM `dialog_dest` WHERE `list` = %u AND `name` = '%s'",
             listId, safeName.c_str());
         DialogDest::LoadAll();
-        PSendSysMessage("Forgot \"%s\" in \"%s\".", name.c_str(), listName.c_str());
+        handler->PSendSysMessage("Forgot \"%s\" in \"%s\".", name.c_str(), listName.c_str());
         return true;
     }
 
-    Player* pl = m_session->GetPlayer();
-    std::string author = m_session->GetUsername();
+    Player* pl = handler->m_session->GetPlayer();
+    std::string author = handler->m_session->GetUsername();
     WorldDatabase.escape_string(author);
 
     /*
@@ -14771,8 +14772,8 @@ bool ChatHandler::HandleDestCommand(char* args)
 
         if (!listId)
         {
-            PSendSysMessage("Could not make a list called \"%s\".", listName.c_str());
-            SetSentErrorMessage(true);
+            handler->PSendSysMessage("Could not make a list called \"%s\".", listName.c_str());
+            handler->SetSentErrorMessage(true);
             return false;
         }
     }
@@ -14809,7 +14810,7 @@ bool ChatHandler::HandleDestCommand(char* args)
             count = (uint32)it->second.points.size();
     }
 
-    PSendSysMessage("\"%s\" is here, on map %u. \"%s\" (%u) now has %u place%s.",
+    handler->PSendSysMessage("\"%s\" is here, on map %u. \"%s\" (%u) now has %u place%s.",
         name.c_str(), pl->GetMapId(), listName.c_str(), listId, count, count == 1 ? "" : "s");
     return true;
 }
@@ -14833,39 +14834,39 @@ bool ChatHandler::HandleDestCommand(char* args)
  * offset, so the NPC would stop short of where you are standing and nothing
  * else would tell you why.
  */
-bool ChatHandler::HandleSpotFromCommand(char* /*args*/)
+bool ComfyCommands::HandleSpotFromCommand(ChatHandler* handler, char* /*args*/)
 {
-    if (!m_session)
+    if (!handler->m_session)
     {
-        SendSysMessage("This measures from where you are standing, so it needs a character.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("This measures from where you are standing, so it needs a character.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
-    Player* me = m_session->GetPlayer();
-    Unit* target = GetSelectedUnit();
+    Player* me = handler->m_session->GetPlayer();
+    Unit* target = handler->GetSelectedUnit();
     bool const isNpc = target && target != me &&
         (target->GetTypeId() == TYPEID_UNIT ||
          (target->GetTypeId() == TYPEID_PLAYER && static_cast<Player*>(target)->IsBotNpc()));
     if (!isNpc)
     {
-        SendSysMessage("Select the NPC first, then stand where it should walk to.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("Select the NPC first, then stand where it should walk to.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     if (target->GetMapId() != me->GetMapId())
     {
-        SendSysMessage("That NPC is on another map.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("That NPC is on another map.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     float forward, right;
     if (!BotNpc_OffsetFromPost(target, me->GetPositionX(), me->GetPositionY(), forward, right))
     {
-        PSendSysMessage("%s has no post on this map to measure from.", target->GetName());
-        SetSentErrorMessage(true);
+        handler->PSendSysMessage("%s has no post on this map to measure from.", target->GetName());
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -14876,28 +14877,28 @@ bool ChatHandler::HandleSpotFromCommand(char* /*args*/)
 
     bool const tooFar = std::fabs(f) > BOT_NPC_POST_MAX_OFFSET || std::fabs(r) > BOT_NPC_POST_MAX_OFFSET;
 
-    PSendSysMessage("%s: ahead %.1f, right %.1f   npc:WalkOffset(%.1f, %.1f)%s",
+    handler->PSendSysMessage("%s: ahead %.1f, right %.1f   npc:WalkOffset(%.1f, %.1f)%s",
                     target->GetName(), f, r, f, r,
                     tooFar ? "   past the 40 yard limit, use a spot" : "");
     return true;
 }
 
-bool ChatHandler::HandleEmoteCommand(char* args)
+bool ComfyCommands::HandleEmoteCommand(ChatHandler* handler, char* args)
 {
     uint32 emoteId = 0;
-    if (!ExtractUInt32(&args, emoteId))
+    if (!handler->ExtractUInt32(&args, emoteId))
     {
-        SendSysMessage("Usage: .emote <Emotes.dbc id> [player]");
-        SendSysMessage("Plays on your target, or on you, or on the player you name. 0 stands a model back up.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("Usage: .emote <Emotes.dbc id> [player]");
+        handler->SendSysMessage("Plays on your target, or on you, or on the player you name. 0 stands a model back up.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     EmotesEntry const* pEmote = sEmotesStore.LookupEntry(emoteId);
     if (!pEmote && emoteId)
     {
-        PSendSysMessage("Emote %u does not exist.", emoteId);
-        SetSentErrorMessage(true);
+        handler->PSendSysMessage("Emote %u does not exist.", emoteId);
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -14906,27 +14907,27 @@ bool ChatHandler::HandleEmoteCommand(char* args)
     if (args && *args)
     {
         Player* named = nullptr;
-        if (!ExtractPlayerTarget(&args, &named))
+        if (!handler->ExtractPlayerTarget(&args, &named))
             return false;
         if (!named)
         {
-            SendSysMessage(LANG_PLAYER_NOT_FOUND);
-            SetSentErrorMessage(true);
+            handler->SendSysMessage(LANG_PLAYER_NOT_FOUND);
+            handler->SetSentErrorMessage(true);
             return false;
         }
         pUnit = named;
     }
-    else if (m_session)
+    else if (handler->m_session)
     {
-        pUnit = GetSelectedUnit();
+        pUnit = handler->GetSelectedUnit();
         if (!pUnit)
-            pUnit = m_session->GetPlayer();
+            pUnit = handler->m_session->GetPlayer();
     }
 
     if (!pUnit)
     {
-        SendSysMessage("From the console, name a player: .emote <id> <player>");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("From the console, name a player: .emote <id> <player>");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -14936,11 +14937,11 @@ bool ChatHandler::HandleEmoteCommand(char* args)
     // while walking a list, and a lasting one that nobody warned you about is
     // how a model ends up stuck in a pose two auditions later.
     if (!emoteId)
-        PSendSysMessage("Cleared the emote state on %s.", pUnit->GetName());
+        handler->PSendSysMessage("Cleared the emote state on %s.", pUnit->GetName());
     else if (pEmote->EmoteType)
-        PSendSysMessage("Emote %u (%s) on %s. This one LASTS: .emote 0 to stop it.", emoteId, pEmote->Name ? pEmote->Name : "", pUnit->GetName());
+        handler->PSendSysMessage("Emote %u (%s) on %s. This one LASTS: .emote 0 to stop it.", emoteId, pEmote->Name ? pEmote->Name : "", pUnit->GetName());
     else
-        PSendSysMessage("Emote %u (%s) on %s.", emoteId, pEmote->Name ? pEmote->Name : "", pUnit->GetName());
+        handler->PSendSysMessage("Emote %u (%s) on %s.", emoteId, pEmote->Name ? pEmote->Name : "", pUnit->GetName());
     return true;
 }
 
@@ -14990,7 +14991,7 @@ namespace
     };
 }
 
-bool ChatHandler::HandleComfyHelpCommand(char* /*args*/)
+bool ComfyCommands::HandleComfyHelpCommand(ChatHandler* handler, char* /*args*/)
 {
     for (size_t i = 0; i < sizeof(COMFY_COMMANDS) / sizeof(COMFY_COMMANDS[0]); ++i)
     {
@@ -15003,13 +15004,13 @@ bool ChatHandler::HandleComfyHelpCommand(char* /*args*/)
         // subcommand; that is found. Text left over means it is not.
         ChatCommand* command = nullptr;
         char const* text = row.lookup;
-        ChatCommandSearchResult res = FindCommand(getCommandTable(), text, command, nullptr, nullptr, true, true);
+        ChatCommandSearchResult res = ChatHandler::FindCommand(ChatHandler::getCommandTable(), text, command, nullptr, nullptr, true, true);
         bool const found = command && (res == CHAT_COMMAND_OK || (res == CHAT_COMMAND_UNKNOWN_SUBCOMMAND && !*text));
 
         if (!found)
-            PSendSysMessage(".%s is listed here but is not a command any more.", row.lookup);
-        else if (isAvailable(*command))
-            SendSysMessage(row.line);
+            handler->PSendSysMessage(".%s is listed here but is not a command any more.", row.lookup);
+        else if (handler->isAvailable(*command))
+            handler->SendSysMessage(row.line);
     }
 
     return true;
@@ -19297,10 +19298,10 @@ bool ChatHandler::HandleReloadGameObjectCommand(char* /*args*/)
  *     the client was told those once. Re-place it, or restart, to see those.
  * Neither matters for adding a new one, which is what this exists for.
  */
-bool ChatHandler::HandleReloadGameObjectTemplateCommand(char* /*args*/)
+bool ComfyCommands::HandleReloadGameObjectTemplateCommand(ChatHandler* handler, char* /*args*/)
 {
     sObjectMgr.LoadGameobjectInfo(true);
-    SendSysMessage("DB table `gameobject_template` reloaded. New and changed entries only; a deleted one needs a restart.");
+    handler->SendSysMessage("DB table `gameobject_template` reloaded. New and changed entries only; a deleted one needs a restart.");
     return true;
 }
 
@@ -19363,10 +19364,10 @@ bool ChatHandler::HandleReloadBattleEventCommand(char* /*args*/)
 // Adding a rentable mount is two statements and this command. It does NOT pick
 // up a creature that is new to `rented_mount` and still unflagged -- that NPC
 // needs `reload creature_template` first, for its npc_flags and script_name.
-bool ChatHandler::HandleReloadRentedMountCommand(char* /*args*/)
+bool ComfyCommands::HandleReloadRentedMountCommand(ChatHandler* handler, char* /*args*/)
 {
     sObjectMgr.LoadRentedMounts();
-    SendSysMessage("DB table `rented_mount` reloaded.");
+    handler->SendSysMessage("DB table `rented_mount` reloaded.");
     return true;
 }
 
@@ -19580,12 +19581,12 @@ bool ChatHandler::HandleReloadNpcGossipCommand(char* /*args*/)
  * texts alone leaves every non-English string blank until the next restart, and
  * the only sign of it is a player on a localised client reading English.
  */
-bool ChatHandler::HandleReloadBroadcastTextCommand(char* /*args*/)
+bool ComfyCommands::HandleReloadBroadcastTextCommand(ChatHandler* handler, char* /*args*/)
 {
     sLog.outInfo("Re-Loading `broadcast_text` Table!");
     sObjectMgr.LoadBroadcastTexts();
     sObjectMgr.LoadBroadcastTextLocales();
-    SendSysMessage("DB table `broadcast_text` reloaded.");
+    handler->SendSysMessage("DB table `broadcast_text` reloaded.");
     return true;
 }
 
@@ -19601,11 +19602,11 @@ bool ChatHandler::HandleReloadBroadcastTextCommand(char* /*args*/)
  * already PARKED mid-wait keep running on the old source, which is the right
  * answer -- the alternative is stopping them halfway through.
  */
-bool ChatHandler::HandleReloadDialogScenesCommand(char* /*args*/)
+bool ComfyCommands::HandleReloadDialogScenesCommand(ChatHandler* handler, char* /*args*/)
 {
     sLog.outInfo("Re-Loading `dialog_lua` and `dialog_spot`!");
     LuaScene::LoadAll();
-    SendSysMessage("Dialog scenes and spots reloaded.");
+    handler->SendSysMessage("Dialog scenes and spots reloaded.");
     return true;
 }
 
@@ -19619,11 +19620,11 @@ bool ChatHandler::HandleReloadDialogScenesCommand(char* /*args*/)
  * resolves it every time the button is pressed, so scripts already in memory
  * pick up a changed list with no help at all.
  */
-bool ChatHandler::HandleReloadDialogDestsCommand(char* /*args*/)
+bool ComfyCommands::HandleReloadDialogDestsCommand(ChatHandler* handler, char* /*args*/)
 {
     sLog.outInfo("Re-Loading `dialog_dest_list` and `dialog_dest`!");
     DialogDest::LoadAll();
-    SendSysMessage("Teleport destinations reloaded.");
+    handler->SendSysMessage("Teleport destinations reloaded.");
     return true;
 }
 
@@ -19660,11 +19661,11 @@ bool ChatHandler::HandleReloadNpcTrainerCommand(char* /*args*/)
  * covers both -- there is no separate cache for the costs to get out of step
  * with.
  */
-bool ChatHandler::HandleReloadCustomMerchantCommand(char* /*args*/)
+bool ComfyCommands::HandleReloadCustomMerchantCommand(ChatHandler* handler, char* /*args*/)
 {
     sLog.outInfo("Re-Loading `custom_merchant` Table!");
     sCustomMerchantMgr.Load();
-    SendSysMessage("DB table `custom_merchant` reloaded.");
+    handler->SendSysMessage("DB table `custom_merchant` reloaded.");
     return true;
 }
 

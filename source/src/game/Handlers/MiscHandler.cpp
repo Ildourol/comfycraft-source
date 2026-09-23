@@ -36,6 +36,7 @@
 #include "UpdateData.h"
 #include "LootMgr.h"
 #include "Chat.h"
+#include "ComfyCommands.h"
 #include "ScriptMgr.h"
 #include "ObjectAccessor.h"
 #include "Object.h"
@@ -1001,16 +1002,16 @@ void WorldSession::HandleBugOpcode(WorldPacket & recv_data)
 // unrecognised command is answered from the DB and never written down. The
 // unknown-command logging in Chat.cpp was added at the same time so the next
 // one of these takes a minute instead of an evening.
-bool ChatHandler::HandleBugCommand(char* args)
+bool ComfyCommands::HandleBugCommand(ChatHandler* handler, char* args)
 {
-    if (!m_session)
+    if (!handler->m_session)
     {
-        SendSysMessage("This one only works in game - the console has no character to attach.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("This one only works in game - the console has no character to attach.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
-    FileBugReport(m_session, args ? args : "", false);
+    FileBugReport(handler->m_session, args ? args : "", false);
     return true;
 }
 

@@ -1,5 +1,6 @@
 
 #include "playerbot/playerbot.h"
+#include "Chat/Chat.h"
 #include <algorithm>
 #include <functional>
 #include <cctype>

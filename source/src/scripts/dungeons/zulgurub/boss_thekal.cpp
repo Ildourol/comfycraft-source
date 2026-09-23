@@ -22,6 +22,7 @@ SDCategory: Zul'Gurub
 EndScriptData */
 
 #include "scriptPCH.h"
+#include "Chat.h"
 #include "zulgurub.h"
 
 

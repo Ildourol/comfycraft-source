@@ -9,6 +9,7 @@
 #include "Housing/HouseMgr.h"
 
 #include "Chat.h"
+#include "ComfyCommands.h"
 #include "Language.h"
 #include "ObjectMgr.h"
 #include "Player.h"
@@ -135,14 +136,14 @@ namespace
     }
 }
 
-bool ChatHandler::HandleHouseGoCommand(char* /*args*/)
+bool ComfyCommands::HandleHouseGoCommand(ChatHandler* handler, char* /*args*/)
 {
-    Player* player = m_session->GetPlayer();
+    Player* player = handler->m_session->GetPlayer();
     std::string error;
     if (!sHouseMgr.SendPlayerHome(player, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
     return true;
@@ -152,21 +153,21 @@ bool ChatHandler::HandleHouseGoCommand(char* /*args*/)
 // claimed home is re-stamped from its own door, a template is emptied but
 // keeps its exit. Two-step like clear, and the warning says exactly which of
 // those it is about to do, because the two are very different sizes of loss.
-bool ChatHandler::HandleHouseResetCommand(char* args)
+bool ComfyCommands::HandleHouseResetCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session->GetPlayer();
+    Player* player = handler->m_session->GetPlayer();
 
     House* house = sHouseMgr.GetHouseAt(player);
     if (!house)
     {
-        SendSysMessage("You are not in a house.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("You are not in a house.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
     if (!sHouseMgr.CanEditHouse(player, *house))
     {
-        SendSysMessage("This is not your house.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("This is not your house.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -189,10 +190,10 @@ bool ChatHandler::HandleHouseResetCommand(char* args)
             what = "empty the house completely (your door has no template)";
     }
 
-    if (!ExtractLiteralArg(&args, "confirm"))
+    if (!handler->ExtractLiteralArg(&args, "confirm"))
     {
         uint32 const count = uint32(sHouseMgr.GetObjects(house->id).size());
-        PSendSysMessage("This will %s. %u objects go, and there is no undo.", what.c_str(), count);
+        handler->PSendSysMessage("This will %s. %u objects go, and there is no undo.", what.c_str(), count);
 
         // WHAT IT ACTUALLY COSTS, counted rather than assumed. "What you placed
         // is lost" was true when a reset destroyed everything; now most of it is
@@ -202,57 +203,57 @@ bool ChatHandler::HandleHouseResetCommand(char* args)
         {
             std::string const forecast = sHouseMgr.StowForecast(*house);
             if (!forecast.empty())
-                SendSysMessage(forecast.c_str());
+                handler->SendSysMessage(forecast.c_str());
         }
 
-        SendSysMessage("Type .house reset confirm if you mean it.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("Type .house reset confirm if you mean it.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     std::string error;
     if (!sHouseMgr.ResetHouse(player, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     if (isTemplate)
-        SendSysMessage("The template is bare again; the exit stayed. .house template save publishes the new layout.");
+        handler->SendSysMessage("The template is bare again; the exit stayed. .house template save publishes the new layout.");
     else
-        SendSysMessage("Your house is as it was the day you claimed it.");
+        handler->SendSysMessage("Your house is as it was the day you claimed it.");
     return true;
 }
 
-bool ChatHandler::HandleHouseObjectAddCommand(char* args)
+bool ComfyCommands::HandleHouseObjectAddCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session->GetPlayer();
+    Player* player = handler->m_session->GetPlayer();
 
     uint32 entry;
-    if (!ExtractUint32KeyFromLink(&args, "Hgameobject_entry", entry) || !entry)
+    if (!handler->ExtractUint32KeyFromLink(&args, "Hgameobject_entry", entry) || !entry)
     {
-        SendSysMessage("Usage: .house object add <gameobject entry> [yards in front]");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("Usage: .house object add <gameobject entry> [yards in front]");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     // Optional, because a building wants more room in front of it than a mug.
     float distance = HOUSE_PLACE_DISTANCE;
-    ExtractFloat(&args, distance);
+    handler->ExtractFloat(&args, distance);
 
     GameObjectInfo const* info = sObjectMgr.GetGameObjectInfo(entry);
     if (!info)
     {
-        PSendSysMessage(LANG_GAMEOBJECT_NOT_EXIST, entry);
-        SetSentErrorMessage(true);
+        handler->PSendSysMessage(LANG_GAMEOBJECT_NOT_EXIST, entry);
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
-    if (!IsDecorative(info) && GetAccessLevel() < SEC_DEVELOPER)
+    if (!IsDecorative(info) && handler->GetAccessLevel() < SEC_DEVELOPER)
     {
-        PSendSysMessage("\"%s\" is not something you can put in a house.", HouseMgr::ObjectDisplayName(entry).c_str());
-        SetSentErrorMessage(true);
+        handler->PSendSysMessage("\"%s\" is not something you can put in a house.", HouseMgr::ObjectDisplayName(entry).c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -265,8 +266,8 @@ bool ChatHandler::HandleHouseObjectAddCommand(char* args)
     std::string error;
     if (!sHouseMgr.PlaceObject(player, entry, distance, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -286,9 +287,9 @@ bool ChatHandler::HandleHouseObjectAddCommand(char* args)
                                      : HouseMgr::ObjectDisplayName(entry);
 
     if (onMark)
-        PSendSysMessage("%s placed on your chalk mark. Right-click to adjust.", label.c_str());
+        handler->PSendSysMessage("%s placed on your chalk mark. Right-click to adjust.", label.c_str());
     else
-        PSendSysMessage("%s placed. Right-click to adjust.", label.c_str());
+        handler->PSendSysMessage("%s placed. Right-click to adjust.", label.c_str());
     return true;
 }
 
@@ -308,15 +309,15 @@ bool ChatHandler::HandleHouseObjectAddCommand(char* args)
 // keeps step 2 from becoming its own surprise is that every caller names the
 // object it acted on, so "Moved Iron Anvil" is right there when you meant the
 // candle.
-uint32 ChatHandler::HouseTarget(char* &args, House*& house, bool useSelection)
+uint32 ComfyCommands::HouseTarget(ChatHandler* handler, char* &args, House*& house, bool useSelection)
 {
-    Player* player = m_session->GetPlayer();
+    Player* player = handler->m_session->GetPlayer();
 
     house = sHouseMgr.GetHouseAt(player);
     if (!house)
     {
-        SendSysMessage("You are not in a house.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("You are not in a house.");
+        handler->SetSentErrorMessage(true);
         return 0;
     }
 
@@ -324,15 +325,15 @@ uint32 ChatHandler::HouseTarget(char* &args, House*& house, bool useSelection)
     // junk, which used to fail silently -- see below.
     uint32 typed = ExtractHashId(args);
 
-    if (!typed && !ExtractOptUInt32(&args, typed, 0))
+    if (!typed && !handler->ExtractOptUInt32(&args, typed, 0))
     {
         // A SILENT `return 0` LIVED HERE, and it is how a mistyped number
         // looked exactly like nothing happening. Anything left over at this
         // point is text where a number should be, so say which rule was broken
         // rather than leaving the player to guess at the grammar.
-        PSendSysMessage("I cannot read \"%s\" as an object number. The number goes LAST, and # in front of it always works:", args);
-        SendSysMessage("  .house object move away 2 #3        .house object rotate #3");
-        SetSentErrorMessage(true);
+        handler->PSendSysMessage("I cannot read \"%s\" as an object number. The number goes LAST, and # in front of it always works:", args);
+        handler->SendSysMessage("  .house object move away 2 #3        .house object rotate #3");
+        handler->SetSentErrorMessage(true);
         return 0;
     }
 
@@ -345,8 +346,8 @@ uint32 ChatHandler::HouseTarget(char* &args, House*& house, bool useSelection)
         guid = sHouseMgr.ResolveObjectRef(*house, typed);
         if (!guid)
         {
-            PSendSysMessage("Nothing in this house is number %u. .house object list prints them.", typed);
-            SetSentErrorMessage(true);
+            handler->PSendSysMessage("Nothing in this house is number %u. .house object list prints them.", typed);
+            handler->SetSentErrorMessage(true);
             return 0;
         }
     }
@@ -363,8 +364,8 @@ uint32 ChatHandler::HouseTarget(char* &args, House*& house, bool useSelection)
         guid = NearestObject(player, house, dist);
         if (!guid)
         {
-            PSendSysMessage("Nothing of yours within %g yards. Stand closer, or use the number from .house object list.", HOUSE_REACH);
-            SetSentErrorMessage(true);
+            handler->PSendSysMessage("Nothing of yours within %g yards. Stand closer, or use the number from .house object list.", HOUSE_REACH);
+            handler->SetSentErrorMessage(true);
             return 0;
         }
     }
@@ -381,26 +382,26 @@ uint32 ChatHandler::HouseTarget(char* &args, House*& house, bool useSelection)
 // and neither repeats the other -- an earlier pass put the announcement inside
 // SelectObject so both routes shared it, and the result was the gear printing
 // two lines about one thing.
-bool ChatHandler::HandleHouseObjectSelectCommand(char* args)
+bool ComfyCommands::HandleHouseObjectSelectCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session->GetPlayer();
+    Player* player = handler->m_session->GetPlayer();
 
     // `select none` still works. It reads naturally, it is what the panel
     // button sent before `unselect` existed, and it costs three words.
-    if (ExtractLiteralArg(&args, "none") || ExtractLiteralArg(&args, "clear")
-        || ExtractLiteralArg(&args, "off"))
-        return HandleHouseObjectUnselectCommand(args);
+    if (handler->ExtractLiteralArg(&args, "none") || handler->ExtractLiteralArg(&args, "clear")
+        || handler->ExtractLiteralArg(&args, "off"))
+        return HandleHouseObjectUnselectCommand(handler, args);
 
     House* house = nullptr;
-    uint32 const guid = HouseTarget(args, house, false);
+    uint32 const guid = HouseTarget(handler, args, house, false);
     if (!guid)
         return false;
 
     std::string error;
     if (!sHouseMgr.SelectObject(player, guid, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -408,16 +409,16 @@ bool ChatHandler::HandleHouseObjectSelectCommand(char* args)
     // every select, and selecting happens constantly while decorating -- a
     // second sentence teaching the same escape hatch for the tenth time is what
     // makes a chat frame unreadable. It is in `.house` and on the gear.
-    PSendSysMessage("Selected %s.", ObjectLabel(guid).c_str());
+    handler->PSendSysMessage("Selected %s.", ObjectLabel(guid).c_str());
     return true;
 }
 
 // .house object unselect -- the way back to "whatever is nearest", as a verb of
 // its own rather than an argument. It is what the select message tells you to
 // type, and a command you are told to use should be a command.
-bool ChatHandler::HandleHouseObjectUnselectCommand(char* /*args*/)
+bool ComfyCommands::HandleHouseObjectUnselectCommand(ChatHandler* handler, char* /*args*/)
 {
-    Player* player = m_session->GetPlayer();
+    Player* player = handler->m_session->GetPlayer();
 
     // Read it BEFORE clearing, so the line can name what it let go of. Saying
     // WHICH matters more here than anywhere: the selection was invisible, so
@@ -427,9 +428,9 @@ bool ChatHandler::HandleHouseObjectUnselectCommand(char* /*args*/)
     sHouseMgr.ClearSelection(player);
 
     if (was)
-        PSendSysMessage("Unselected %s. Commands act on the nearest object again.", label.c_str());
+        handler->PSendSysMessage("Unselected %s. Commands act on the nearest object again.", label.c_str());
     else
-        SendSysMessage("Nothing was selected. Commands act on the nearest object.");
+        handler->SendSysMessage("Nothing was selected. Commands act on the nearest object.");
     return true;
 }
 
@@ -451,55 +452,55 @@ bool ChatHandler::HandleHouseObjectUnselectCommand(char* /*args*/)
 // What it is for is the two things the item cannot do -- say where the mark
 // actually is, and rub one out without spending it on furniture you did not
 // want.
-bool ChatHandler::HandleHouseObjectChalkCommand(char* args)
+bool ComfyCommands::HandleHouseObjectChalkCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session->GetPlayer();
+    Player* player = handler->m_session->GetPlayer();
 
-    if (ExtractLiteralArg(&args, "clear") || ExtractLiteralArg(&args, "none")
-        || ExtractLiteralArg(&args, "off"))
+    if (handler->ExtractLiteralArg(&args, "clear") || handler->ExtractLiteralArg(&args, "none")
+        || handler->ExtractLiteralArg(&args, "off"))
     {
         if (!sHouseMgr.HasMark(player))
         {
-            SendSysMessage("There is no chalk mark here.");
+            handler->SendSysMessage("There is no chalk mark here.");
             return true;
         }
 
         sHouseMgr.ClearMark(player);
-        SendSysMessage("Chalk mark rubbed out.");
+        handler->SendSysMessage("Chalk mark rubbed out.");
         return true;
     }
 
     float at[3];
     if (!sHouseMgr.GetMark(player, at))
     {
-        SendSysMessage("No chalk mark. Use the Decorator's Chalk and click the floor.");
+        handler->SendSysMessage("No chalk mark. Use the Decorator's Chalk and click the floor.");
         return true;
     }
 
     // Distance rather than coordinates, because a number you cannot walk to is
     // not an answer -- and the glow standing on it is the real answer anyway.
     // This is for "is it still there, and did I leave it in the other room".
-    PSendSysMessage("Chalk mark is %.1f yards away. The next thing you place lands on it.",
+    handler->PSendSysMessage("Chalk mark is %.1f yards away. The next thing you place lands on it.",
                     player->GetDistance(at[0], at[1], at[2]));
     return true;
 }
 
 // .house object drag [id] -- snap it to where you stand.
-bool ChatHandler::HandleHouseObjectDragCommand(char* args)
+bool ComfyCommands::HandleHouseObjectDragCommand(ChatHandler* handler, char* args)
 {
     House* house = nullptr;
-    uint32 guid = HouseTarget(args, house);
+    uint32 guid = HouseTarget(handler, args, house);
     if (!guid)
         return false;
 
     std::string error;
-    if (!sHouseMgr.DragObject(m_session->GetPlayer(), guid, error))
+    if (!sHouseMgr.DragObject(handler->m_session->GetPlayer(), guid, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
-    PSendSysMessage("Dragged %s to you.", ObjectLabel(guid).c_str());
+    handler->PSendSysMessage("Dragged %s to you.", ObjectLabel(guid).c_str());
     return true;
 }
 
@@ -514,39 +515,39 @@ bool ChatHandler::HandleHouseObjectDragCommand(char* args)
 // an addon literally cannot work out which way "left" is and has no choice but
 // to ask the server. That is also why the addon's own compass was stuck on
 // absolute world axes until this existed.
-bool ChatHandler::HandleHouseObjectMoveCommand(char* args)
+bool ComfyCommands::HandleHouseObjectMoveCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session->GetPlayer();
+    Player* player = handler->m_session->GetPlayer();
 
     float dx = 0.0f, dy = 0.0f, dz = 0.0f;
     char* const save = args;
 
-    if (!ExtractFloat(&args, dx) || !ExtractFloat(&args, dy) || !ExtractFloat(&args, dz))
+    if (!handler->ExtractFloat(&args, dx) || !handler->ExtractFloat(&args, dy) || !handler->ExtractFloat(&args, dz))
     {
         // A partly-consumed numeric parse leaves args advanced, so rewind before
         // trying to read the same text as a word.
         args = save;
         dx = dy = dz = 0.0f;
 
-        bool away    = ExtractLiteralArg(&args, "away")    || ExtractLiteralArg(&args, "forward");
-        bool towards = !away && (ExtractLiteralArg(&args, "towards") || ExtractLiteralArg(&args, "toward")
-                                 || ExtractLiteralArg(&args, "back"));
-        bool left    = !away && !towards && ExtractLiteralArg(&args, "left") != nullptr;
-        bool right   = !away && !towards && !left && ExtractLiteralArg(&args, "right") != nullptr;
-        bool up      = !away && !towards && !left && !right && ExtractLiteralArg(&args, "up") != nullptr;
-        bool down    = !away && !towards && !left && !right && !up && ExtractLiteralArg(&args, "down") != nullptr;
+        bool away    = handler->ExtractLiteralArg(&args, "away")    || handler->ExtractLiteralArg(&args, "forward");
+        bool towards = !away && (handler->ExtractLiteralArg(&args, "towards") || handler->ExtractLiteralArg(&args, "toward")
+                                 || handler->ExtractLiteralArg(&args, "back"));
+        bool left    = !away && !towards && handler->ExtractLiteralArg(&args, "left") != nullptr;
+        bool right   = !away && !towards && !left && handler->ExtractLiteralArg(&args, "right") != nullptr;
+        bool up      = !away && !towards && !left && !right && handler->ExtractLiteralArg(&args, "up") != nullptr;
+        bool down    = !away && !towards && !left && !right && !up && handler->ExtractLiteralArg(&args, "down") != nullptr;
 
         if (!away && !towards && !left && !right && !up && !down)
         {
-            SendSysMessage("Usage: .house object move <away|towards|left|right|up|down> [yards]");
-            SendSysMessage("  or:  .house object move <x> <y> <z>   exact yards along the world axes, Z is up.");
-            SendSysMessage("  .house object drag              snaps it to where you are standing instead.");
-            SetSentErrorMessage(true);
+            handler->SendSysMessage("Usage: .house object move <away|towards|left|right|up|down> [yards]");
+            handler->SendSysMessage("  or:  .house object move <x> <y> <z>   exact yards along the world axes, Z is up.");
+            handler->SendSysMessage("  .house object drag              snaps it to where you are standing instead.");
+            handler->SetSentErrorMessage(true);
             return false;
         }
 
         float dist = 1.0f;
-        ExtractFloat(&args, dist);
+        handler->ExtractFloat(&args, dist);
 
         float const face = player->GetOrientation();
         if      (away)    { dx =  cos(face) * dist;               dy =  sin(face) * dist; }
@@ -558,18 +559,18 @@ bool ChatHandler::HandleHouseObjectMoveCommand(char* args)
     }
 
     House* house = nullptr;
-    uint32 guid = HouseTarget(args, house);
+    uint32 guid = HouseTarget(handler, args, house);
     if (!guid)
         return false;
 
     std::string error;
     if (!sHouseMgr.OffsetObject(player, guid, dx, dy, dz, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
-    PSendSysMessage("Moved %s by (%.2f, %.2f, %.2f).", ObjectLabel(guid).c_str(), dx, dy, dz);
+    handler->PSendSysMessage("Moved %s by (%.2f, %.2f, %.2f).", ObjectLabel(guid).c_str(), dx, dy, dz);
     return true;
 }
 
@@ -578,44 +579,44 @@ bool ChatHandler::HandleHouseObjectMoveCommand(char* args)
 // quaternion (1,378 stock spawns tilt), rot0-3 round-trip through our schema,
 // and the day leaning paintings are wanted the missing piece is one
 // Euler-to-quaternion write command.
-bool ChatHandler::HandleHouseObjectRotateCommand(char* args)
+bool ComfyCommands::HandleHouseObjectRotateCommand(ChatHandler* handler, char* args)
 {
     // `rotate away` -- point it the other way. Checked before the number,
     // since ExtractFloat would otherwise swallow the word and read 0 degrees.
     float degrees = 0.0f;
     bool faceMe = true;
-    bool away = ExtractLiteralArg(&args, "away") != nullptr;
+    bool away = handler->ExtractLiteralArg(&args, "away") != nullptr;
     if (away)
         degrees = 180.0f;
     else
-        faceMe = !ExtractFloat(&args, degrees);
+        faceMe = !handler->ExtractFloat(&args, degrees);
 
     House* house = nullptr;
-    uint32 guid = HouseTarget(args, house);
+    uint32 guid = HouseTarget(handler, args, house);
     if (!guid)
         return false;
 
     std::string error;
-    if (!sHouseMgr.TurnObject(m_session->GetPlayer(), guid, degrees, faceMe, error))
+    if (!sHouseMgr.TurnObject(handler->m_session->GetPlayer(), guid, degrees, faceMe, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     if (away)
-        PSendSysMessage("%s now faces away from you.", ObjectLabel(guid).c_str());
+        handler->PSendSysMessage("%s now faces away from you.", ObjectLabel(guid).c_str());
     else if (faceMe)
-        PSendSysMessage("%s now faces the way you do.", ObjectLabel(guid).c_str());
+        handler->PSendSysMessage("%s now faces the way you do.", ObjectLabel(guid).c_str());
     else
-        PSendSysMessage("Spun %s by %.0f degrees.", ObjectLabel(guid).c_str(), degrees);
+        handler->PSendSysMessage("Spun %s by %.0f degrees.", ObjectLabel(guid).c_str(), degrees);
     return true;
 }
 
-bool ChatHandler::HandleHouseObjectDelCommand(char* args)
+bool ComfyCommands::HandleHouseObjectDelCommand(ChatHandler* handler, char* args)
 {
     House* house = nullptr;
-    uint32 guid = HouseTarget(args, house);
+    uint32 guid = HouseTarget(handler, args, house);
     if (!guid)
         return false;
 
@@ -625,10 +626,10 @@ bool ChatHandler::HandleHouseObjectDelCommand(char* args)
 
     std::string error;
     uint32 returned = 0;
-    if (!sHouseMgr.RemoveObject(m_session->GetPlayer(), guid, error, &returned))
+    if (!sHouseMgr.RemoveObject(handler->m_session->GetPlayer(), guid, error, &returned))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -643,9 +644,9 @@ bool ChatHandler::HandleHouseObjectDelCommand(char* args)
     // clicks. That is only obvious to somebody who already knows, so the line
     // that hands the crate back is the one place to say it. It stays ONE line.
     if (returned)
-        PSendSysMessage("Picked up %s. Right-click to place it again.", label.c_str());
+        handler->PSendSysMessage("Picked up %s. Right-click to place it again.", label.c_str());
     else
-        PSendSysMessage("Removed %s.", label.c_str());
+        handler->PSendSysMessage("Removed %s.", label.c_str());
     return true;
 }
 
@@ -653,19 +654,19 @@ bool ChatHandler::HandleHouseObjectDelCommand(char* args)
 // edit mode on. The partial-session machinery has backed this since the day
 // placing an object started summoning its own gear; this merely gives it a
 // command. Bare form toggles the nearest object's gear.
-bool ChatHandler::HandleHouseObjectEditCommand(char* args)
+bool ComfyCommands::HandleHouseObjectEditCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session->GetPlayer();
+    Player* player = handler->m_session->GetPlayer();
 
     House* house = nullptr;
-    uint32 guid = HouseTarget(args, house);
+    uint32 guid = HouseTarget(handler, args, house);
     if (!guid)
         return false;
 
     if (!sHouseMgr.CanEditHouse(player, *house))
     {
-        SendSysMessage("This is not your house.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("This is not your house.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -676,8 +677,8 @@ bool ChatHandler::HandleHouseObjectEditCommand(char* args)
     if (HouseObject const* o = sHouseMgr.GetObject(guid))
         if (IsHouseFabric(*o))
         {
-            SendSysMessage("That came with the house.");
-            SetSentErrorMessage(true);
+            handler->SendSysMessage("That came with the house.");
+            handler->SetSentErrorMessage(true);
             return false;
         }
 
@@ -689,7 +690,7 @@ bool ChatHandler::HandleHouseObjectEditCommand(char* args)
     // is the wrong shape.)
     if (sHouseMgr.IsEditingAll(player))
     {
-        SendSysMessage("Edit mode is on for everything. .house edit off first.");
+        handler->SendSysMessage("Edit mode is on for everything. .house edit off first.");
         return true;
     }
 
@@ -698,12 +699,12 @@ bool ChatHandler::HandleHouseObjectEditCommand(char* args)
     if (sHouseMgr.InEditSession(player, guid))
     {
         sHouseMgr.DropFromEdit(player, guid);
-        PSendSysMessage("%s released.", ObjectLabel(guid).c_str());
+        handler->PSendSysMessage("%s released.", ObjectLabel(guid).c_str());
     }
     else
     {
         sHouseMgr.AddToEdit(player, guid);
-        PSendSysMessage("%s lights up. Right-click it to arrange.", ObjectLabel(guid).c_str());
+        handler->PSendSysMessage("%s lights up. Right-click it to arrange.", ObjectLabel(guid).c_str());
     }
     return true;
 }
@@ -715,15 +716,15 @@ bool ChatHandler::HandleHouseObjectEditCommand(char* args)
 // carry its own guard as well: it is one word away from .house object list, it
 // is typed by hand, and undo does not exist. Making the destructive form the
 // longer one to type is the cheapest protection available.
-bool ChatHandler::HandleHouseObjectClearCommand(char* args)
+bool ComfyCommands::HandleHouseObjectClearCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session->GetPlayer();
+    Player* player = handler->m_session->GetPlayer();
 
     House* house = sHouseMgr.GetHouseAt(player);
     if (!house)
     {
-        SendSysMessage("You are not in a house.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("You are not in a house.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -735,16 +736,16 @@ bool ChatHandler::HandleHouseObjectClearCommand(char* args)
     uint32 const count = sHouseMgr.CountPlayerObjects(*house);
     if (!count)
     {
-        SendSysMessage(total ? "Nothing here is yours to clear. It all came with the house."
+        handler->SendSysMessage(total ? "Nothing here is yours to clear. It all came with the house."
                              : "Your house is already empty.");
         return true;
     }
 
-    if (!ExtractLiteralArg(&args, "confirm"))
+    if (!handler->ExtractLiteralArg(&args, "confirm"))
     {
-        PSendSysMessage("This will remove %u objects from your house, and there is no undo.", count);
-        SendSysMessage("Type .house object clear confirm if you mean it.");
-        SetSentErrorMessage(true);
+        handler->PSendSysMessage("This will remove %u objects from your house, and there is no undo.", count);
+        handler->SendSysMessage("Type .house object clear confirm if you mean it.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -752,22 +753,22 @@ bool ChatHandler::HandleHouseObjectClearCommand(char* args)
     std::string error;
     if (!sHouseMgr.ClearHouse(player, removed, kept, noRoom, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     if (kept)
-        PSendSysMessage("Removed %u objects, and kept the %u that came with the house.", removed, kept);
+        handler->PSendSysMessage("Removed %u objects, and kept the %u that came with the house.", removed, kept);
     else if (!noRoom)
-        PSendSysMessage("Removed %u objects. Your house is empty.", removed);
+        handler->PSendSysMessage("Removed %u objects. Your house is empty.", removed);
     else
-        PSendSysMessage("Removed %u objects.", removed);
+        handler->PSendSysMessage("Removed %u objects.", removed);
 
     // Said separately rather than folded into the count, because it is the one
     // line that asks for something: those objects are still standing.
     if (noRoom)
-        PSendSysMessage("%u would not fit in your bags and are still here.", noRoom);
+        handler->PSendSysMessage("%u would not fit in your bags and are still here.", noRoom);
     return true;
 }
 
@@ -789,15 +790,15 @@ bool ChatHandler::HandleHouseObjectClearCommand(char* args)
 // It re-summons at the end rather than asking you to reselect: the display and
 // size come out of the cached template at summon time, so an existing glow is
 // already the old one and always would be.
-bool ChatHandler::HandleHouseObjectMarkerCommand(char* args)
+bool ComfyCommands::HandleHouseObjectMarkerCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session->GetPlayer();
+    Player* player = handler->m_session->GetPlayer();
 
-    if (ExtractLiteralArg(&args, "reset"))
+    if (handler->ExtractLiteralArg(&args, "reset"))
     {
         sHouseMgr.SetSelectMarkLook(0, HOUSE_SELECT_MARK_SCALE, HOUSE_SELECT_MARK_LIFT);
         sHouseMgr.RefreshSelectionMarker(player);
-        PSendSysMessage("Selection glow back to the compiled default: scale %g, lift %g.",
+        handler->PSendSysMessage("Selection glow back to the compiled default: scale %g, lift %g.",
                         HOUSE_SELECT_MARK_SCALE, HOUSE_SELECT_MARK_LIFT);
         return true;
     }
@@ -806,22 +807,22 @@ bool ChatHandler::HandleHouseObjectMarkerCommand(char* args)
     float scale = 0.0f;
     float lift = sHouseMgr.GetSelectMarkLift();
 
-    ExtractOptUInt32(&args, display, 0);
-    ExtractFloat(&args, scale);
-    ExtractFloat(&args, lift);
+    handler->ExtractOptUInt32(&args, display, 0);
+    handler->ExtractFloat(&args, scale);
+    handler->ExtractFloat(&args, lift);
 
     if (!display && scale <= 0.0f)
     {
-        SendSysMessage("Usage: .house object marker <displayId> [scale] [lift]");
-        SendSysMessage("   or: .house object marker reset");
-        SendSysMessage("  The glow standing on the selected object. 21700 is WhiteGlow_High.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("Usage: .house object marker <displayId> [scale] [lift]");
+        handler->SendSysMessage("   or: .house object marker reset");
+        handler->SendSysMessage("  The glow standing on the selected object. 21700 is WhiteGlow_High.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     sHouseMgr.SetSelectMarkLook(display, scale, lift);
     sHouseMgr.RefreshSelectionMarker(player);
-    PSendSysMessage("Selection glow: display %u, scale %g, lift %g.",
+    handler->PSendSysMessage("Selection glow: display %u, scale %g, lift %g.",
                     display, scale, lift);
     return true;
 }
@@ -835,18 +836,18 @@ bool ChatHandler::HandleHouseObjectMarkerCommand(char* args)
 // .house entrance create <template|none> [name...] -- a new door where you
 // stand, bound to the inside it leads to. It lands three yards AHEAD of you
 // facing back, so placing it and then walking forward is what uses it.
-bool ChatHandler::HandleHouseEntranceCreateCommand(char* args)
+bool ComfyCommands::HandleHouseEntranceCreateCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session ? m_session->GetPlayer() : nullptr;
+    Player* player = handler->m_session ? handler->m_session->GetPlayer() : nullptr;
     if (!player)
         return false;
 
-    char* tplTok = ExtractLiteralArg(&args);
+    char* tplTok = handler->ExtractLiteralArg(&args);
     if (!tplTok)
     {
-        SendSysMessage("Usage: .house entrance create <template|none> [name]");
-        SendSysMessage("Templates: .house template list. `none` makes a door that claims an empty house.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("Usage: .house entrance create <template|none> [name]");
+        handler->SendSysMessage("Templates: .house template list. `none` makes a door that claims an empty house.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -856,8 +857,8 @@ bool ChatHandler::HandleHouseEntranceCreateCommand(char* args)
         HouseTemplate const* tpl = sHouseMgr.GetTemplateByName(tplTok);
         if (!tpl)
         {
-            PSendSysMessage("No template called \"%s\". .house template list shows them; `none` is allowed.", tplTok);
-            SetSentErrorMessage(true);
+            handler->PSendSysMessage("No template called \"%s\". .house template list shows them; `none` is allowed.", tplTok);
+            handler->SetSentErrorMessage(true);
             return false;
         }
         templateId = tpl->id;
@@ -871,22 +872,22 @@ bool ChatHandler::HandleHouseEntranceCreateCommand(char* args)
     std::string error;
     if (!sHouseMgr.AddPortal(player, name, templateId, newId, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
-    PSendSysMessage("Entrance %u added. .house entrance list shows them all.", newId);
+    handler->PSendSysMessage("Entrance %u added. .house entrance list shows them all.", newId);
     return true;
 }
 
-bool ChatHandler::HandleHouseEntranceListCommand(char* /*args*/)
+bool ComfyCommands::HandleHouseEntranceListCommand(ChatHandler* handler, char* /*args*/)
 {
-    Player* player = m_session ? m_session->GetPlayer() : nullptr;
+    Player* player = handler->m_session ? handler->m_session->GetPlayer() : nullptr;
 
     std::vector<HousePortal const*> portals = sHouseMgr.GetPortals();
     if (portals.empty())
     {
-        SendSysMessage("No entrances placed. Stand in a doorway and use .house entrance create.");
+        handler->SendSysMessage("No entrances placed. Stand in a doorway and use .house entrance create.");
         return true;
     }
 
@@ -902,7 +903,7 @@ bool ChatHandler::HandleHouseEntranceListCommand(char* /*args*/)
         if (p->templateId)
             if (HouseTemplate const* tpl = sHouseMgr.GetTemplate(p->templateId))
                 tplName = tpl->name;
-        PSendSysMessage("%u: %s map %u at %.1f %.1f %.1f [%s]%s",
+        handler->PSendSysMessage("%u: %s map %u at %.1f %.1f %.1f [%s]%s",
                         p->id, p->name.empty() ? "(unnamed)" : p->name.c_str(),
                         p->map, p->x, p->y, p->z, tplName.c_str(),
                         p->id == home ? "  <- your home" : "");
@@ -914,43 +915,43 @@ bool ChatHandler::HandleHouseEntranceListCommand(char* /*args*/)
 // Placing a door is overwhelmingly an act of ADJUSTMENT -- a yard left, turned
 // to face the other way -- which is why moving is its own verb and not a side
 // effect of anything else.
-bool ChatHandler::HandleHouseEntranceMoveCommand(char* args)
+bool ComfyCommands::HandleHouseEntranceMoveCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session ? m_session->GetPlayer() : nullptr;
+    Player* player = handler->m_session ? handler->m_session->GetPlayer() : nullptr;
     if (!player)
         return false;
 
     uint32 id = 0;
-    if (!ExtractUInt32(&args, id))
+    if (!handler->ExtractUInt32(&args, id))
     {
         if (HousePortal const* spot = sHouseMgr.GetPortalNear(player))
             id = spot->id;
     }
     if (!id)
     {
-        PSendSysMessage("Stand within %g yards of an entrance, or give its id: .house entrance move <id>",
+        handler->PSendSysMessage("Stand within %g yards of an entrance, or give its id: .house entrance move <id>",
                         HOUSE_PORTAL_NEAR);
-        SetSentErrorMessage(true);
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     std::string error;
     if (!sHouseMgr.MovePortal(player, id, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
-    PSendSysMessage("Entrance %u moved here.", id);
+    handler->PSendSysMessage("Entrance %u moved here.", id);
     return true;
 }
 
-bool ChatHandler::HandleHouseEntranceRemoveCommand(char* args)
+bool ComfyCommands::HandleHouseEntranceRemoveCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session ? m_session->GetPlayer() : nullptr;
+    Player* player = handler->m_session ? handler->m_session->GetPlayer() : nullptr;
 
     uint32 id = 0;
-    if (!ExtractUInt32(&args, id))
+    if (!handler->ExtractUInt32(&args, id))
     {
         // Ranged, because this one DELETES. Unranged it took the nearest door
         // on the map, which from the wrong end of Ironforge is a door you have
@@ -958,9 +959,9 @@ bool ChatHandler::HandleHouseEntranceRemoveCommand(char* args)
         HousePortal const* spot = sHouseMgr.GetPortalNear(player);
         if (!spot)
         {
-            PSendSysMessage("Stand within %g yards of an entrance, or give its id: .house entrance remove <id>",
+            handler->PSendSysMessage("Stand within %g yards of an entrance, or give its id: .house entrance remove <id>",
                             HOUSE_PORTAL_NEAR);
-            SetSentErrorMessage(true);
+            handler->SetSentErrorMessage(true);
             return false;
         }
         id = spot->id;
@@ -969,17 +970,17 @@ bool ChatHandler::HandleHouseEntranceRemoveCommand(char* args)
     std::string error;
     if (!sHouseMgr.RemovePortal(id, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
-    PSendSysMessage("Entrance %u removed.", id);
+    handler->PSendSysMessage("Entrance %u removed.", id);
     return true;
 }
 
-bool ChatHandler::HandleHouseEntranceWhereCommand(char* /*args*/)
+bool ComfyCommands::HandleHouseEntranceWhereCommand(ChatHandler* handler, char* /*args*/)
 {
-    Player* player = m_session ? m_session->GetPlayer() : nullptr;
+    Player* player = handler->m_session ? handler->m_session->GetPlayer() : nullptr;
 
     // The one command that stays UNRANGED: "which is nearest" is the whole
     // question. It reports the distance because that is now what decides
@@ -987,13 +988,13 @@ bool ChatHandler::HandleHouseEntranceWhereCommand(char* /*args*/)
     HousePortal const* spot = sHouseMgr.GetNearestPortal(player);
     if (!spot)
     {
-        SendSysMessage("No entrance on this map. .house entrance list shows them all.");
+        handler->SendSysMessage("No entrance on this map. .house entrance list shows them all.");
         return true;
     }
 
     float const dist = player->GetDistance(spot->x, spot->y, spot->z);
 
-    PSendSysMessage("Nearest entrance: %u, map %u at %.1f %.1f %.1f, %.1f yards away%s.",
+    handler->PSendSysMessage("Nearest entrance: %u, map %u at %.1f %.1f %.1f, %.1f yards away%s.",
                     spot->id, spot->map, spot->x, spot->y, spot->z, dist,
                     dist <= HOUSE_PORTAL_NEAR ? "" : ", too far for the bare commands");
     return true;
@@ -1001,21 +1002,21 @@ bool ChatHandler::HandleHouseEntranceWhereCommand(char* /*args*/)
 
 // A developer utility these days -- players claim their home at a door's gear,
 // where claiming and homing are one act. Non-destructive.
-bool ChatHandler::HandleHouseEntranceHomeCommand(char* args)
+bool ComfyCommands::HandleHouseEntranceHomeCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session ? m_session->GetPlayer() : nullptr;
+    Player* player = handler->m_session ? handler->m_session->GetPlayer() : nullptr;
 
     uint32 id = 0;
-    if (!ExtractUInt32(&args, id))
+    if (!handler->ExtractUInt32(&args, id))
     {
         // No id given: the one you are standing at, which is the whole point
         // of being able to walk up to a door and claim it.
         HousePortal const* spot = sHouseMgr.GetPortalNear(player);
         if (!spot)
         {
-            PSendSysMessage("Stand within %g yards of an entrance, or give its id: .house entrance home <id>",
+            handler->PSendSysMessage("Stand within %g yards of an entrance, or give its id: .house entrance home <id>",
                             HOUSE_PORTAL_NEAR);
-            SetSentErrorMessage(true);
+            handler->SetSentErrorMessage(true);
             return false;
         }
         id = spot->id;
@@ -1024,26 +1025,26 @@ bool ChatHandler::HandleHouseEntranceHomeCommand(char* args)
     std::string error;
     if (!sHouseMgr.SetHomePortal(player, id, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
-    PSendSysMessage("Entrance %u is your home now.", id);
+    handler->PSendSysMessage("Entrance %u is your home now.", id);
     return true;
 }
 
 // .house entrance template <template|none> [id] -- retro-bind a door to the
 // inside it leads to. Houses already claimed through it keep their copies:
 // stamping copies, it never references back.
-bool ChatHandler::HandleHouseEntranceTemplateCommand(char* args)
+bool ComfyCommands::HandleHouseEntranceTemplateCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session ? m_session->GetPlayer() : nullptr;
+    Player* player = handler->m_session ? handler->m_session->GetPlayer() : nullptr;
 
-    char* tplTok = ExtractLiteralArg(&args);
+    char* tplTok = handler->ExtractLiteralArg(&args);
     if (!tplTok)
     {
-        SendSysMessage("Usage: .house entrance template <template|none> [id]");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("Usage: .house entrance template <template|none> [id]");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -1053,38 +1054,38 @@ bool ChatHandler::HandleHouseEntranceTemplateCommand(char* args)
         HouseTemplate const* tpl = sHouseMgr.GetTemplateByName(tplTok);
         if (!tpl)
         {
-            PSendSysMessage("No template called \"%s\". .house template list shows them.", tplTok);
-            SetSentErrorMessage(true);
+            handler->PSendSysMessage("No template called \"%s\". .house template list shows them.", tplTok);
+            handler->SetSentErrorMessage(true);
             return false;
         }
         templateId = tpl->id;
     }
 
     uint32 id = 0;
-    if (!ExtractUInt32(&args, id))
+    if (!handler->ExtractUInt32(&args, id))
     {
         if (HousePortal const* spot = sHouseMgr.GetPortalNear(player))
             id = spot->id;
     }
     if (!id)
     {
-        PSendSysMessage("Stand within %g yards of an entrance, or give its id: .house entrance template <template|none> <id>",
+        handler->PSendSysMessage("Stand within %g yards of an entrance, or give its id: .house entrance template <template|none> <id>",
                         HOUSE_PORTAL_NEAR);
-        SetSentErrorMessage(true);
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     std::string error;
     if (!sHouseMgr.SetPortalTemplate(id, templateId, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
     if (templateId)
-        PSendSysMessage("Entrance %u now leads to \"%s\". Houses already claimed through it are untouched.", id, tplTok);
+        handler->PSendSysMessage("Entrance %u now leads to \"%s\". Houses already claimed through it are untouched.", id, tplTok);
     else
-        PSendSysMessage("Entrance %u is untemplated now. Claiming there gives an empty house.", id);
+        handler->PSendSysMessage("Entrance %u is untemplated now. Claiming there gives an empty house.", id);
     return true;
 }
 
@@ -1092,52 +1093,52 @@ bool ChatHandler::HandleHouseEntranceTemplateCommand(char* args)
 // gameobject_template has no reload, so trying portal models from SQL would
 // cost a restart each time. Not saved -- what it settles on belongs in
 // sql/custom/027.
-bool ChatHandler::HandleHouseEntranceModelCommand(char* args)
+bool ComfyCommands::HandleHouseEntranceModelCommand(ChatHandler* handler, char* args)
 {
-    if (ExtractLiteralArg(&args, "reset"))
+    if (handler->ExtractLiteralArg(&args, "reset"))
     {
         sHouseMgr.SetPortalLook(0, 0.0f);
-        SendSysMessage("Portals reset to the gameobject_template rows.");
+        handler->SendSysMessage("Portals reset to the gameobject_template rows.");
         return true;
     }
 
     uint32 display = 0;
-    if (!ExtractUInt32(&args, display) || !display)
+    if (!handler->ExtractUInt32(&args, display) || !display)
     {
         uint32 const cur = sHouseMgr.GetPortalDisplay();
         if (!cur)
-            SendSysMessage("Portals are using the gameobject_template rows as-is.");
+            handler->SendSysMessage("Portals are using the gameobject_template rows as-is.");
         else
-            PSendSysMessage("Portal override: display %u, scale %g.", cur, sHouseMgr.GetPortalScale());
-        SendSysMessage("Usage: .house entrance model <displayId> [scale]   .house entrance model reset");
-        SendSysMessage("       21585 purple spell portal (the current row)");
-        SendSysMessage("       4393 Darnassus  4394 Ironforge  4395 Orgrimmar");
-        SendSysMessage("       4396 Stormwind  4397 Thunder Bluff  4398 Undercity");
+            handler->PSendSysMessage("Portal override: display %u, scale %g.", cur, sHouseMgr.GetPortalScale());
+        handler->SendSysMessage("Usage: .house entrance model <displayId> [scale]   .house entrance model reset");
+        handler->SendSysMessage("       21585 purple spell portal (the current row)");
+        handler->SendSysMessage("       4393 Darnassus  4394 Ironforge  4395 Orgrimmar");
+        handler->SendSysMessage("       4396 Stormwind  4397 Thunder Bluff  4398 Undercity");
         return true;
     }
 
     float scale = 1.0f;
-    ExtractFloat(&args, scale);
+    handler->ExtractFloat(&args, scale);
     if (scale <= 0.0f)
         scale = 1.0f;
 
     sHouseMgr.SetPortalLook(display, scale);
-    PSendSysMessage("Portals now display %u at scale %g.", display, scale);
-    SendSysMessage("The one inside a house reappears within a second; re-enter to see it.");
+    handler->PSendSysMessage("Portals now display %u at scale %g.", display, scale);
+    handler->SendSysMessage("The one inside a house reappears within a second; re-enter to see it.");
     return true;
 }
 
 // The gear in the middle of a portal: how big, and how high it floats.
 // Live, because gameobject_template has no reload and picking a size is the
 // job that wants twenty tries. Not saved -- see sql/custom/034.
-bool ChatHandler::HandleHouseEntranceHandleCommand(char* args)
+bool ComfyCommands::HandleHouseEntranceHandleCommand(ChatHandler* handler, char* args)
 {
-    if (ExtractLiteralArg(&args, "reset"))
+    if (handler->ExtractLiteralArg(&args, "reset"))
     {
         sHouseMgr.SetPortalMarkScale(0.0f);
         sHouseMgr.SetPortalMarkOffset(0.0f, 0.0f, HOUSE_PORTAL_MARK_LIFT);
         sHouseMgr.SetMarkRange(HOUSE_MARK_SHOW_RANGE, HOUSE_MARK_HIDE_RANGE);
-        PSendSysMessage("Portal gear back to the row: scale %g at %g %g %g, %g/%g yards.",
+        handler->PSendSysMessage("Portal gear back to the row: scale %g at %g %g %g, %g/%g yards.",
                         sHouseMgr.GetPortalMarkScale(), sHouseMgr.GetPortalMarkX(),
                         sHouseMgr.GetPortalMarkY(), sHouseMgr.GetPortalMarkZ(),
                         sHouseMgr.GetMarkShow(), sHouseMgr.GetMarkHide());
@@ -1147,74 +1148,74 @@ bool ChatHandler::HandleHouseEntranceHandleCommand(char* args)
     // Two numbers, the second optional: a bare `range 6` keeps the gap it
     // already had rather than making you restate it, which is what you want
     // when you are only feeling for the near edge.
-    if (ExtractLiteralArg(&args, "range"))
+    if (handler->ExtractLiteralArg(&args, "range"))
     {
         float show = 0.0f, hide = 0.0f;
-        if (!ExtractFloat(&args, show))
+        if (!handler->ExtractFloat(&args, show))
         {
-            SendSysMessage("Usage: .house entrance handle range <show> [hide]");
-            SetSentErrorMessage(true);
+            handler->SendSysMessage("Usage: .house entrance handle range <show> [hide]");
+            handler->SetSentErrorMessage(true);
             return false;
         }
-        if (!ExtractFloat(&args, hide))
+        if (!handler->ExtractFloat(&args, hide))
             hide = show + (sHouseMgr.GetMarkHide() - sHouseMgr.GetMarkShow());
 
         sHouseMgr.SetMarkRange(show, hide);
-        PSendSysMessage("Portal gears appear within %g yards, go past %g.",
+        handler->PSendSysMessage("Portal gears appear within %g yards, go past %g.",
                         sHouseMgr.GetMarkShow(), sHouseMgr.GetMarkHide());
 
         // WORTH SAYING WHENEVER IT BITES. The portal takes you through at
         // HOUSE_PORTAL_RANGE, so anything at or under that is a gear you can
         // never stand close enough to see.
         if (sHouseMgr.GetMarkShow() <= HOUSE_PORTAL_RANGE + 0.5f)
-            PSendSysMessage("That is inside the %g yards where the portal takes you through. Try more.",
+            handler->PSendSysMessage("That is inside the %g yards where the portal takes you through. Try more.",
                             HOUSE_PORTAL_RANGE);
         return true;
     }
 
-    if (ExtractLiteralArg(&args, "scale"))
+    if (handler->ExtractLiteralArg(&args, "scale"))
     {
         float scale = 0.0f;
-        if (!ExtractFloat(&args, scale) || scale <= 0.0f)
+        if (!handler->ExtractFloat(&args, scale) || scale <= 0.0f)
         {
-            SendSysMessage("Usage: .house entrance handle scale <n>");
-            SetSentErrorMessage(true);
+            handler->SendSysMessage("Usage: .house entrance handle scale <n>");
+            handler->SetSentErrorMessage(true);
             return false;
         }
         sHouseMgr.SetPortalMarkScale(scale);
-        PSendSysMessage("Portal gear now scale %g. It reappears within a second.",
+        handler->PSendSysMessage("Portal gear now scale %g. It reappears within a second.",
                         sHouseMgr.GetPortalMarkScale());
         return true;
     }
 
-    if (ExtractLiteralArg(&args, "move"))
+    if (handler->ExtractLiteralArg(&args, "move"))
     {
         // Yards on the WORLD axes, Z up -- the same convention .house object
         // move uses. All three are required: a partial move would silently
         // mean "and zero the others", which is not what anybody types it for.
         float x = 0.0f, y = 0.0f, z = 0.0f;
-        if (!ExtractFloat(&args, x) || !ExtractFloat(&args, y) || !ExtractFloat(&args, z))
+        if (!handler->ExtractFloat(&args, x) || !handler->ExtractFloat(&args, y) || !handler->ExtractFloat(&args, z))
         {
-            SendSysMessage("Usage: .house entrance handle move <x> <y> <z>   (yards from the portal, Z up)");
-            SetSentErrorMessage(true);
+            handler->SendSysMessage("Usage: .house entrance handle move <x> <y> <z>   (yards from the portal, Z up)");
+            handler->SetSentErrorMessage(true);
             return false;
         }
         sHouseMgr.SetPortalMarkOffset(x, y, z);
-        PSendSysMessage("Portal gear now at %g %g %g from the portal.",
+        handler->PSendSysMessage("Portal gear now at %g %g %g from the portal.",
                         sHouseMgr.GetPortalMarkX(), sHouseMgr.GetPortalMarkY(),
                         sHouseMgr.GetPortalMarkZ());
         return true;
     }
 
-    PSendSysMessage("Portal gear: scale %g, offset %g %g %g from the portal.",
+    handler->PSendSysMessage("Portal gear: scale %g, offset %g %g %g from the portal.",
                     sHouseMgr.GetPortalMarkScale(), sHouseMgr.GetPortalMarkX(),
                     sHouseMgr.GetPortalMarkY(), sHouseMgr.GetPortalMarkZ());
-    PSendSysMessage("Appears within %g yards, goes past %g.",
+    handler->PSendSysMessage("Appears within %g yards, goes past %g.",
                     sHouseMgr.GetMarkShow(), sHouseMgr.GetMarkHide());
-    SendSysMessage("Usage: .house entrance handle range <show> [hide]");
-    SendSysMessage("       .house entrance handle scale <n>");
-    SendSysMessage("       .house entrance handle move <x> <y> <z>");
-    SendSysMessage("       .house entrance handle reset");
+    handler->SendSysMessage("Usage: .house entrance handle range <show> [hide]");
+    handler->SendSysMessage("       .house entrance handle scale <n>");
+    handler->SendSysMessage("       .house entrance handle move <x> <y> <z>");
+    handler->SendSysMessage("       .house entrance handle reset");
     return true;
 }
 
@@ -1225,28 +1226,28 @@ bool ChatHandler::HandleHouseEntranceHandleCommand(char* args)
 // stamp; unsaved edits never reach a player.
 
 // One word, because .house entrance create takes the name as a single token.
-bool ChatHandler::HandleHouseTemplateCreateCommand(char* args)
+bool ComfyCommands::HandleHouseTemplateCreateCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session ? m_session->GetPlayer() : nullptr;
+    Player* player = handler->m_session ? handler->m_session->GetPlayer() : nullptr;
     if (!player)
         return false;
 
-    char* name = ExtractLiteralArg(&args);
-    if (!name || ExtractLiteralArg(&args))
+    char* name = handler->ExtractLiteralArg(&args);
+    if (!name || handler->ExtractLiteralArg(&args))
     {
-        SendSysMessage("Usage: .house template create <name>   (one word)");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("Usage: .house template create <name>   (one word)");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     std::string error;
     if (!sHouseMgr.CreateTemplate(player, name, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
-    PSendSysMessage("Template \"%s\" created. You are standing in it. Decorate, place .house template exit, then .house template save.", name);
+    handler->PSendSysMessage("Template \"%s\" created. You are standing in it. Decorate, place .house template exit, then .house template save.", name);
     return true;
 }
 
@@ -1260,57 +1261,57 @@ bool ChatHandler::HandleHouseTemplateCreateCommand(char* args)
 // It writes the AUTHORING house's exit, exactly as it always did; what changed
 // is only who may call it. `template save` is what copies that into the frozen
 // snapshot, so placing an exit and not saving leaves claims on the old one.
-bool ChatHandler::HandleHouseTemplateExitCommand(char* args)
+bool ComfyCommands::HandleHouseTemplateExitCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session ? m_session->GetPlayer() : nullptr;
+    Player* player = handler->m_session ? handler->m_session->GetPlayer() : nullptr;
     if (!player)
         return false;
 
     std::string error;
 
-    if (ExtractLiteralArg(&args, "where"))
+    if (handler->ExtractLiteralArg(&args, "where"))
     {
         House* house = sHouseMgr.GetAuthoredTemplateAt(player, error);
         if (!house)
         {
-            SendSysMessage(error.c_str());
-            SetSentErrorMessage(true);
+            handler->SendSysMessage(error.c_str());
+            handler->SetSentErrorMessage(true);
             return false;
         }
 
         float x, y, z, o;
         sHouseMgr.GetExitPosition(*house, x, y, z, o);
-        PSendSysMessage("Way out: %.1f %.1f %.1f%s.", x, y, z,
+        handler->PSendSysMessage("Way out: %.1f %.1f %.1f%s.", x, y, z,
                         house->exitSet ? "" : " (where it started)");
         return true;
     }
 
-    if (ExtractLiteralArg(&args, "reset"))
+    if (handler->ExtractLiteralArg(&args, "reset"))
     {
         if (!sHouseMgr.ClearExitPortal(player, error))
         {
-            SendSysMessage(error.c_str());
-            SetSentErrorMessage(true);
+            handler->SendSysMessage(error.c_str());
+            handler->SetSentErrorMessage(true);
             return false;
         }
-        SendSysMessage("Way out moved back to where it started. .house template save publishes it.");
+        handler->SendSysMessage("Way out moved back to where it started. .house template save publishes it.");
         return true;
     }
 
     if (!sHouseMgr.SetExitPortal(player, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
-    SendSysMessage("Way out placed three yards ahead, and residents will arrive facing away from it.");
-    SendSysMessage(".house template save publishes it to anyone who claims this template.");
+    handler->SendSysMessage("Way out placed three yards ahead, and residents will arrive facing away from it.");
+    handler->SendSysMessage(".house template save publishes it to anyone who claims this template.");
     return true;
 }
 
-bool ChatHandler::HandleHouseTemplateSaveCommand(char* /*args*/)
+bool ComfyCommands::HandleHouseTemplateSaveCommand(ChatHandler* handler, char* /*args*/)
 {
-    Player* player = m_session ? m_session->GetPlayer() : nullptr;
+    Player* player = handler->m_session ? handler->m_session->GetPlayer() : nullptr;
     if (!player)
         return false;
 
@@ -1319,8 +1320,8 @@ bool ChatHandler::HandleHouseTemplateSaveCommand(char* /*args*/)
     std::string error;
     if (!sHouseMgr.SaveTemplate(player, saved, savedExit, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -1328,82 +1329,82 @@ bool ChatHandler::HandleHouseTemplateSaveCommand(char* /*args*/)
     // the template that most needs telling: one nobody has placed a way out in
     // yet. Claims still work without one -- GetExitPosition falls back -- they
     // just all land on the same compiled-in spot, wherever the front door is.
-    PSendSysMessage("Template saved: %u objects%s. This is what a claim gets now.",
+    handler->PSendSysMessage("Template saved: %u objects%s. This is what a claim gets now.",
                     saved, savedExit ? " and the exit" : "");
     if (!savedExit)
-        SendSysMessage("No way out placed. Residents will arrive at the default spot. .house template exit sets it.");
+        handler->SendSysMessage("No way out placed. Residents will arrive at the default spot. .house template exit sets it.");
     return true;
 }
 
-bool ChatHandler::HandleHouseTemplateGotoCommand(char* args)
+bool ComfyCommands::HandleHouseTemplateGotoCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session ? m_session->GetPlayer() : nullptr;
+    Player* player = handler->m_session ? handler->m_session->GetPlayer() : nullptr;
     if (!player)
         return false;
 
-    char* name = ExtractLiteralArg(&args);
+    char* name = handler->ExtractLiteralArg(&args);
     if (!name)
     {
-        SendSysMessage("Usage: .house template goto <name>");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("Usage: .house template goto <name>");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     HouseTemplate const* tpl = sHouseMgr.GetTemplateByName(name);
     if (!tpl)
     {
-        PSendSysMessage("No template called \"%s\". .house template list shows them.", name);
-        SetSentErrorMessage(true);
+        handler->PSendSysMessage("No template called \"%s\". .house template list shows them.", name);
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     std::string error;
     if (!sHouseMgr.GotoTemplate(player, tpl->id, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
     return true;
 }
 
-bool ChatHandler::HandleHouseTemplateDeleteCommand(char* args)
+bool ComfyCommands::HandleHouseTemplateDeleteCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session ? m_session->GetPlayer() : nullptr;
+    Player* player = handler->m_session ? handler->m_session->GetPlayer() : nullptr;
 
-    char* name = ExtractLiteralArg(&args);
+    char* name = handler->ExtractLiteralArg(&args);
     if (!name)
     {
-        SendSysMessage("Usage: .house template delete <name>");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("Usage: .house template delete <name>");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     HouseTemplate const* tpl = sHouseMgr.GetTemplateByName(name);
     if (!tpl)
     {
-        PSendSysMessage("No template called \"%s\".", name);
-        SetSentErrorMessage(true);
+        handler->PSendSysMessage("No template called \"%s\".", name);
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     std::string error;
     if (!sHouseMgr.DeleteTemplate(player, tpl->id, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
-    PSendSysMessage("Template \"%s\" deleted. Houses stamped from it keep everything.", name);
+    handler->PSendSysMessage("Template \"%s\" deleted. Houses stamped from it keep everything.", name);
     return true;
 }
 
-bool ChatHandler::HandleHouseTemplateListCommand(char* /*args*/)
+bool ComfyCommands::HandleHouseTemplateListCommand(ChatHandler* handler, char* /*args*/)
 {
     std::vector<HouseTemplate const*> templates = sHouseMgr.GetTemplates();
     if (templates.empty())
     {
-        SendSysMessage("No templates. .house template create <name> starts one.");
+        handler->SendSysMessage("No templates. .house template create <name> starts one.");
         return true;
     }
 
@@ -1415,7 +1416,7 @@ bool ChatHandler::HandleHouseTemplateListCommand(char* /*args*/)
             if (p->templateId == t->id)
                 ++doors;
 
-        PSendSysMessage("%u: %s, %u objects, %s, %u door(s)%s",
+        handler->PSendSysMessage("%u: %s, %u objects, %s, %u door(s)%s",
                         t->id, t->name.c_str(), uint32(t->objects.size()),
                         t->exitSet ? "exit set" : "NO EXIT", doors,
                         t->savedAt ? "" : "  (never saved, stamps nothing yet)");
@@ -1429,67 +1430,67 @@ bool ChatHandler::HandleHouseTemplateListCommand(char* /*args*/)
 // growing. "scale = 2" sets it against the template's own size instead, and
 // "scale reset" is "= 1" -- without an absolute form there is no way back to
 // normal except guessing the inverse of everything you did.
-bool ChatHandler::HandleHouseObjectScaleCommand(char* args)
+bool ComfyCommands::HandleHouseObjectScaleCommand(ChatHandler* handler, char* args)
 {
     bool relative = true;
     float factor = 0.0f;
 
-    if (ExtractLiteralArg(&args, "reset"))
+    if (handler->ExtractLiteralArg(&args, "reset"))
     {
         relative = false;
         factor = 1.0f;
     }
     else
     {
-        if (ExtractLiteralArg(&args, "="))
+        if (handler->ExtractLiteralArg(&args, "="))
             relative = false;
-        if (!ExtractFloat(&args, factor) || factor <= 0.0f)
+        if (!handler->ExtractFloat(&args, factor) || factor <= 0.0f)
         {
-            SendSysMessage("Usage: .house object scale <factor> [id]     multiplies the current size");
-            SendSysMessage("   or: .house object scale = <factor> [id]   sets it against the normal size");
-            SendSysMessage("   or: .house object scale reset [id]");
-            SetSentErrorMessage(true);
+            handler->SendSysMessage("Usage: .house object scale <factor> [id]     multiplies the current size");
+            handler->SendSysMessage("   or: .house object scale = <factor> [id]   sets it against the normal size");
+            handler->SendSysMessage("   or: .house object scale reset [id]");
+            handler->SetSentErrorMessage(true);
             return false;
         }
     }
 
     House* house = nullptr;
-    uint32 guid = HouseTarget(args, house);
+    uint32 guid = HouseTarget(handler, args, house);
     if (!guid)
         return false;
 
     std::string const label = ObjectLabel(guid);
 
     std::string error;
-    if (!sHouseMgr.ScaleObject(m_session->GetPlayer(), guid, factor, relative, error))
+    if (!sHouseMgr.ScaleObject(handler->m_session->GetPlayer(), guid, factor, relative, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     HouseObject const* o = sHouseMgr.GetObject(guid);
-    PSendSysMessage("%s is now %g times its normal size.", label.c_str(), o ? o->scale : factor);
+    handler->PSendSysMessage("%s is now %g times its normal size.", label.c_str(), o ? o->scale : factor);
     return true;
 }
 
 // .house visit <name> -- go to that character owner's house, if they lead your
 // party. Naming a character of your own is just .house go.
-bool ChatHandler::HandleHouseVisitCommand(char* args)
+bool ComfyCommands::HandleHouseVisitCommand(ChatHandler* handler, char* args)
 {
-    char* name = ExtractQuotedOrLiteralArg(&args);
+    char* name = handler->ExtractQuotedOrLiteralArg(&args);
     if (!name)
     {
-        SendSysMessage("Usage: .house visit <character name>");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("Usage: .house visit <character name>");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     std::string error;
-    if (!sHouseMgr.VisitHouse(m_session->GetPlayer(), name, error))
+    if (!sHouseMgr.VisitHouse(handler->m_session->GetPlayer(), name, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
     return true;
@@ -1509,13 +1510,13 @@ bool ChatHandler::HandleHouseVisitCommand(char* args)
 // file. A preference is not an action on a room: refusing to let somebody set
 // one up before they have claimed a house would be a rule with nothing behind
 // it.
-bool ChatHandler::HandleHouseSettingCommand(char* args)
+bool ComfyCommands::HandleHouseSettingCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session->GetPlayer();
+    Player* player = handler->m_session->GetPlayer();
     if (!player)
         return false;
 
-    char* nameArg = ExtractLiteralArg(&args);
+    char* nameArg = handler->ExtractLiteralArg(&args);
 
     // NO NAME: THE LIST, AND THE LIST IS THE INSTRUCTIONS. This is the only
     // place a player finds out these exist, so it has to leave them able to
@@ -1525,7 +1526,7 @@ bool ChatHandler::HandleHouseSettingCommand(char* args)
     // list you can act on.
     if (!nameArg)
     {
-        SendSysMessage("Housing settings. Use .house settings <name> to turn one on or off:");
+        handler->SendSysMessage("Housing settings. Use .house settings <name> to turn one on or off:");
         for (uint32 i = 0; i < HOUSE_SETTING_MAX; ++i)
         {
             HouseSetting const s = HouseSetting(i);
@@ -1536,15 +1537,15 @@ bool ChatHandler::HandleHouseSettingCommand(char* args)
             if (!HouseMgr::IsSettingLive(s))
                 continue;
 
-            PSendSysMessage("  %s: %s%s", HouseMgr::SettingName(s),
+            handler->PSendSysMessage("  %s: %s%s", HouseMgr::SettingName(s),
                             HouseMgr::SettingLabel(s, sHouseMgr.GetSetting(player, s)).c_str(),
                             HouseMgr::SettingIsGlobal(s) ? "   (server-wide)" : "");
 
             std::string const hint = HouseMgr::SettingHint(s);
             if (!hint.empty())
-                PSendSysMessage("      %s", hint.c_str());
+                handler->PSendSysMessage("      %s", hint.c_str());
         }
-        SendSysMessage("Or click Settings on the panel beside the way out.");
+        handler->SendSysMessage("Or click Settings on the panel beside the way out.");
         return true;
     }
 
@@ -1572,8 +1573,8 @@ bool ChatHandler::HandleHouseSettingCommand(char* args)
             first = false;
         }
 
-        PSendSysMessage("No such setting. There is: %s.", names.str().c_str());
-        SetSentErrorMessage(true);
+        handler->PSendSysMessage("No such setting. There is: %s.", names.str().c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -1581,16 +1582,16 @@ bool ChatHandler::HandleHouseSettingCommand(char* args)
     // refusal names the scope rather than the rank: "you cannot" answers a
     // question nobody asked, where "this one is the server's" explains why the
     // row is on the page at all.
-    if (HouseMgr::SettingIsGlobal(setting) && GetAccessLevel() < SEC_DEVELOPER)
+    if (HouseMgr::SettingIsGlobal(setting) && handler->GetAccessLevel() < SEC_DEVELOPER)
     {
-        PSendSysMessage("%s is server-wide, and set by whoever runs it.",
+        handler->PSendSysMessage("%s is server-wide, and set by whoever runs it.",
                         HouseMgr::SettingTitle(setting));
-        SetSentErrorMessage(true);
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     uint32 value = sHouseMgr.GetSetting(player, setting) ? 0 : 1;
-    if (char* valueArg = ExtractLiteralArg(&args))
+    if (char* valueArg = handler->ExtractLiteralArg(&args))
     {
         std::string v = valueArg;
         std::transform(v.begin(), v.end(), v.begin(), ::tolower);
@@ -1600,9 +1601,9 @@ bool ChatHandler::HandleHouseSettingCommand(char* args)
             // The hint comes with it: somebody who typed a word that is not
             // on or off does not need to be told the shape again, they need to
             // know what the two states are.
-            PSendSysMessage("%s is on or off. %s", HouseMgr::SettingName(setting),
+            handler->PSendSysMessage("%s is on or off. %s", HouseMgr::SettingName(setting),
                             HouseMgr::SettingHint(setting).c_str());
-            SetSentErrorMessage(true);
+            handler->SetSentErrorMessage(true);
             return false;
         }
     }
@@ -1619,16 +1620,16 @@ bool ChatHandler::HandleHouseSettingCommand(char* args)
         if (*note)
             line += std::string(" ") + note;
 
-    SendSysMessage(line.c_str());
+    handler->SendSysMessage(line.c_str());
 
     return true;
 }
 
 // .house edit [on|off] -- make every piece of furniture you own clickable.
 // Bare `.house edit` toggles, which is what anybody actually types.
-bool ChatHandler::HandleHouseEditCommand(char* args)
+bool ComfyCommands::HandleHouseEditCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session->GetPlayer();
+    Player* player = handler->m_session->GetPlayer();
 
     // IsEditingAll, NOT IsEditing. Placing something starts a per-object
     // session so the new piece can be clicked straight away, and reading that
@@ -1636,7 +1637,7 @@ bool ChatHandler::HandleHouseEditCommand(char* args)
     // player wants, having just put a chair down, is the whole room lit up.
     // This command owns the global mode and nothing else.
     bool on = !sHouseMgr.IsEditingAll(player);
-    if (char* word = ExtractLiteralArg(&args))
+    if (char* word = handler->ExtractLiteralArg(&args))
     {
         if (!strcmp(word, "on"))
             on = true;
@@ -1644,8 +1645,8 @@ bool ChatHandler::HandleHouseEditCommand(char* args)
             on = false;
         else
         {
-            SendSysMessage("Usage: .house edit [on|off]");
-            SetSentErrorMessage(true);
+            handler->SendSysMessage("Usage: .house edit [on|off]");
+            handler->SetSentErrorMessage(true);
             return false;
         }
     }
@@ -1653,15 +1654,15 @@ bool ChatHandler::HandleHouseEditCommand(char* args)
     std::string error;
     if (!sHouseMgr.SetEditMode(player, on, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     if (on)
-        SendSysMessage("Edit mode on. Right-click anything of yours to move, turn or pick it up.");
+        handler->SendSysMessage("Edit mode on. Right-click anything of yours to move, turn or pick it up.");
     else
-        SendSysMessage("Edit mode off.");
+        handler->SendSysMessage("Edit mode off.");
     return true;
 }
 
@@ -1844,15 +1845,15 @@ void HousePrintObjectList(Player* player)
     }
 }
 
-bool ChatHandler::HandleHouseObjectListCommand(char* args)
+bool ComfyCommands::HandleHouseObjectListCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session->GetPlayer();
+    Player* player = handler->m_session->GetPlayer();
 
     // `.house object list addon` is the panel's refresh: the same list, over the
     // addon channel, printing NOTHING. Deliberately an argument rather than its
     // own subcommand -- it is the same question, and `.commands` should not grow
     // an entry no human would ever type.
-    bool const forAddon = ExtractLiteralArg(&args, "addon") != nullptr;
+    bool const forAddon = handler->ExtractLiteralArg(&args, "addon") != nullptr;
 
     House* house = sHouseMgr.GetHouseAt(player);
     if (!house)
@@ -1865,8 +1866,8 @@ bool ChatHandler::HandleHouseObjectListCommand(char* args)
             SendHouseObjectSync(player, nullptr);
             return true;
         }
-        SendSysMessage("You are not in a house.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("You are not in a house.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -1892,10 +1893,10 @@ bool ChatHandler::HandleHouseObjectListCommand(char* args)
 // and the two are independent. A mapping row whose item does not exist yet is
 // skipped with an error rather than accepted, so the order to run them in is
 // item_template first.
-bool ChatHandler::HandleHouseFurnitureReloadCommand(char* /*args*/)
+bool ComfyCommands::HandleHouseFurnitureReloadCommand(ChatHandler* handler, char* /*args*/)
 {
     sHouseMgr.LoadFurnitureItems();
-    PSendSysMessage("Furniture items reloaded: %u.", sHouseMgr.FurnitureItemCount());
+    handler->PSendSysMessage("Furniture items reloaded: %u.", sHouseMgr.FurnitureItemCount());
     return true;
 }
 
@@ -2039,36 +2040,36 @@ void HouseOpenStorageWindow(Player* player)
 // views of one shelf and the bare form is the one people will type. Every
 // branch refuses outside your own house -- storage is a cupboard in the house,
 // and CheckOwner in HouseMgr says so in the same words the rest of housing does.
-bool ChatHandler::HandleHouseStorageCommand(char* args)
+bool ComfyCommands::HandleHouseStorageCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session->GetPlayer();
+    Player* player = handler->m_session->GetPlayer();
     std::string error;
 
-    if (ExtractLiteralArg(&args, "addon"))
+    if (handler->ExtractLiteralArg(&args, "addon"))
     {
         SendStorageSync(player);
         return true;
     }
 
-    if (ExtractLiteralArg(&args, "put"))
+    if (handler->ExtractLiteralArg(&args, "put"))
     {
         // `put <entry> [square]` is the ADDON's form -- it knows exactly which
         // crate was dropped and which square it landed on. Tried after the
         // literal so `put all` is never read as a number.
         uint32 entry = 0;
-        if (!ExtractLiteralArg(&args, "all") && ExtractUInt32(&args, entry) && entry)
+        if (!handler->ExtractLiteralArg(&args, "all") && handler->ExtractUInt32(&args, entry) && entry)
         {
             uint32 slot = 0;
-            ExtractOptUInt32(&args, slot, 0);       // 0 = the first free square
+            handler->ExtractOptUInt32(&args, slot, 0);       // 0 = the first free square
 
             if (!sHouseMgr.StorageDeposit(player, entry, slot, error))
             {
-                SendSysMessage(error.c_str());
-                SetSentErrorMessage(true);
+                handler->SendSysMessage(error.c_str());
+                handler->SetSentErrorMessage(true);
                 return false;
             }
             ItemPrototype const* proto = sObjectMgr.GetItemPrototype(entry);
-            PSendSysMessage("Put the %s away.", proto ? proto->Name1.c_str() : "furniture");
+            handler->PSendSysMessage("Put the %s away.", proto ? proto->Name1.c_str() : "furniture");
             SendStorageSync(player);
             return true;
         }
@@ -2079,11 +2080,11 @@ bool ChatHandler::HandleHouseStorageCommand(char* args)
         uint32 moved = 0;
         if (!sHouseMgr.StorageDepositAll(player, moved, error))
         {
-            SendSysMessage(error.c_str());
-            SetSentErrorMessage(true);
+            handler->SendSysMessage(error.c_str());
+            handler->SetSentErrorMessage(true);
             return false;
         }
-        PSendSysMessage("Put %u away.", moved);
+        handler->PSendSysMessage("Put %u away.", moved);
         HousePrintStorage(player);
         SendStorageSync(player);
         return true;
@@ -2091,32 +2092,32 @@ bool ChatHandler::HandleHouseStorageCommand(char* args)
 
     // `move <from> <to>` is the addon's, and only the addon's: dragging a crate
     // from one square to another is not something anyone will type.
-    if (ExtractLiteralArg(&args, "move"))
+    if (handler->ExtractLiteralArg(&args, "move"))
     {
         uint32 from = 0, to = 0;
-        if (!ExtractUInt32(&args, from) || !ExtractUInt32(&args, to))
+        if (!handler->ExtractUInt32(&args, from) || !handler->ExtractUInt32(&args, to))
         {
-            SendSysMessage("Usage: .house storage move <from> <to>");
-            SetSentErrorMessage(true);
+            handler->SendSysMessage("Usage: .house storage move <from> <to>");
+            handler->SetSentErrorMessage(true);
             return false;
         }
         if (!sHouseMgr.StorageMove(player, from, to, error))
         {
-            SendSysMessage(error.c_str());
-            SetSentErrorMessage(true);
+            handler->SendSysMessage(error.c_str());
+            handler->SetSentErrorMessage(true);
             return false;
         }
         SendStorageSync(player);
         return true;
     }
 
-    if (ExtractLiteralArg(&args, "take"))
+    if (handler->ExtractLiteralArg(&args, "take"))
     {
         uint32 slot = 0;
-        if (!ExtractUInt32(&args, slot) || !slot)
+        if (!handler->ExtractUInt32(&args, slot) || !slot)
         {
-            SendSysMessage("Which one? Use .house storage take <number>. The numbers are in .house storage.");
-            SetSentErrorMessage(true);
+            handler->SendSysMessage("Which one? Use .house storage take <number>. The numbers are in .house storage.");
+            handler->SetSentErrorMessage(true);
             return false;
         }
 
@@ -2130,13 +2131,13 @@ bool ChatHandler::HandleHouseStorageCommand(char* args)
 
         if (!sHouseMgr.StorageWithdraw(player, slot, error))
         {
-            SendSysMessage(error.c_str());
-            SetSentErrorMessage(true);
+            handler->SendSysMessage(error.c_str());
+            handler->SetSentErrorMessage(true);
             return false;
         }
 
         ItemPrototype const* proto = sObjectMgr.GetItemPrototype(entry);
-        PSendSysMessage("Took the %s.", proto ? proto->Name1.c_str() : "furniture");
+        handler->PSendSysMessage("Took the %s.", proto ? proto->Name1.c_str() : "furniture");
         SendStorageSync(player);
         return true;
     }
@@ -2150,8 +2151,8 @@ bool ChatHandler::HandleHouseStorageCommand(char* args)
     // nobody asked for, on the one word people will type to have a look.
     if (!sHouseMgr.StorageAllowed(player, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
     HousePrintStorage(player);

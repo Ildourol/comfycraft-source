@@ -1,4 +1,5 @@
 #include "playerbot/playerbot.h"
+#include "Chat/Chat.h"
 #include "playerbot/PlayerbotAIConfig.h"
 #include "BotNpc.h"
 #include "PlayerbotDbStore.h"

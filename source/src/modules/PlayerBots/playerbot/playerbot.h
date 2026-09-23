@@ -4,7 +4,6 @@
 #include "WorldPacket.h"
 #include "LootMgr.h"
 #include "GossipDef.h"
-#include "Chat/Chat.h"
 #include "Common.h"
 #include "World.h"
 #include "Spells/SpellMgr.h"

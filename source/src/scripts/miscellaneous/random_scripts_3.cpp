@@ -1,4 +1,5 @@
 #include "scriptPCH.h"
+#include "Chat.h"
 #include "Utilities/EventProcessor.h"
 #include "GuardAI.h"
 #include "PetAI.h"

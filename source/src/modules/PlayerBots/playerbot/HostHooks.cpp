@@ -12,6 +12,7 @@
 // matching BUILD_PLAYERBOTS=OFF stubs live in src/game/PlayerbotStubs.cpp.
 
 #include "playerbot/playerbot.h"
+#include "Chat/Chat.h"
 #include "Objects/Player.h"
 #include "World.h"
 #include "playerbot/RandomPlayerbotMgr.h"

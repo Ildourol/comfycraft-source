@@ -59,13 +59,36 @@ enum CommandFlags
     COMMAND_FLAGS_CRITICAL          = 0x2,
 };
 
+// What a command table row calls: a ChatHandler member, as upstream writes them,
+// or a free function, as ComfyCraft's own commands are (Chat/ComfyCommands.h).
+// A free function is declared outside this header, so adding one does not
+// recompile everything that includes Chat.h. Both convert implicitly, so a row
+// reads the same either way.
+class ChatCommandHandler
+{
+public:
+    typedef bool (ChatHandler::*Member)(char* args);
+    typedef bool (*Free)(ChatHandler* handler, char* args);
+
+    ChatCommandHandler(std::nullptr_t = nullptr) {}
+    ChatCommandHandler(Member member) : m_member(member) {}
+    ChatCommandHandler(Free free) : m_free(free) {}
+
+    explicit operator bool() const { return m_member || m_free; }
+    bool Call(ChatHandler* handler, char* args) const;  // Chat.cpp
+
+private:
+    Member m_member = nullptr;
+    Free m_free = nullptr;
+};
+
 class ChatCommand
 {
 public:
         const char *       Name;
         uint8              SecurityLevel;                   // function pointer required correct align (use uint32)
         bool               AllowConsole;
-        bool (ChatHandler::*Handler)(char* args);
+        ChatCommandHandler Handler;
         std::string        Help;
         ChatCommand *      ChildCommands;
         uint8              Flags;
@@ -93,6 +116,7 @@ class ChatHandler
     public:
 
         friend struct LookupPlayerHandler;
+        friend struct ComfyCommands;                        // our handlers use its protected members
 
         explicit ChatHandler(WorldSession* session);
         explicit ChatHandler(Player* player);
@@ -205,17 +229,8 @@ class ChatHandler
         // bot adds .perfmon/.bot/.rndbot commands via ChatHandler.
         bool HandlePerfMonCommand(char* args);
         bool HandlePlayerbotCommand(char* args);
-        bool HandleNpcBotCommand(char* args);
-        bool HandleAddDressingRoomCommand(char* args);
-        bool HandleComfyHelpCommand(char* args);
         bool HandleRandomPlayerbotCommand(char* args);
         bool HandleAhBotCommand(char* args);
-        bool HandleEffectCommand(char* args);
-        bool HandleEmoteCommand(char* args);
-        bool HandleDestCommand(char* args);
-        bool HandleSpotCommand(char* args);
-        bool HandleSpotFromCommand(char* args);
-        bool HandleSceneCommand(char* args);
         bool HandleSendSpellVisualCommand(char *);
         bool HandleSendSpellImpactCommand(char *);
         bool HandleServiceDeleteCharacters(char* args);
@@ -311,7 +326,6 @@ class ChatHandler
         bool HandleReloadAreaTriggerTavernCommand(char* args);
         bool HandleReloadCharacterPetCommand(char* args);
         bool HandleReloadConditionsCommand(char* args);
-        bool HandleReloadCustomMerchantCommand(char* args);
         bool HandleReloadCreatureCommand(char* args);
         bool HandleReloadCreatureTemplateCommand(char* args);
         bool HandleReloadEventAIEventsCommand(char* args);
@@ -327,7 +341,6 @@ class ChatHandler
         bool HandleReloadGameTeleCommand(char* args);
         bool HandleReloadTaxiPathTransitionsCommand(char* args);
         bool HandleReloadGameObjectCommand(char* args);
-        bool HandleReloadGameObjectTemplateCommand(char* args);
         bool HandleReloadGOQuestInvRelationsCommand(char* args);
         bool HandleReloadLootTemplatesGameobjectCommand(char* args);
         bool HandleReloadGOQuestRelationsCommand(char* args);
@@ -350,9 +363,6 @@ class ChatHandler
         bool HandleReloadLocalesQuestCommand(char* args);
         bool HandleReloadLootTemplatesMailCommand(char* args);
         bool HandleReloadModuleStringCommand(char* args);
-        bool HandleReloadBroadcastTextCommand(char* args);
-        bool HandleReloadDialogScenesCommand(char* args);
-        bool HandleReloadDialogDestsCommand(char* args);
         bool HandleReloadNpcGossipCommand(char* args);
         bool HandleReloadNpcTextCommand(char* args);
         bool HandleReloadNpcTrainerCommand(char* args);
@@ -366,7 +376,6 @@ class ChatHandler
         bool HandleReloadTrainerGreetingCommand(char* args);
         bool HandleReloadLootTemplatesReferenceCommand(char* args);
         bool HandleReloadReservedNameCommand(char* args);
-        bool HandleReloadRentedMountCommand(char* args);
         bool HandleReloadReputationRewardRateCommand(char* args);
         bool HandleReloadReputationSpilloverTemplateCommand(char* args);
         bool HandleReloadSkillFishingBaseLevelCommand(char* args);
@@ -398,7 +407,6 @@ class ChatHandler
         bool HandleReloadFactionChangeQuests(char* args);
         bool HandleReloadFactionChangeMounts(char* args);
         bool HandleReloadCreatureDisplayInfoAddon(char* args);
-        bool HandleReloadBotNpcCommand(char* args);
         bool HandleReloadIPBanList(char* args);
         bool HandleReloadAccountBanList(char* args);
         bool HandleReloadInstanceBuffRemoval(char* args);
@@ -498,57 +506,11 @@ class ChatHandler
         bool HandleGuildRenameCommand(char* args);
         bool HandleGuildLeaderCommand(char* args);
         bool HandleGuildListenCommand(char* args);
-        bool HandleGuildHouseCommand(char* args);
 
         bool HandleHonorShow(char* args);
         bool HandleHonorSetRPCommand(char* args);
 
         bool HandleVendorCommand(char* args);
-
-        bool HandleHouseGoCommand(char* args);
-        bool HandleHouseResetCommand(char* args);
-        bool HandleHouseObjectAddCommand(char* args);
-        bool HandleHouseObjectDragCommand(char* args);
-        bool HandleHouseObjectMoveCommand(char* args);
-        bool HandleHouseObjectRotateCommand(char* args);
-        bool HandleHouseObjectScaleCommand(char* args);
-        bool HandleHouseObjectDelCommand(char* args);
-        bool HandleHouseObjectClearCommand(char* args);
-        bool HandleHouseObjectListCommand(char* args);
-        bool HandleHouseObjectSelectCommand(char* args);
-        bool HandleHouseObjectUnselectCommand(char* args);
-        bool HandleHouseObjectChalkCommand(char* args);
-        bool HandleHouseObjectEditCommand(char* args);
-        bool HandleHouseEditCommand(char* args);
-        bool HandleHouseObjectMarkerCommand(char* args);
-        bool HandleHouseCritterAddCommand(char* args);
-        bool HandleHouseCritterDragCommand(char* args);
-        bool HandleHouseCritterWanderCommand(char* args);
-        bool HandleHouseCritterDelCommand(char* args);
-        bool HandleHouseCritterListCommand(char* args);
-        bool HandleHouseCritterVisualCommand(char* args);
-        bool HandleHouseCritterReloadCommand(char* args);
-        bool HandleHouseCritterNameCommand(char* args);
-        bool HandleHouseFurnitureReloadCommand(char* args);
-        bool HandleHouseStorageCommand(char* args);
-        bool HandleHouseSettingCommand(char* args);
-        bool HandleHouseVisitCommand(char* args);
-        bool HandleHouseEntranceCreateCommand(char* args);
-        bool HandleHouseEntranceListCommand(char* args);
-        bool HandleHouseEntranceMoveCommand(char* args);
-        bool HandleHouseEntranceRemoveCommand(char* args);
-        bool HandleHouseEntranceWhereCommand(char* args);
-        bool HandleHouseEntranceHomeCommand(char* args);
-        bool HandleHouseEntranceTemplateCommand(char* args);
-        bool HandleHouseEntranceModelCommand(char* args);
-        bool HandleHouseEntranceHandleCommand(char* args);
-        bool HandleHouseTemplateCreateCommand(char* args);
-        bool HandleHouseTemplateExitCommand(char* args);
-        bool HandleHouseTemplateSaveCommand(char* args);
-        bool HandleHouseTemplateGotoCommand(char* args);
-        bool HandleHouseTemplateDeleteCommand(char* args);
-        bool HandleHouseTemplateListCommand(char* args);
-        uint32 HouseTarget(char* &args, struct House*& house, bool useSelection = true);
 
         bool HandleInstanceListBindsCommand(char* args);
         bool HandleInstanceUnbindCommand(char* args);
@@ -602,7 +564,6 @@ class ChatHandler
         bool HandleModifyASpeedCommand(char* args);
         bool HandleModifyScaleCommand(char* args);
         bool HandleModifyFactionCommand(char* args);
-        bool HandleModifyNpcFlagCommand(char* args);
         bool HandleModifyRepCommand(char* args);
         bool HandleModifyGenderCommand(char* args);
         bool HandleModifyStrengthCommand(char* args);
@@ -785,7 +746,6 @@ class ChatHandler
         bool HandleExploreCheatCommand(char* args);
         bool HandleHoverCommand(char* args);
         bool HandleLevelUpCommand(char* args);
-        bool HandleSetLevelCommand(char* args);
         bool HandleShowAreaCommand(char* args);
         bool HandleHideAreaCommand(char* args);
         bool HandleAddItemCommand(char* args);
@@ -800,9 +760,6 @@ class ChatHandler
         bool HandleBlacklistNameCommand(char* args);
 
         bool HandleBankCommand(char* args);
-        // Defined in Handlers/MiscHandler.cpp, beside the bug-report code it
-        // shares with CMSG_BUG rather than beside the other chat commands.
-        bool HandleBugCommand(char* args);
         bool HandleChangeWeatherCommand(char* args);
         bool HandleKickPlayerCommand(char* args);
 

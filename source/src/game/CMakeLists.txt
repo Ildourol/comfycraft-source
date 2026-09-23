@@ -314,6 +314,7 @@ set (game_SRCS
     Chat/Channel.h
     Chat/ChannelMgr.h
     Chat/Chat.h
+    Chat/ComfyCommands.h
     Chat/AsyncCommandHandlers.h
     Chat/WhisperTargetLimits.h
     Commands/Nostalrius.h

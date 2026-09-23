@@ -6,6 +6,7 @@
  */
 
 #include "scriptPCH.h"
+#include "Chat.h"
 #include "scarlet_citadel.h"
 #include "trashmobs_scarlet_citadel.hpp"
 

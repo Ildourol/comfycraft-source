@@ -1,5 +1,6 @@
 
 #include "playerbot/playerbot.h"
+#include "playerbot/PlayerbotChatHandler.h"
 #include "DropQuestAction.h"
 
 using namespace ai;

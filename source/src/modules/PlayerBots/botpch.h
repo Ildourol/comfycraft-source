@@ -21,7 +21,6 @@
 #include "WorldPacket.h"
 #include "LootMgr.h"
 #include "GossipDef.h"
-#include "Chat/Chat.h"
 #include "World.h"
 #include "Objects/Unit.h"
 #include "Movement/MotionMaster.h"

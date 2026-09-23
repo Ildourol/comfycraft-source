@@ -1,4 +1,5 @@
 #include "playerbot.h"
+#include "Chat/Chat.h"
 #include "playerbot/PlayerbotAIConfig.h"
 #include "PerformanceMonitor.h"
 

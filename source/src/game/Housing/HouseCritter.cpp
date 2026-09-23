@@ -46,6 +46,7 @@
 #include "MapManager.h"
 #include "MapPersistentStateMgr.h"
 #include "Chat.h"
+#include "ComfyCommands.h"
 #include "GossipDef.h"
 #include "ScriptedGossip.h"
 #include "Language.h"
@@ -1436,30 +1437,30 @@ float HouseMgr::DefaultWanderFor(HouseCritter const& c) const
 
 //== commands ================================================================
 
-bool ChatHandler::HandleHouseCritterAddCommand(char* args)
+bool ComfyCommands::HandleHouseCritterAddCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session->GetPlayer();
+    Player* player = handler->m_session->GetPlayer();
 
     uint32 entry;
-    if (!ExtractUint32KeyFromLink(&args, "Hcreature_entry", entry) || !entry)
+    if (!handler->ExtractUint32KeyFromLink(&args, "Hcreature_entry", entry) || !entry)
     {
-        SendSysMessage("Usage: .house critter add <creature entry> [wander yards]");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("Usage: .house critter add <creature entry> [wander yards]");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     float wander = HOUSE_CRITTER_WANDER;
-    ExtractFloat(&args, wander);
+    handler->ExtractFloat(&args, wander);
 
     std::string error;
     if (!sHouseMgr.PlaceCritter(player, entry, wander, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
-    PSendSysMessage("%s moves in.", HouseMgr::CritterName(entry).c_str());
+    handler->PSendSysMessage("%s moves in.", HouseMgr::CritterName(entry).c_str());
     return true;
 }
 
@@ -1479,19 +1480,19 @@ static uint32 CritterTarget(Player* player, uint32 typed, std::string& error)
     return guid;
 }
 
-bool ChatHandler::HandleHouseCritterDelCommand(char* args)
+bool ComfyCommands::HandleHouseCritterDelCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session->GetPlayer();
+    Player* player = handler->m_session->GetPlayer();
 
     uint32 typed = 0;
-    ExtractOptUInt32(&args, typed, 0);
+    handler->ExtractOptUInt32(&args, typed, 0);
 
     std::string error;
     uint32 const guid = CritterTarget(player, typed, error);
     if (!guid)
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -1502,8 +1503,8 @@ bool ChatHandler::HandleHouseCritterDelCommand(char* args)
     uint32 returned = 0;
     if (!sHouseMgr.RemoveCritter(player, guid, error, &returned))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -1511,75 +1512,75 @@ bool ChatHandler::HandleHouseCritterDelCommand(char* args)
     // that came out of a crate goes back into one, and everything else is gone
     // for good.
     if (returned)
-        PSendSysMessage("Boxed up %s. Right-click to let it out again.", label.c_str());
+        handler->PSendSysMessage("Boxed up %s. Right-click to let it out again.", label.c_str());
     else
-        PSendSysMessage("%s wanders off.", label.c_str());
+        handler->PSendSysMessage("%s wanders off.", label.c_str());
     return true;
 }
 
-bool ChatHandler::HandleHouseCritterDragCommand(char* args)
+bool ComfyCommands::HandleHouseCritterDragCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session->GetPlayer();
+    Player* player = handler->m_session->GetPlayer();
 
     uint32 typed = 0;
-    ExtractOptUInt32(&args, typed, 0);
+    handler->ExtractOptUInt32(&args, typed, 0);
 
     std::string error;
     uint32 const guid = CritterTarget(player, typed, error);
     if (!guid)
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     if (!sHouseMgr.MoveCritter(player, guid, true, false, 0.0f, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
-    PSendSysMessage("%s comes over.", HouseMgr::CritterLabel(guid).c_str());
+    handler->PSendSysMessage("%s comes over.", HouseMgr::CritterLabel(guid).c_str());
     return true;
 }
 
-bool ChatHandler::HandleHouseCritterWanderCommand(char* args)
+bool ComfyCommands::HandleHouseCritterWanderCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session->GetPlayer();
+    Player* player = handler->m_session->GetPlayer();
 
     float yards;
-    if (!ExtractFloat(&args, yards))
+    if (!handler->ExtractFloat(&args, yards))
     {
-        PSendSysMessage("Usage: .house critter wander <0-%u yards> [number]",
+        handler->PSendSysMessage("Usage: .house critter wander <0-%u yards> [number]",
                         uint32(HOUSE_CRITTER_WANDER_MAX));
-        SetSentErrorMessage(true);
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     uint32 typed = 0;
-    ExtractOptUInt32(&args, typed, 0);
+    handler->ExtractOptUInt32(&args, typed, 0);
 
     std::string error;
     uint32 const guid = CritterTarget(player, typed, error);
     if (!guid)
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     if (!sHouseMgr.MoveCritter(player, guid, false, true, yards, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     if (yards <= 0.0f)
-        PSendSysMessage("%s stays put.", HouseMgr::CritterLabel(guid).c_str());
+        handler->PSendSysMessage("%s stays put.", HouseMgr::CritterLabel(guid).c_str());
     else
-        PSendSysMessage("%s roams %.0f yards.", HouseMgr::CritterLabel(guid).c_str(), yards);
+        handler->PSendSysMessage("%s roams %.0f yards.", HouseMgr::CritterLabel(guid).c_str(), yards);
     return true;
 }
 
@@ -1593,33 +1594,33 @@ bool ChatHandler::HandleHouseCritterWanderCommand(char* args)
 // which is the failure mode to expect from a wrong number in this packet.
 // There is no error and no log line -- the client is simply handed a kit index
 // that means nothing to it.
-bool ChatHandler::HandleHouseCritterVisualCommand(char* args)
+bool ComfyCommands::HandleHouseCritterVisualCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session->GetPlayer();
+    Player* player = handler->m_session->GetPlayer();
 
     uint32 visualId;
-    if (!ExtractUInt32(&args, visualId))
+    if (!handler->ExtractUInt32(&args, visualId))
     {
-        SendSysMessage("Usage: .house critter visual <SpellVisualKit id> [number]");
-        SendSysMessage("Heart candidates: 6512 6517 6550 6612 (impact), 6549 6552 (state)");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("Usage: .house critter visual <SpellVisualKit id> [number]");
+        handler->SendSysMessage("Heart candidates: 6512 6517 6550 6612 (impact), 6549 6552 (state)");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     uint32 typed = 0;
-    ExtractOptUInt32(&args, typed, 0);
+    handler->ExtractOptUInt32(&args, typed, 0);
 
     std::string error;
     uint32 const guid = CritterTarget(player, typed, error);
     if (!guid)
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     sHouseMgr.ShowCritterVisual(player, guid, visualId);
-    PSendSysMessage("Visual %u on %s.", visualId, HouseMgr::CritterLabel(guid).c_str());
+    handler->PSendSysMessage("Visual %u on %s.", visualId, HouseMgr::CritterLabel(guid).c_str());
     return true;
 }
 
@@ -1628,10 +1629,10 @@ bool ChatHandler::HandleHouseCritterVisualCommand(char* args)
 // `.house furniture reload` makes next door. Console-safe, so
 // `.\Reload-Server.ps1 -Command 'house critter reload'` works with nobody
 // logged in.
-bool ChatHandler::HandleHouseCritterReloadCommand(char* /*args*/)
+bool ComfyCommands::HandleHouseCritterReloadCommand(ChatHandler* handler, char* /*args*/)
 {
     sHouseMgr.LoadCritterItems();
-    PSendSysMessage("Critter crates reloaded: %u.", sHouseMgr.CritterItemCount());
+    handler->PSendSysMessage("Critter crates reloaded: %u.", sHouseMgr.CritterItemCount());
     return true;
 }
 
@@ -1639,14 +1640,14 @@ bool ChatHandler::HandleHouseCritterReloadCommand(char* /*args*/)
 // is why this one command takes the nearest animal and nothing else. The menu
 // is the targeted route: it already knows which one you clicked, and its box
 // has the same job. Two ways in, each good at the half the other cannot do.
-bool ChatHandler::HandleHouseCritterNameCommand(char* args)
+bool ComfyCommands::HandleHouseCritterNameCommand(ChatHandler* handler, char* args)
 {
-    Player* player = m_session->GetPlayer();
+    Player* player = handler->m_session->GetPlayer();
 
     if (!args || !*args)
     {
-        SendSysMessage("Usage: .house critter name <name>   (the nearest animal)");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("Usage: .house critter name <name>   (the nearest animal)");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -1654,8 +1655,8 @@ bool ChatHandler::HandleHouseCritterNameCommand(char* args)
     uint32 const guid = CritterTarget(player, 0, error);
     if (!guid)
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -1664,32 +1665,32 @@ bool ChatHandler::HandleHouseCritterNameCommand(char* args)
 
     if (!sHouseMgr.NameCritter(player, guid, args, error))
     {
-        SendSysMessage(error.c_str());
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
-    PSendSysMessage("\"%s\" named to \"%s\".", was.c_str(),
+    handler->PSendSysMessage("\"%s\" named to \"%s\".", was.c_str(),
                     HouseMgr::CritterShortName(guid).c_str());
     return true;
 }
 
-bool ChatHandler::HandleHouseCritterListCommand(char* /*args*/)
+bool ComfyCommands::HandleHouseCritterListCommand(ChatHandler* handler, char* /*args*/)
 {
-    Player* player = m_session->GetPlayer();
+    Player* player = handler->m_session->GetPlayer();
 
     House* house = sHouseMgr.GetHouseAt(player);
     if (!house)
     {
-        SendSysMessage("You are not in a house.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("You are not in a house.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
     std::vector<HouseCritter const*> critters = sHouseMgr.GetCritters(house->id);
     if (critters.empty())
     {
-        SendSysMessage("No animals here.");
+        handler->SendSysMessage("No animals here.");
         return true;
     }
 
@@ -1704,9 +1705,9 @@ bool ChatHandler::HandleHouseCritterListCommand(char* /*args*/)
         else
             line << " | stays put";
 
-        SendSysMessage(line.str().c_str());
+        handler->SendSysMessage(line.str().c_str());
     }
 
-    PSendSysMessage("%u of %u.", uint32(critters.size()), uint32(HOUSE_MAX_CRITTERS));
+    handler->PSendSysMessage("%u of %u.", uint32(critters.size()), uint32(HOUSE_MAX_CRITTERS));
     return true;
 }

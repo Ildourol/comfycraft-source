@@ -1,4 +1,6 @@
 #include "PlayerbotMgr.h"
+#include "Chat/ComfyCommands.h"
+#include "playerbot/PlayerbotChatHandler.h"
 #include "playerbot/playerbot.h"
 #include "playerbot/AiContextAugment.h"
 #include "playerbot/PerformanceMonitor.h"
@@ -7604,13 +7606,13 @@ static bool DressBotNpc(Player* bot, BotNpcLook const& look, std::string& error,
  * ItemForDisplay live in this file's anonymous namespace; PlayerbotStubs.cpp
  * carries the no-module stub.
  */
-bool ChatHandler::HandleAddDressingRoomCommand(char* args)
+bool ComfyCommands::HandleAddDressingRoomCommand(ChatHandler* handler, char* args)
 {
-    Player* me = m_session ? m_session->GetPlayer() : nullptr;
+    Player* me = handler->m_session ? handler->m_session->GetPlayer() : nullptr;
     if (!me)
     {
-        SendSysMessage("In game only.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("In game only.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -7622,8 +7624,8 @@ bool ChatHandler::HandleAddDressingRoomCommand(char* args)
 
     if (given.empty())
     {
-        SendSysMessage("Usage: .add_dressing_room <saved look id>");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("Usage: .add_dressing_room <saved look id>");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -7641,8 +7643,8 @@ bool ChatHandler::HandleAddDressingRoomCommand(char* args)
     {
         if (!FashionTableReachable())
         {
-            SendSysMessage("Saved looks are not readable. Apply website/sql/007_fashion_grant.sql.");
-            SetSentErrorMessage(true);
+            handler->SendSysMessage("Saved looks are not readable. Apply website/sql/007_fashion_grant.sql.");
+            handler->SetSentErrorMessage(true);
             return false;
         }
 
@@ -7657,8 +7659,8 @@ bool ChatHandler::HandleAddDressingRoomCommand(char* args)
 
         if (query.empty())
         {
-            PSendSysMessage("No saved look %u.", lookId);
-            SetSentErrorMessage(true);
+            handler->PSendSysMessage("No saved look %u.", lookId);
+            handler->SetSentErrorMessage(true);
             return false;
         }
 
@@ -7674,8 +7676,8 @@ bool ChatHandler::HandleAddDressingRoomCommand(char* args)
     BotNpcLook look;
     if (!ParseLook(query, look) || look.items.empty())
     {
-        SendSysMessage("That look has no items in it.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("That look has no items in it.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -7718,7 +7720,7 @@ bool ChatHandler::HandleAddDressingRoomCommand(char* args)
         ++added;
     }
 
-    PSendSysMessage("%s: %u item%s added.", lookName.c_str(), added, added == 1 ? "" : "s");
+    handler->PSendSysMessage("%s: %u item%s added.", lookName.c_str(), added, added == 1 ? "" : "s");
 
     if (!skipped.empty())
     {
@@ -7729,7 +7731,7 @@ bool ChatHandler::HandleAddDressingRoomCommand(char* args)
                 line += ", ";
             line += skipped[i];
         }
-        SendSysMessage(line.c_str());
+        handler->SendSysMessage(line.c_str());
     }
 
     return true;
@@ -7888,11 +7890,11 @@ static void BotNpc_RenameCharacter(uint32 guidLow, Player* bot, std::string cons
  * CLAUDE.md already records for hired companions.
  */
 
-bool ChatHandler::HandleNpcBotCommand(char* args)
+bool ComfyCommands::HandleNpcBotCommand(ChatHandler* handler, char* args)
 {
-    Player* me = m_session ? m_session->GetPlayer() : nullptr;
+    Player* me = handler->m_session ? handler->m_session->GetPlayer() : nullptr;
 
-    char* sub = ExtractLiteralArg(&args);
+    char* sub = handler->ExtractLiteralArg(&args);
     std::string action = sub ? sub : "";
 
     // ------------------------------------------------------------- list
@@ -7901,7 +7903,7 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
         std::map<uint32, BotNpcEntry> const& all = sBotNpcMgr.All();
         if (all.empty())
         {
-            SendSysMessage("No bot NPCs. Design one on the website, then .npcbot place <name>.");
+            handler->SendSysMessage("No bot NPCs. Design one on the website, then .npcbot place <name>.");
             return true;
         }
 
@@ -7913,12 +7915,12 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
 
             if (copies.empty())
             {
-                PSendSysMessage("%s (#%u) -- %s %s, not placed", e.name.c_str(), e.id,
+                handler->PSendSysMessage("%s (#%u) -- %s %s, not placed", e.name.c_str(), e.id,
                                 SexName(e.gender), RaceName(e.race).c_str());
                 continue;
             }
 
-            PSendSysMessage("%s (#%u) -- %s %s, menu %u",
+            handler->PSendSysMessage("%s (#%u) -- %s %s, menu %u",
                             e.name.c_str(), e.id, SexName(e.gender), RaceName(e.race).c_str(),
                             e.gossipMenuId);
 
@@ -7926,7 +7928,7 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
             for (BotNpcSpawn const* c : copies)
             {
                 Player* inWorld = sObjectMgr.GetPlayer(ObjectGuid(HIGHGUID_PLAYER, c->characterGuid), false);
-                PSendSysMessage("  map %u at %.0f %.0f %.0f -- %s", c->mapId, c->x, c->y, c->z,
+                handler->PSendSysMessage("  map %u at %.0f %.0f %.0f -- %s", c->mapId, c->x, c->y, c->z,
                                 inWorld ? "standing" : "not logged in");
             }
         }
@@ -7935,10 +7937,10 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
 
     if (action == "add")
     {
-        SendSysMessage("`.npcbot add` is gone. A bot NPC is a DESIGN now -- made on the website, "
+        handler->SendSysMessage("`.npcbot add` is gone. A bot NPC is a DESIGN now -- made on the website, "
                        "named, raced and dressed there -- and `.npcbot place <name>` is what stands "
                        "one up.");
-        SetSentErrorMessage(true);
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -7951,23 +7953,23 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
         action != "unplace" && action != "menu" && action != "dress" && action != "idle" &&
         action != "emote")
     {
-        SendSysMessage("Usage: .npcbot place|move|reset|save|dress|menu|idle|emote|unplace <name or #id>, or .npcbot list");
-        SendSysMessage("  .npcbot place <name>      stand the design called <name> here, for good");
-        SendSysMessage("  .npcbot move <name>       bring it here for now; its post does not change");
-        SendSysMessage("  .npcbot reset <name>      send it back to its post");
-        SendSysMessage("  .npcbot save <name>       make where it is standing now its post");
-        SendSysMessage("  .npcbot dress <name>      re-wear the look on its design");
-        SendSysMessage("  .npcbot menu <name> <id>  give it a gossip_menu to say");
-        SendSysMessage("  .npcbot idle <name>       what it does unprompted; add a trigger to run one now");
-        SendSysMessage("  .npcbot emote <name>      what it answers emotes with; add an emote id to run one now");
-        SendSysMessage("  .npcbot unplace [name]    put the body away, the design stays; also .npcbot del");
-        SendSysMessage("Leave out the name on place, move, reset, save, dress and unplace to use the bot NPC you have selected.");
+        handler->SendSysMessage("Usage: .npcbot place|move|reset|save|dress|menu|idle|emote|unplace <name or #id>, or .npcbot list");
+        handler->SendSysMessage("  .npcbot place <name>      stand the design called <name> here, for good");
+        handler->SendSysMessage("  .npcbot move <name>       bring it here for now; its post does not change");
+        handler->SendSysMessage("  .npcbot reset <name>      send it back to its post");
+        handler->SendSysMessage("  .npcbot save <name>       make where it is standing now its post");
+        handler->SendSysMessage("  .npcbot dress <name>      re-wear the look on its design");
+        handler->SendSysMessage("  .npcbot menu <name> <id>  give it a gossip_menu to say");
+        handler->SendSysMessage("  .npcbot idle <name>       what it does unprompted; add a trigger to run one now");
+        handler->SendSysMessage("  .npcbot emote <name>      what it answers emotes with; add an emote id to run one now");
+        handler->SendSysMessage("  .npcbot unplace [name]    put the body away, the design stays; also .npcbot del");
+        handler->SendSysMessage("Leave out the name on place, move, reset, save, dress and unplace to use the bot NPC you have selected.");
         // Not .npcbot subcommands, but they are the other half of giving an NPC
         // somewhere to walk, and this is where somebody looks for that.
-        SendSysMessage("With the NPC selected:");
-        SendSysMessage("  .spot <name>              save where you stand as \"<NPC>: <name>\" for it to walk to");
-        SendSysMessage("  .spotfrom                 how far ahead and right of its post you are standing");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage("With the NPC selected:");
+        handler->SendSysMessage("  .spot <name>              save where you stand as \"<NPC>: <name>\" for it to walk to");
+        handler->SendSysMessage("  .spotfrom                 how far ahead and right of its post you are standing");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -7977,7 +7979,7 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
     // ExtractLiteralArg stops dead at the quote and returns nothing, which came
     // out as "Which one?" and looked like the design was missing rather than
     // like the name never reached the lookup.
-    char* nameArg = ExtractQuotedOrLiteralArg(&args);
+    char* nameArg = handler->ExtractQuotedOrLiteralArg(&args);
     BotNpcEntry const* found = nullptr;
 
     if (!nameArg || !*nameArg)
@@ -7997,20 +7999,20 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
         if (action == "unplace" || action == "move" || action == "reset" || action == "save" ||
             action == "dress" || action == "place")
         {
-            Player* target = GetSelectedPlayer();
+            Player* target = handler->GetSelectedPlayer();
             found = target ? sBotNpcMgr.Get(target->GetGUIDLow()) : nullptr;
 
             if (!found)
             {
-                PSendSysMessage("Select a bot NPC, or .npcbot %s <name or #id>.", action.c_str());
-                SetSentErrorMessage(true);
+                handler->PSendSysMessage("Select a bot NPC, or .npcbot %s <name or #id>.", action.c_str());
+                handler->SetSentErrorMessage(true);
                 return false;
             }
         }
         else
         {
-            PSendSysMessage("Which one? .npcbot %s <name or #id>   (quote a name with a space)", action.c_str());
-            SetSentErrorMessage(true);
+            handler->PSendSysMessage("Which one? .npcbot %s <name or #id>   (quote a name with a space)", action.c_str());
+            handler->SetSentErrorMessage(true);
             return false;
         }
     }
@@ -8036,8 +8038,8 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
             found = sBotNpcMgr.FindById(uint32(atoi(idText)));
             if (!found)
             {
-                PSendSysMessage("No bot NPC #%s. .npcbot list shows them.", idText);
-                SetSentErrorMessage(true);
+                handler->PSendSysMessage("No bot NPC #%s. .npcbot list shows them.", idText);
+                handler->SetSentErrorMessage(true);
                 return false;
             }
         }
@@ -8046,24 +8048,24 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
             std::vector<BotNpcEntry const*> matches = sBotNpcMgr.FindByName(nameArg);
             if (matches.empty())
             {
-                PSendSysMessage("No bot NPC called %s. Design one on the website first.", nameArg);
-                SetSentErrorMessage(true);
+                handler->PSendSysMessage("No bot NPC called %s. Design one on the website first.", nameArg);
+                handler->SetSentErrorMessage(true);
                 return false;
             }
 
             if (matches.size() > 1)
             {
-                PSendSysMessage("%u bot NPCs are called %s. Say which: .npcbot %s #<id>",
+                handler->PSendSysMessage("%u bot NPCs are called %s. Say which: .npcbot %s #<id>",
                                 uint32(matches.size()), nameArg, action.c_str());
                 for (BotNpcEntry const* m : matches)
                 {
                     std::vector<BotNpcSpawn const*> copies = sBotNpcMgr.SpawnsOf(m->id);
                     if (copies.empty())
-                        PSendSysMessage("  #%u: not placed", m->id);
+                        handler->PSendSysMessage("  #%u: not placed", m->id);
                     for (BotNpcSpawn const* c : copies)
-                        PSendSysMessage("  #%u: map %u at %.0f %.0f %.0f", m->id, c->mapId, c->x, c->y, c->z);
+                        handler->PSendSysMessage("  #%u: map %u at %.0f %.0f %.0f", m->id, c->mapId, c->x, c->y, c->z);
                 }
-                SetSentErrorMessage(true);
+                handler->SetSentErrorMessage(true);
                 return false;
             }
 
@@ -8101,7 +8103,7 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
     std::vector<BotNpcSpawn const*> const spawns = sBotNpcMgr.SpawnsOf(entry.id);
     BotNpcSpawn const* chosen = nullptr;
 
-    if (Player* selected = me ? GetSelectedPlayer() : nullptr)
+    if (Player* selected = me ? handler->GetSelectedPlayer() : nullptr)
         if (BotNpcSpawn const* s = sBotNpcMgr.GetSpawn(selected->GetGUIDLow()))
             if (s->designId == entry.id)
                 chosen = s;
@@ -8155,18 +8157,18 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
     {
         if (spawns.empty())
         {
-            PSendSysMessage("%s is not placed. .npcbot place %s stands it here.", name.c_str(), handle.c_str());
-            SetSentErrorMessage(true);
+            handler->PSendSysMessage("%s is not placed. .npcbot place %s stands it here.", name.c_str(), handle.c_str());
+            handler->SetSentErrorMessage(true);
             return false;
         }
 
         if (chosen)
             return true;
 
-        PSendSysMessage("%s stands in %u places. Select the one you mean:", name.c_str(), uint32(spawns.size()));
+        handler->PSendSysMessage("%s stands in %u places. Select the one you mean:", name.c_str(), uint32(spawns.size()));
         for (BotNpcSpawn const* s : spawns)
-            PSendSysMessage("  map %u at %.0f %.0f %.0f", s->mapId, s->x, s->y, s->z);
-        SetSentErrorMessage(true);
+            handler->PSendSysMessage("  map %u at %.0f %.0f %.0f", s->mapId, s->x, s->y, s->z);
+        handler->SetSentErrorMessage(true);
         return false;
     };
 
@@ -8204,9 +8206,9 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
         }
 
         if (spawns.size() > 1)
-            PSendSysMessage("This %s is put away. %u more still standing.", name.c_str(), uint32(spawns.size() - 1));
+            handler->PSendSysMessage("This %s is put away. %u more still standing.", name.c_str(), uint32(spawns.size() - 1));
         else
-            PSendSysMessage("%s is put away. The design is still there; .npcbot place %s brings it back.",
+            handler->PSendSysMessage("%s is put away. The design is still there; .npcbot place %s brings it back.",
                             name.c_str(), handle.c_str());
         return true;
     }
@@ -8215,10 +8217,10 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
     if (action == "menu")
     {
         uint32 menuId;
-        if (!ExtractUInt32(&args, menuId))
+        if (!handler->ExtractUInt32(&args, menuId))
         {
-            PSendSysMessage("Which menu? .npcbot menu %s <gossip_menu id>", handle.c_str());
-            SetSentErrorMessage(true);
+            handler->PSendSysMessage("Which menu? .npcbot menu %s <gossip_menu id>", handle.c_str());
+            handler->SetSentErrorMessage(true);
             return false;
         }
 
@@ -8229,7 +8231,7 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
         for (Player* p : standing)
             p->SetBotNpcGossipMenuId(menuId);
 
-        PSendSysMessage("%s now shows menu %u.", name.c_str(), menuId);
+        handler->PSendSysMessage("%s now shows menu %u.", name.c_str(), menuId);
         return true;
     }
 
@@ -8253,14 +8255,14 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
 
         static char const* const kindNames[BOT_NPC_IDLE_TRIGGERS] = { "loop", "near", "after_talk", "custom" };
 
-        char* which = ExtractLiteralArg(&args);
+        char* which = handler->ExtractLiteralArg(&args);
         std::string wanted = which ? which : "";
 
         if (wanted.empty())
         {
             if (!rules)
             {
-                PSendSysMessage("%s does nothing unprompted. Give it something on /admin/npcbots.", name.c_str());
+                handler->PSendSysMessage("%s does nothing unprompted. Give it something on /admin/npcbots.", name.c_str());
                 return true;
             }
 
@@ -8283,18 +8285,18 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
                         if (LuaScene* scene = bot->GetMap()->GetLuaScene())
                             running = scene->IsRunningFor(bot->GetObjectGuid(), rule.sceneId);
 
-                    PSendSysMessage("  custom -- scene %u, %s", rule.sceneId,
+                    handler->PSendSysMessage("  custom -- scene %u, %s", rule.sceneId,
                                     !bot ? "not in world"
                                          : (running ? "running" : "NOT running -- it ended or never started"));
                 }
                 else if (i == BOT_NPC_IDLE_NEAR)
-                    PSendSysMessage("  near -- script %u, within %.0f yards, at most every %us",
+                    handler->PSendSysMessage("  near -- script %u, within %.0f yards, at most every %us",
                                     rule.scriptId, rule.radius, rule.period);
                 else
-                    PSendSysMessage("  %s -- script %u, every %us", kindNames[i], rule.scriptId, rule.period);
+                    handler->PSendSysMessage("  %s -- script %u, every %us", kindNames[i], rule.scriptId, rule.period);
             }
 
-            PSendSysMessage("Run one now: .npcbot idle %s <loop|near|after_talk|custom>", handle.c_str());
+            handler->PSendSysMessage("Run one now: .npcbot idle %s <loop|near|after_talk|custom>", handle.c_str());
             return true;
         }
 
@@ -8305,22 +8307,22 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
 
         if (trigger == BOT_NPC_IDLE_TRIGGERS)
         {
-            PSendSysMessage("No trigger called %s. It is one of loop, near, after_talk, custom.", wanted.c_str());
-            SetSentErrorMessage(true);
+            handler->PSendSysMessage("No trigger called %s. It is one of loop, near, after_talk, custom.", wanted.c_str());
+            handler->SetSentErrorMessage(true);
             return false;
         }
 
         if (!bot)
         {
-            PSendSysMessage("%s is not in world. .npcbot place %s first.", name.c_str(), handle.c_str());
-            SetSentErrorMessage(true);
+            handler->PSendSysMessage("%s is not in world. .npcbot place %s first.", name.c_str(), handle.c_str());
+            handler->SetSentErrorMessage(true);
             return false;
         }
 
         if (!rules || !(*rules)[trigger].Runs())
         {
-            PSendSysMessage("%s has no %s behaviour switched on.", name.c_str(), wanted.c_str());
-            SetSentErrorMessage(true);
+            handler->PSendSysMessage("%s has no %s behaviour switched on.", name.c_str(), wanted.c_str());
+            handler->SetSentErrorMessage(true);
             return false;
         }
 
@@ -8337,9 +8339,9 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
             auto data = LuaScene::Data();
             if (data->scripts.find(sceneId) == data->scripts.end())
             {
-                PSendSysMessage("Its custom behaviour points at dialog_lua %u, which is not loaded. "
+                handler->PSendSysMessage("Its custom behaviour points at dialog_lua %u, which is not loaded. "
                                 "Run `reload dialog_scenes` from the console.", sceneId);
-                SetSentErrorMessage(true);
+                handler->SetSentErrorMessage(true);
                 return false;
             }
 
@@ -8349,16 +8351,16 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
                 scene->Run(sceneId, data->scripts.at(sceneId), "custom", bot->GetObjectGuid(), ObjectGuid());
             }
 
-            PSendSysMessage("%s: restarted its custom behaviour (scene %u).", name.c_str(), sceneId);
+            handler->PSendSysMessage("%s: restarted its custom behaviour (scene %u).", name.c_str(), sceneId);
             return true;
         }
 
         uint32 const scriptId = (*rules)[trigger].scriptId;
         if (sGenericScripts.find(scriptId) == sGenericScripts.end())
         {
-            PSendSysMessage("Its %s behaviour points at generic_scripts %u, which is not loaded. "
+            handler->PSendSysMessage("Its %s behaviour points at generic_scripts %u, which is not loaded. "
                             "Run `reload generic_scripts` from the console.", wanted.c_str(), scriptId);
-            SetSentErrorMessage(true);
+            handler->SetSentErrorMessage(true);
             return false;
         }
 
@@ -8367,7 +8369,7 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
                                         ? ObjectGuid()
                                         : me->GetObjectGuid());
 
-        PSendSysMessage("%s: running its %s behaviour (script %u).", name.c_str(), wanted.c_str(), scriptId);
+        handler->PSendSysMessage("%s: running its %s behaviour (script %u).", name.c_str(), wanted.c_str(), scriptId);
         return true;
     }
 
@@ -8389,21 +8391,21 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
     {
         BotNpcEmoteRules const* emotes = sBotNpcMgr.EmoteRules(entry.id);
 
-        char* which = ExtractLiteralArg(&args);
+        char* which = handler->ExtractLiteralArg(&args);
         std::string wanted = which ? which : "";
 
         if (wanted.empty())
         {
             if (!emotes || emotes->empty())
             {
-                PSendSysMessage("%s answers no emotes. Add one on /admin/npcbots/%u.", name.c_str(), entry.id);
+                handler->PSendSysMessage("%s answers no emotes. Add one on /admin/npcbots/%u.", name.c_str(), entry.id);
                 return true;
             }
 
             for (BotNpcEmoteRule const& r : *emotes)
-                PSendSysMessage("  emote %u -- script %u, at most every %us", r.emoteId, r.scriptId, r.period);
+                handler->PSendSysMessage("  emote %u -- script %u, at most every %us", r.emoteId, r.scriptId, r.period);
 
-            PSendSysMessage("Run one now: .npcbot emote %s <emote>", handle.c_str());
+            handler->PSendSysMessage("Run one now: .npcbot emote %s <emote>", handle.c_str());
             return true;
         }
 
@@ -8417,23 +8419,23 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
 
         if (!match)
         {
-            PSendSysMessage("%s has no answer for emote %u.", name.c_str(), textEmote);
-            SetSentErrorMessage(true);
+            handler->PSendSysMessage("%s has no answer for emote %u.", name.c_str(), textEmote);
+            handler->SetSentErrorMessage(true);
             return false;
         }
 
         if (!bot)
         {
-            PSendSysMessage("%s is not in world. .npcbot place %s first.", name.c_str(), handle.c_str());
-            SetSentErrorMessage(true);
+            handler->PSendSysMessage("%s is not in world. .npcbot place %s first.", name.c_str(), handle.c_str());
+            handler->SetSentErrorMessage(true);
             return false;
         }
 
         if (sGenericScripts.find(match->scriptId) == sGenericScripts.end())
         {
-            PSendSysMessage("Its answer to emote %u points at generic_scripts %u, which is not loaded. "
+            handler->PSendSysMessage("Its answer to emote %u points at generic_scripts %u, which is not loaded. "
                             "Run `reload generic_scripts` from the console.", textEmote, match->scriptId);
-            SetSentErrorMessage(true);
+            handler->SetSentErrorMessage(true);
             return false;
         }
 
@@ -8443,7 +8445,7 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
         bot->GetMap()->ScriptsStart(sGenericScripts, match->scriptId, bot->GetObjectGuid(),
                                     me ? me->GetObjectGuid() : ObjectGuid());
 
-        PSendSysMessage("%s: answering emote %u (script %u).", name.c_str(), textEmote, match->scriptId);
+        handler->PSendSysMessage("%s: answering emote %u (script %u).", name.c_str(), textEmote, match->scriptId);
         return true;
     }
 
@@ -8452,12 +8454,12 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
     {
         if (!bot)
         {
-            PSendSysMessage("%s is not in world. .npcbot place %s first.", name.c_str(), handle.c_str());
-            SetSentErrorMessage(true);
+            handler->PSendSysMessage("%s is not in world. .npcbot place %s first.", name.c_str(), handle.c_str());
+            handler->SetSentErrorMessage(true);
             return false;
         }
 
-        char* rest = ExtractQuotedOrLiteralArg(&args);
+        char* rest = handler->ExtractQuotedOrLiteralArg(&args);
         std::string given = rest ? rest : "";
         std::string query;
 
@@ -8475,8 +8477,8 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
 
             if (query.empty())
             {
-                PSendSysMessage("%s has no look yet. Dress it up on the website.", name.c_str());
-                SetSentErrorMessage(true);
+                handler->PSendSysMessage("%s has no look yet. Dress it up on the website.", name.c_str());
+                handler->SetSentErrorMessage(true);
                 return false;
             }
         }
@@ -8491,8 +8493,8 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
             {
                 if (!FashionTableReachable())
                 {
-                    SendSysMessage("Saved looks are not readable. Apply website/sql/007_fashion_grant.sql.");
-                    SetSentErrorMessage(true);
+                    handler->SendSysMessage("Saved looks are not readable. Apply website/sql/007_fashion_grant.sql.");
+                    handler->SetSentErrorMessage(true);
                     return false;
                 }
 
@@ -8507,8 +8509,8 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
 
                 if (query.empty())
                 {
-                    PSendSysMessage("No saved look %u.", lookId);
-                    SetSentErrorMessage(true);
+                    handler->PSendSysMessage("No saved look %u.", lookId);
+                    handler->SetSentErrorMessage(true);
                     return false;
                 }
             }
@@ -8521,8 +8523,8 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
         BotNpcLook look;
         if (!ParseLook(query, look))
         {
-            SendSysMessage("That does not read as a look.");
-            SetSentErrorMessage(true);
+            handler->SendSysMessage("That does not read as a look.");
+            handler->SetSentErrorMessage(true);
             return false;
         }
 
@@ -8531,8 +8533,8 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
 
         if (!DressBotNpc(bot, look, error, skipped))
         {
-            PSendSysMessage("Cannot dress %s: %s.", name.c_str(), error.c_str());
-            SetSentErrorMessage(true);
+            handler->PSendSysMessage("Cannot dress %s: %s.", name.c_str(), error.c_str());
+            handler->SetSentErrorMessage(true);
             return false;
         }
 
@@ -8568,13 +8570,13 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
 
         if (skipped.empty())
         {
-            PSendSysMessage("%s is wearing it.", name.c_str());
+            handler->PSendSysMessage("%s is wearing it.", name.c_str());
         }
         else
         {
-            PSendSysMessage("%s is wearing it, except:", name.c_str());
+            handler->PSendSysMessage("%s is wearing it, except:", name.c_str());
             for (const auto& s : skipped)
-                PSendSysMessage("  %s", s.c_str());
+                handler->PSendSysMessage("  %s", s.c_str());
         }
 
         return true;
@@ -8611,8 +8613,8 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
 
         if (!bot || !bot->IsInWorld())
         {
-            PSendSysMessage("%s is not in world right now.", name.c_str());
-            SetSentErrorMessage(true);
+            handler->PSendSysMessage("%s is not in world right now.", name.c_str());
+            handler->SetSentErrorMessage(true);
             return false;
         }
 
@@ -8628,14 +8630,14 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
             post.o     = bot->GetOrientation();
             sBotNpcMgr.SaveSpawn(post);
 
-            PSendSysMessage("%s: this is its post now.", name.c_str());
+            handler->PSendSysMessage("%s: this is its post now.", name.c_str());
             return true;
         }
 
         if (action == "move" && !me)
         {
-            SendSysMessage(".npcbot move brings it to you, so run it in game.");
-            SetSentErrorMessage(true);
+            handler->SendSysMessage(".npcbot move brings it to you, so run it in game.");
+            handler->SetSentErrorMessage(true);
             return false;
         }
 
@@ -8649,22 +8651,22 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
         if (action == "reset")
         {
             bot->TeleportTo(post.mapId, post.x, post.y, post.z, post.o);
-            PSendSysMessage("%s is back on its post.", name.c_str());
+            handler->PSendSysMessage("%s is back on its post.", name.c_str());
             return true;
         }
 
         // move: facing the way you face, the way place stands it, and nothing saved.
         bot->TeleportTo(me->GetMapId(), me->GetPositionX(), me->GetPositionY(), me->GetPositionZ(),
                         me->GetOrientation());
-        PSendSysMessage("%s is here for now. .npcbot save keeps it, .npcbot reset sends it home.", name.c_str());
+        handler->PSendSysMessage("%s is here for now. .npcbot save keeps it, .npcbot reset sends it home.", name.c_str());
         return true;
     }
 
     // -------------------------------------------------------------- place
     if (!me)
     {
-        SendSysMessage(".npcbot place needs somewhere to stand it -- run it in game.");
-        SetSentErrorMessage(true);
+        handler->SendSysMessage(".npcbot place needs somewhere to stand it -- run it in game.");
+        handler->SetSentErrorMessage(true);
         return false;
     }
 
@@ -8774,7 +8776,7 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
             spawn.characterGuid = existing.GetCounter();
             bot = sObjectMgr.GetPlayer(existing, false);
 
-            PSendSysMessage("Using the character %s that is already there.", name.c_str());
+            handler->PSendSysMessage("Using the character %s that is already there.", name.c_str());
         }
         else
         {
@@ -8825,10 +8827,10 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
 
             if (!made)
             {
-                PSendSysMessage("Could not make a character for %s:", name.c_str());
+                handler->PSendSysMessage("Could not make a character for %s:", name.c_str());
                 for (const auto& m : messages)
-                    PSendSysMessage("  %s", m.c_str());
-                SetSentErrorMessage(true);
+                    handler->PSendSysMessage("  %s", m.c_str());
+                handler->SetSentErrorMessage(true);
                 return false;
             }
 
@@ -8845,7 +8847,7 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
                 bornAs = data->sName;
             BotNpc_RenameCharacter(spawn.characterGuid, bot, bornAs, name);
 
-            PSendSysMessage("Made a body for %s.", name.c_str());
+            handler->PSendSysMessage("Made a body for %s.", name.c_str());
         }
     }
 
@@ -8920,25 +8922,25 @@ bool ChatHandler::HandleNpcBotCommand(char* args)
                 if (DressBotNpc(bot, look, error, skipped))
                     sBotNpcMgr.MarkLookApplied(spawn.characterGuid, entry.look);
                 else
-                    PSendSysMessage("  (could not dress it: %s)", error.c_str());
+                    handler->PSendSysMessage("  (could not dress it: %s)", error.c_str());
             }
         }
 
         bot->SaveToDB();
 
-        PSendSysMessage("%s is standing here%s.", name.c_str(), saySomething);
+        handler->PSendSysMessage("%s is standing here%s.", name.c_str(), saySomething);
     }
     else
     {
         // LoginFreeBots picks it up on the random manager's next pass, and
         // Player::LoadFromDB puts it on its mark -- so no teleport here.
-        PSendSysMessage("%s will be along shortly, and stands here from now on%s.",
+        handler->PSendSysMessage("%s will be along shortly, and stands here from now on%s.",
                         name.c_str(), saySomething);
     }
 
     uint32 const copies = uint32(sBotNpcMgr.SpawnsOf(entry.id).size());
     if (copies > 1)
-        PSendSysMessage("%s now stands in %u places. Select one to move or unplace it.", name.c_str(), copies);
+        handler->PSendSysMessage("%s now stands in %u places. Select one to move or unplace it.", name.c_str(), copies);
 
     return true;
 }
