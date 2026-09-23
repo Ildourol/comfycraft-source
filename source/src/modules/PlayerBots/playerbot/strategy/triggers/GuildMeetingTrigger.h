@@ -1,3 +1,4 @@
+#pragma once
 #include "playerbot/playerbot.h"
 #include "playerbot/strategy/Trigger.h"
 #include <string>

@@ -719,6 +719,20 @@ int Master::Run()
         b[3].Event.KeyEvent.wRepeatCount = 1;
         DWORD numb;
         WriteConsoleInput(hStdIn, b, 4, &numb);
+
+        // WriteConsoleInput only reaches a real console. When stdin is a pipe,
+        // which is how Start-Server.ps1 runs us, it fails, the CLI thread stays
+        // blocked in fgets and the join() below never returns. Any shutdown the
+        // runner did not start itself (AutoHonorRestart, the uptime restart, a
+        // GM's .server shutdown) then logged "Halting process..." and hung until
+        // the pipe closed; measured 2026-09-22 on an AutoHonorRestart.
+        // CancelSynchronousIo is the Vista API the comment above means: it
+        // fails the blocked read, fgets returns NULL, and the CLI loop sees
+        // IsStopped and ends. Repeated, because a cancel only reaches a read
+        // already in progress.
+        HANDLE hCli = static_cast<HANDLE>(cliThread->native_handle());
+        while (WaitForSingleObject(hCli, 100) == WAIT_TIMEOUT)
+            CancelSynchronousIo(hCli);
 #else
         fclose(stdin);
 #endif

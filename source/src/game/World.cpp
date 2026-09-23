@@ -3172,7 +3172,9 @@ void World::Update(uint32 diff)
         if (tm_struct->tm_hour >= getConfig(CONFIG_UINT32_AUTO_RESTART_HOUR_MIN) && tm_struct->tm_hour <= getConfig(CONFIG_UINT32_AUTO_RESTART_HOUR_MAX))
         {
             sLog.outInfo("Restarting server due to exceeding maximum uptime.");
-            sWorld.ShutdownServ(900, SHUTDOWN_MASK_RESTART, SHUTDOWN_EXIT_CODE);
+            // RESTART_EXIT_CODE so a launcher can tell this from a stop; see
+            // the same call in HonorMgr.cpp.
+            sWorld.ShutdownServ(900, SHUTDOWN_MASK_RESTART, RESTART_EXIT_CODE);
         }
     }
 

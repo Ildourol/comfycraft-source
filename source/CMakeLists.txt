@@ -544,6 +544,25 @@ if(MSVC)
     set(CMAKE_${_linker}_LINKER_FLAGS_RELEASE
         "${CMAKE_${_linker}_LINKER_FLAGS_RELEASE} /DEBUG /OPT:REF /OPT:ICF")
   endforeach()
+
+  # RelWithDebInfo is the DEVELOP build here, not what its name says: no
+  # optimisation at all. Build-Server.ps1 builds it by default and -Release
+  # builds the optimised one. Measured 2026-09-22: a Player.h rebuild took
+  # 123 s at /Od against 300 s at /O2. The local server has a handful of
+  # players, so the slower code costs nothing that shows; the VPS is built
+  # in Docker with gcc -O3 and never uses this.
+  #
+  # /Od and /Ob0 come after the /O2 /Ob2 that CMAKE_CXX_FLAGS carries from
+  # the Release flags above, and the last one on the line wins (warning
+  # D9025). /MD rather than Debug's /MDd, so it links the same vcpkg DLLs,
+  # and NDEBUG as in Release; _DEBUG and MANGOS_DEBUG are Debug-only.
+  set(CMAKE_C_FLAGS_RELWITHDEBINFO "/MD /Od /Ob0 /Zi /DNDEBUG")
+  set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "/MD /Od /Ob0 /Zi /DNDEBUG")
+  # And link the vcpkg libraries' RELEASE builds into it. Left alone, Boost's
+  # package maps RelWithDebInfo to its Debug DLLs (boost_*-mt-gd-*.dll), which
+  # server\ does not have, so the binary would not start at all; they use the
+  # debug runtime besides, which /MD objects must not mix with.
+  set(CMAKE_MAP_IMPORTED_CONFIG_RELWITHDEBINFO "Release;RelWithDebInfo;")
 endif()
 
 set(CMAKE_SKIP_BUILD_RPATH FALSE)

@@ -251,3 +251,17 @@ set_target_properties(${LIBRARY_NAME} PROPERTIES PROJECT_LABEL "PlayerBots")
 if(PCH)
   target_precompile_headers(${LIBRARY_NAME} PRIVATE ${bots_PCH})
 endif()
+
+# Unity build: compile the module's ~460 .cpp files as ~60 batches of 8.
+# Most files are small, and each one loaded the ~500 MB PCH and instantiated
+# the same templates again. Measured 2026-09-22 in the Linux build: a Player.h
+# rebuild went from 757 s to 490 s (docs/notes/vps-setup.md). The cost: a
+# one-file edit here recompiles its whole batch.
+#
+# Joining files means a header without an include guard is defined twice, and
+# a #define in one file reaches the files after it. MemoryMonitor.cpp defines
+# BOOST_STACKTRACE_LINK before it includes boost, which is too late once an
+# earlier file in its batch has included boost, and the link then fails.
+set_target_properties(${LIBRARY_NAME} PROPERTIES UNITY_BUILD ON UNITY_BUILD_BATCH_SIZE 8)
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/playerbot/MemoryMonitor.cpp
+  PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)

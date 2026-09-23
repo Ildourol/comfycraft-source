@@ -1,3 +1,4 @@
+#pragma once
 enum class IterateItemsMask : uint8
 {
     ITERATE_ITEMS_IN_BAGS = 1,

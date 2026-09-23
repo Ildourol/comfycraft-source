@@ -3,25 +3,16 @@
 #include "PlayerbotMgr.h"
 #include "PlayerbotAIConfig.h"
 #include "RandomPlayerbotMgr.h"
+// The core's own LoginQueryHolder. This file used to define a second class of
+// the same name with a different constructor and no destructor, which broke
+// the one-definition rule: the linker kept one copy of each inline member for
+// both classes, without a warning. It also stopped a unity build compiling.
+#include "Handlers/LoginQueryHolder.h"
 
 using namespace ai;
 
 // Penqle's Singleton<> requires an explicit instantiation in a .cpp file.
 INSTANTIATE_SINGLETON_1(ai::PlayerBotLoginMgr);
-
-class LoginQueryHolder : public SqlQueryHolder
-{
-private:
-    uint32 m_accountId;
-    ObjectGuid m_guid;
-public:
-    LoginQueryHolder(uint32 accountId, ObjectGuid guid)
-        : m_accountId(accountId), m_guid(guid) {
-    }
-    ObjectGuid GetGuid() const { return m_guid; }
-    uint32 GetAccountId() const { return m_accountId; }
-    bool Initialize();
-};
 
 class PlayerbotLoginQueryHolder : public LoginQueryHolder
 {

@@ -1,3 +1,4 @@
+#pragma once
 
 #include "playerbot/strategy/Action.h"
 #include "playerbot/strategy/values/GuildValues.h"
