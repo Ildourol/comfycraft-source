@@ -82,7 +82,7 @@ namespace
         const std::vector<uint32> mine = CompanionOwnership::CompanionsOf(player->GetGUIDLow());
         if (mine.empty())
         {
-            chat.SendSysMessage("You have nobody travelling with you.");
+            chat.SendSysMessage("Nobody is travelling with you.");
             return false;
         }
 
