@@ -19,6 +19,7 @@ set (game_SRCS
     AccountMgr.cpp
     AuraRemovalMgr.cpp
     AutoBroadCastMgr.cpp
+    BarbershopMgr.cpp
     BotNpc.cpp
     BotNpc.h
     BotNpcIdle.cpp
@@ -240,6 +241,7 @@ set (game_SRCS
     AccountMgr.h
     AuraRemovalMgr.h
     AutoBroadCastMgr.h
+    BarbershopMgr.h
     Camera.h
     Conditions.h
     CreatureGroups.h

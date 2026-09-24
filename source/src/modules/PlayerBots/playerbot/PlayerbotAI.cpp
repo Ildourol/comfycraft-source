@@ -7470,8 +7470,8 @@ static bool DressBotNpc(Player* bot, BotNpcLook const& look, std::string& error,
     }
 
     // The customisation half. These are the same four bytes Player::Create
-    // writes at character creation, so setting them here is the same operation
-    // the barber shop would be if this client had one.
+    // writes at character creation, and the same ones the barbershop chair
+    // changes (BarbershopMgr).
     bot->SetByteValue(PLAYER_BYTES, 0, uint8(look.skin));
     bot->SetByteValue(PLAYER_BYTES, 1, uint8(look.face));
     bot->SetByteValue(PLAYER_BYTES, 2, uint8(look.hair));

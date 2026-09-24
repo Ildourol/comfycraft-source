@@ -35,6 +35,7 @@
 #include "Group.h"
 #include "LFTMgr.h"
 #include "InvasionMgr.h"
+#include "BarbershopMgr.h"
 #include "Guild.h"
 #include "GuildMgr.h"
 #include "World.h"
@@ -771,6 +772,9 @@ void WorldSession::LogoutPlayer(bool Save)
         }
 
         sLFTMgr.OnPlayerLogout(_player->GetObjectGuid());
+
+        // An open barbershop puts the old look back before the save below.
+        sBarbershopMgr.OnLogout(_player);
 
         ///- Remove pet
         _player->RemovePet(PET_SAVE_AS_CURRENT);
