@@ -1,0 +1,33 @@
+-- 117_remove_den_trainees.sql
+--
+-- Removes Turtle's sparring drill outside the Den in the Valley of Trials:
+-- the Den Commander, the Den Archer Commander, ten Den Trainees and the two
+-- archery targets (entries 160100-160105, 14 spawns). The commanders shout
+-- about fighting the Alliance and the night elves. ComfyCraft has no faction
+-- war, so the drill goes.
+--
+-- The script behind them (npc_den_commander, npc_den_recruit in
+-- source/src/scripts/world/durotar.cpp) stays. It runs only on these spawns.
+-- The templates stay too, so the restore below works.
+--
+-- Spawns load at startup: restart after applying. No reload removes a
+-- creature that is already in the world.
+--
+-- To restore, run these rows:
+--
+-- INSERT INTO `creature` VALUES (2561807,160100,0,0,0,1,-573.223,-4298.62,39.4236,0.7172,300,600,0,100,100,0,0,0);
+-- INSERT INTO `creature` VALUES (2561812,160100,0,0,0,1,-568.288,-4294.66,39.5366,3.84072,300,600,0,100,100,0,0,0);
+-- INSERT INTO `creature` VALUES (2561825,160100,0,0,0,1,-576.89,-4306.04,39.2009,1.07928,300,600,0,100,100,0,0,0);
+-- INSERT INTO `creature` VALUES (2561822,160100,0,0,0,1,-567.465,-4289.81,39.3466,1.4357,300,600,0,100,100,0,0,0);
+-- INSERT INTO `creature` VALUES (2561821,160101,0,0,0,1,-567.062,-4287.25,38.8516,4.51525,300,600,0,100,100,0,0,0);
+-- INSERT INTO `creature` VALUES (2561826,160101,0,0,0,1,-575.806,-4302.63,39.1582,4.38345,300,600,0,100,100,0,0,0);
+-- INSERT INTO `creature` VALUES (2561804,160101,0,0,0,1,-568.102,-4292.8,39.6064,1.15859,300,600,0,100,100,0,0,0);
+-- INSERT INTO `creature` VALUES (2561808,160101,0,0,0,1,-571.656,-4297.26,39.551,3.9122,300,600,0,100,100,0,0,0);
+-- INSERT INTO `creature` VALUES (2561802,160102,0,0,0,1,-570.849,-4288.16,39.0928,4.1266,300,600,0,100,100,0,0,0);
+-- INSERT INTO `creature` VALUES (2561834,160103,0,0,0,1,-575.198,-4313.78,39.9985,6.28108,300,600,0,100,100,0,0,0);
+-- INSERT INTO `creature` VALUES (2561833,160103,0,0,0,1,-575.205,-4317.28,40.4282,6.28108,300,600,0,100,100,0,0,0);
+-- INSERT INTO `creature` VALUES (2561831,160104,0,0,0,1,-562.737,-4317.31,39.0985,6.28252,300,600,0,100,100,0,0,0);
+-- INSERT INTO `creature` VALUES (2561836,160104,0,0,0,1,-562.8,-4313.6,39.3705,6.16486,300,600,0,100,100,0,0,0);
+-- INSERT INTO `creature` VALUES (2561837,160105,0,0,0,1,-572.226,-4321.16,40.1845,1.53137,300,600,0,100,100,0,0,0);
+
+DELETE FROM creature WHERE id BETWEEN 160100 AND 160105;

@@ -2179,6 +2179,49 @@ void Aura::HandleModWaterBreathing(bool /*apply*/, bool /*Real*/)
         target->SetWaterBreathingIntervalMultiplier(target->GetTotalAuraMultiplier(SPELL_AURA_MOD_WATER_BREATHING));
 }
 
+// ComfyCraft: a druid of a new race takes the cat and the bear of its home zone,
+// in place of the night elf or tauren form of its faction. A glyph still wins:
+// this is used only when GetShapeshiftDisplay returned the faction default.
+// The scale is the transform scale, which multiplies the display's own scale.
+// The owner set each one in game with .modify scale while in the form.
+// docs/features/every-race-every-class.md
+struct RaceFormDisplay { uint8 race; ShapeshiftForm form; uint32 display; float scale; };
+static RaceFormDisplay const RACE_FORM_DISPLAYS[] =
+{
+    { RACE_HUMAN,    FORM_CAT,      380, 0.90f }, // Gray Forest Wolf, Elwynn
+    { RACE_HUMAN,    FORM_BEAR,    1006, 0.90f }, // Young Forest Bear, Elwynn
+    { RACE_DWARF,    FORM_CAT,      954, 0.75f }, // Snow Leopard, Dun Morogh
+    { RACE_DWARF,    FORM_BEAR,    8840, 0.90f }, // Ice Claw Bear, Dun Morogh
+    { RACE_GNOME,    FORM_CAT,      954, 0.75f },
+    { RACE_GNOME,    FORM_BEAR,    8840, 0.90f },
+    { RACE_UNDEAD,   FORM_CAT,     4124, 0.90f }, // Diseased Wolf, Western Plaguelands
+    { RACE_UNDEAD,   FORM_BEAR,    1082, 0.95f }, // Tirisfal Plagued Bear
+    { RACE_HIGH_ELF, FORM_CAT,    18027, 0.85f }, // Crimson Lynx, Quel'Thalas
+    { RACE_HIGH_ELF, FORM_BEAR,   20504, 0.85f }, // Thalassian Boar, Quel'Thalas
+    { RACE_ORC,      FORM_CAT,      598, 0.90f }, // Durotar Tiger
+    { RACE_ORC,      FORM_BEAR,    1250, 0.80f }, // Dreadmaw Crocolisk, Durotar
+    { RACE_TROLL,    FORM_CAT,    11031, 0.75f }, // Zulian Tiger, Zul'Gurub
+    { RACE_TROLL,    FORM_BEAR,     843, 0.75f }, // Mistvale Gorilla, Stranglethorn
+};
+
+static void ApplyRaceFormDisplay(ShapeshiftForm form, Unit* target, unsigned int& display_id, float& mod)
+{
+    if (!target->IsPlayer())
+        return;
+    bool const isDefault = form == FORM_CAT ? (display_id == 892 || display_id == 8571)
+                                            : (display_id == 2281 || display_id == 2289);
+    if (!isDefault)
+        return;
+    ShapeshiftForm const key = form == FORM_DIREBEAR ? FORM_BEAR : form;
+    for (auto const& row : RACE_FORM_DISPLAYS)
+        if (row.race == target->GetRace() && row.form == key)
+        {
+            display_id = row.display;
+            mod = row.scale;
+            return;
+        }
+}
+
 std::pair<unsigned int, float> GetShapeshiftDisplayInfo(ShapeshiftForm form, Unit* target)
 {
     unsigned int display_id = 0;
@@ -2191,6 +2234,7 @@ std::pair<unsigned int, float> GetShapeshiftDisplayInfo(ShapeshiftForm form, Uni
         else
             display_id = 892;
         mod = 0.80f;
+        ApplyRaceFormDisplay(form, target, display_id, mod);
         break;
     case FORM_TRAVEL:
         if (target->IsPlayer())
@@ -2224,6 +2268,8 @@ std::pair<unsigned int, float> GetShapeshiftDisplayInfo(ShapeshiftForm form, Uni
             display_id = target->ToPlayer()->GetShapeshiftDisplay(form);
         else
             display_id = 15374;
+        if (form == FORM_BEAR || form == FORM_DIREBEAR)
+            ApplyRaceFormDisplay(form, target, display_id, mod);
         break;
     case FORM_TREE:
         display_id = 864;

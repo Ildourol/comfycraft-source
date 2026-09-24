@@ -7654,10 +7654,13 @@ bool ObjectMgr::LoadMangosStrings(DatabaseType& db, char const* table, int32 min
     }
 
     // cleanup affected map part for reloading case
+    // robin_hood's erase shifts the next entry into the erased slot, so the
+    // iterator must come from erase(): erase(itr++) skips that entry, and a
+    // skipped string kept its old text across a reload.
     for (MangosStringLocaleMap::iterator itr = m_MangosStringLocaleMap.begin(); itr != m_MangosStringLocaleMap.end();)
     {
         if (itr->first >= start_value && itr->first < end_value)
-            m_MangosStringLocaleMap.erase(itr++);
+            itr = m_MangosStringLocaleMap.erase(itr);
         else
             ++itr;
     }
