@@ -54,17 +54,50 @@ namespace CompanionOwnership
             s_accounts.insert(accountId);
     }
 
+    std::string RandomPassword()
+    {
+        // Letters and digits only, and 16 of them: AccountMgr uppercases the
+        // password and refuses anything longer than MAX_ACCOUNT_STR.
+        static const char CHARS[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        std::string password;
+        for (int i = 0; i < 16; ++i)
+            password += CHARS[urand(0, sizeof(CHARS) - 2)];
+        return password;
+    }
+
     void PurgeAtStartup()
     {
         // Learn the pool first: the account list is what tells a stale
         // companion from an ordinary character if a row ever goes missing.
+        //
+        // A pool account made before 2026-09-25 has its own name as its
+        // password. Re-key those here, so every server that already has a pool
+        // is closed at its next start without anybody running a command.
+        //
+        // The exact pattern GetOrCreateAccount makes, never a LIKE on the
+        // prefix: the second sweep below deletes every character on a pool
+        // account, so a player named COMPANIONFAN must not count as one.
         {
             auto result = LoginDatabase.PQuery(
-                "SELECT id FROM account WHERE username LIKE '%s%%'", ACCOUNT_PREFIX);
+                "SELECT id, username FROM account WHERE username REGEXP '^%s[0-9]+$'", ACCOUNT_PREFIX);
             if (result)
             {
-                do { s_accounts.insert(result->Fetch()[0].GetUInt32()); }
+                uint32 rekeyed = 0;
+                do
+                {
+                    Field* fields = result->Fetch();
+                    const uint32 accountId = fields[0].GetUInt32();
+                    const std::string name = fields[1].GetCppString();
+                    s_accounts.insert(accountId);
+
+                    if (sAccountMgr.CheckPassword(accountId, name, name) &&
+                        sAccountMgr.ChangePassword(accountId, RandomPassword(), name) == AOR_OK)
+                        ++rekeyed;
+                }
                 while (result->NextRow());
+
+                if (rekeyed)
+                    sLog.outString("[Companions] Gave %u pool account(s) a random password in place of their name.", rekeyed);
             }
         }
 

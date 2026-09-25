@@ -100,6 +100,12 @@ namespace CompanionOwnership
 
     // Remember a pool account discovered or created after the startup scan.
     void     NoteAccount(uint32 accountId);
+
+    // A password for a pool account. Nobody ever types it: a companion logs in
+    // through the bot holder, never through realmd, so its only job is to be
+    // one that nobody can guess. The pool used the account name until
+    // 2026-09-25, which let anyone sign in as COMPANION0 from a client.
+    std::string RandomPassword();
 }
 
 #endif

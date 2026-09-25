@@ -1501,11 +1501,12 @@ uint32 PlayerbotMgr::GetOrCreateAccount(Player* master, std::string& error)
 
         if (!accountId)
         {
+            const std::string password = CompanionOwnership::RandomPassword();
             LoginDatabase.BeginTransaction();
 #ifndef MANGOSBOT_ZERO
-            AccountOpResult result = sAccountMgr.CreateAccount(accountName, accountName, MAX_EXPANSION);
+            AccountOpResult result = sAccountMgr.CreateAccount(accountName, password, MAX_EXPANSION);
 #else
-            AccountOpResult result = sAccountMgr.CreateAccount(accountName, accountName);
+            AccountOpResult result = sAccountMgr.CreateAccount(accountName, password);
 #endif
             LoginDatabase.CommitTransactionDirect();
 
