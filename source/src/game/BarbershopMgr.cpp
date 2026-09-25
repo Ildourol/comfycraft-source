@@ -3,9 +3,16 @@
 #include "GameObject.h"
 #include "Map.h"
 #include "Player.h"
+#include "UpdateData.h"
+#include "UpdateMask.h"
+#include "World.h"
+#include "WorldPacket.h"
 #include "WorldSession.h"
 
+#include <algorithm>
 #include <cstdlib>
+#include <cstring>
+#include <utility>
 #include <vector>
 
 BarbershopMgr sBarbershopMgr;
@@ -116,35 +123,71 @@ namespace
         uint8 state = player->GetStandState();
         return state >= UNIT_STAND_STATE_SIT_LOW_CHAIR && state <= UNIT_STAND_STATE_SIT_HIGH_CHAIR;
     }
+
+    /*
+     * A values update for the player's own object, sent to that player only.
+     * It is what WorldObject::DirectSendPublicValueUpdate builds, with values
+     * chosen here rather than read from the fields, and without the broadcast.
+     * The fields must be in ascending index order.
+     */
+    void SendValuesToSelf(Player* player, std::vector<std::pair<uint16, uint32>> const& fields)
+    {
+        UpdateMask mask;
+        mask.SetCount(player->GetValuesCount());
+        for (auto const& field : fields)
+            mask.SetBit(field.first);
+
+        UpdateData data;
+        ByteBuffer& buf = data.AddUpdateBlockAndGetBuffer();
+        buf << uint8(UPDATETYPE_VALUES);
+        buf << player->GetPackGUID();
+        buf << uint8(mask.GetBlockCount());
+        buf.append(mask.GetMask(), mask.GetLength());
+        for (auto const& field : fields)
+            buf << field.second;
+
+        WorldPacket packet;
+        data.BuildPacket(&packet);
+        player->GetSession()->SendPacket(&packet);
+    }
+}
+
+bool BarbershopMgr::Look::operator==(Look const& other) const
+{
+    return memcmp(values, other.values, sizeof(values)) == 0;
 }
 
 /*
- * RETAIL'S SHAPE, OUR NUMBERS.
+ * RETAIL'S SHAPE, CONFIGURABLE NUMBERS.
  *
  * Retail read a base price per level from gtBarberShopCostBase.dbc and charged
  * the whole base for a new style, half of it for a new colour on the same
  * style, and three quarters each for new facial hair and a new skin colour.
- * The 1.12 client has no such table, so the base here is level squared times
- * 5 copper: 5c at level 1, 5s at 10, 80s at 40 and 1g 80s at 60. Retail never
- * sold faces in this shape; a face is priced like a skin.
+ * The 1.12 client has no such table, so the base is level squared times
+ * Barbershop.Cost.Base copper, and each change costs its Barbershop.Cost.*
+ * percentage of that base. The defaults (5, 100, 50, 75) give 5c at level 1,
+ * 5s at 10, 80s at 40 and 1g 80s at 60 for a new style. A colour change is
+ * charged only when the style stays the same. Retail never sold faces in this
+ * shape; the default prices a face like a skin.
  */
 uint32 BarbershopMgr::GetCost(Player const* player, Look const& from, Look const& to)
 {
-    uint32 level = player->GetLevel();
-    uint32 base = level * level * 5;
+    uint64 level = player->GetLevel();
+    uint64 base = level * level * sWorld.getConfig(CONFIG_UINT32_BARBERSHOP_COST_BASE);
 
-    uint32 cost = 0;
+    uint64 percent = 0;
     if (to.values[CUSTOMIZATION_STYLE] != from.values[CUSTOMIZATION_STYLE])
-        cost += base;
+        percent += sWorld.getConfig(CONFIG_UINT32_BARBERSHOP_COST_STYLE);
     else if (to.values[CUSTOMIZATION_COLOR] != from.values[CUSTOMIZATION_COLOR])
-        cost += base / 2;
+        percent += sWorld.getConfig(CONFIG_UINT32_BARBERSHOP_COST_COLOR);
     if (to.values[CUSTOMIZATION_FACIAL] != from.values[CUSTOMIZATION_FACIAL])
-        cost += base * 3 / 4;
+        percent += sWorld.getConfig(CONFIG_UINT32_BARBERSHOP_COST_FACIAL_HAIR);
     if (to.values[CUSTOMIZATION_SKIN] != from.values[CUSTOMIZATION_SKIN])
-        cost += base * 3 / 4;
+        percent += sWorld.getConfig(CONFIG_UINT32_BARBERSHOP_COST_SKIN);
     if (to.values[CUSTOMIZATION_FACE] != from.values[CUSTOMIZATION_FACE])
-        cost += base * 3 / 4;
-    return cost;
+        percent += sWorld.getConfig(CONFIG_UINT32_BARBERSHOP_COST_FACE);
+
+    return uint32(std::min<uint64>(base * percent / 100, MAX_MONEY_AMOUNT));
 }
 
 BarbershopMgr::Look BarbershopMgr::ReadLook(Player const* player)
@@ -178,6 +221,26 @@ void BarbershopMgr::ApplyLook(Player* player, Look const& look)
     player->SetDisplayId(display);
 }
 
+void BarbershopMgr::ShowLook(Player* player, Look const& look)
+{
+    uint32 fields[2] = { player->GetUInt32Value(PLAYER_BYTES), player->GetUInt32Value(PLAYER_BYTES_2) };
+    for (uint32 i = 0; i < CUSTOMIZATION_COUNT; ++i)
+    {
+        uint32& field = fields[Bytes[i][0] == PLAYER_BYTES ? 0 : 1];
+        uint32 shift = Bytes[i][1] * 8;
+        field = (field & ~(0xFFu << shift)) | (uint32(look.values[i]) << shift);
+    }
+
+    // The same flash as ApplyLook, in the same order: the box first, then the
+    // bytes with the real display id.
+    SendValuesToSelf(player, { { UNIT_FIELD_DISPLAYID, DisplayIdBox } });
+    SendValuesToSelf(player, {
+        { UNIT_FIELD_DISPLAYID, player->GetDisplayId() },
+        { PLAYER_BYTES, fields[0] },
+        { PLAYER_BYTES_2, fields[1] },
+    });
+}
+
 uint8 BarbershopMgr::GetLimit(Player const* player, uint32 customization)
 {
     uint32 race = player->GetRace();
@@ -202,20 +265,16 @@ void BarbershopMgr::Send(Player* player, std::string const& message)
 
 void BarbershopMgr::SendPreview(Player* player, Session const& session)
 {
-    Look look = ReadLook(player);
-    std::string message = "S2C_UPDATE_PREVIEW;" + std::to_string(GetCost(player, session.original, look));
+    std::string message = "S2C_UPDATE_PREVIEW;" + std::to_string(GetCost(player, session.original, session.preview));
     for (uint32 i = 0; i < CUSTOMIZATION_COUNT; ++i)
-        message += ";" + std::to_string(look.values[i]);
+        message += ";" + std::to_string(session.preview.values[i]);
     Send(player, message);
 }
 
-bool BarbershopMgr::GetSession(Player const* player, Session& out) const
+BarbershopMgr::Session* BarbershopMgr::GetSession(Player const* player)
 {
     auto itr = m_sessions.find(player->GetGUIDLow());
-    if (itr == m_sessions.end())
-        return false;
-    out = itr->second;
-    return true;
+    return itr == m_sessions.end() ? nullptr : &itr->second;
 }
 
 void BarbershopMgr::Open(Player* player, GameObject* chair)
@@ -239,6 +298,7 @@ void BarbershopMgr::Open(Player* player, GameObject* chair)
     Session session;
     session.chair = chair->GetObjectGuid();
     session.original = ReadLook(player);
+    session.preview = session.original;
     m_sessions[player->GetGUIDLow()] = session;
     ++m_count;
 
@@ -252,7 +312,9 @@ void BarbershopMgr::Open(Player* player, GameObject* chair)
 
 void BarbershopMgr::Close(Player* player, Session const& session, bool notify)
 {
-    ApplyLook(player, session.original);
+    // Only this player's client ever saw the preview.
+    if (notify && session.preview != session.original)
+        ShowLook(player, session.original);
     if (m_sessions.erase(player->GetGUIDLow()))
         --m_count;
     if (notify)
@@ -269,8 +331,8 @@ bool BarbershopMgr::HandleAddonMessage(Player* player, uint32 type, std::string 
 
     std::lock_guard<std::mutex> guard(m_lock);
 
-    Session session;
-    if (!GetSession(player, session))
+    Session* session = GetSession(player);
+    if (!session)
     {
         // The client sends C2S_CLOSE at every login to clear a session it may
         // have lost to a disconnect. That is not an error worth a red line.
@@ -287,24 +349,28 @@ bool BarbershopMgr::HandleAddonMessage(Player* player, uint32 type, std::string 
             return true;
 
         int value = atoi(fields[1].c_str());
-        if (value < 0 || value > 255 || !IsAllowed(player, session.original, customization, uint8(value)))
+        if (value < 0 || value > 255 || !IsAllowed(player, session->original, customization, uint8(value)))
         {
             Send(player, "S2C_ERROR;" + std::to_string(BARBERSHOP_ERROR_NOT_ALLOWED));
-            SendPreview(player, session);
+            SendPreview(player, *session);
             return true;
         }
 
-        Look look = ReadLook(player);
+        Look look = session->preview;
         look.values[customization] = uint8(value);
-        ApplyLook(player, look);
-        SendPreview(player, session);
+        if (look != session->preview)
+        {
+            session->preview = look;
+            ShowLook(player, look);
+        }
+        SendPreview(player, *session);
         return true;
     }
 
     if (command == "C2S_PURCHASE")
     {
-        Look look = ReadLook(player);
-        uint32 cost = GetCost(player, session.original, look);
+        Look look = session->preview;
+        uint32 cost = GetCost(player, session->original, look);
         if (player->GetMoney() < cost)
         {
             Send(player, "S2C_ERROR;" + std::to_string(BARBERSHOP_ERROR_NO_MONEY));
@@ -314,9 +380,10 @@ bool BarbershopMgr::HandleAddonMessage(Player* player, uint32 type, std::string 
         if (cost)
             player->ModifyMoney(-int32(cost));
 
-        // The new look becomes the one a cancel goes back to, and the one the
-        // save writes.
-        m_sessions[player->GetGUIDLow()].original = look;
+        // Now the real fields change, and everyone in view sees it once.
+        // The new look is also the one a cancel goes back to.
+        ApplyLook(player, look);
+        session->original = look;
 
         std::string message = "S2C_PURCHASE_RESULT;1";
         for (uint32 i = 0; i < CUSTOMIZATION_COUNT; ++i)
@@ -325,12 +392,16 @@ bool BarbershopMgr::HandleAddonMessage(Player* player, uint32 type, std::string 
     }
     else if (command == "C2S_RESET")
     {
-        ApplyLook(player, session.original);
-        SendPreview(player, session);
+        if (session->preview != session->original)
+        {
+            session->preview = session->original;
+            ShowLook(player, session->original);
+        }
+        SendPreview(player, *session);
     }
     else if (command == "C2S_CLOSE")
     {
-        Close(player, session, true);
+        Close(player, *session, true);
         player->SetStandState(UNIT_STAND_STATE_STAND);
     }
 
@@ -344,19 +415,19 @@ void BarbershopMgr::Update(Player* player)
 
     std::lock_guard<std::mutex> guard(m_lock);
 
-    Session session;
-    if (!GetSession(player, session))
+    Session* session = GetSession(player);
+    if (!session)
         return;
 
     bool stay = player->IsAlive() && !player->IsInCombat() && IsInBarberChairState(player);
     if (stay)
     {
-        GameObject* chair = player->IsInWorld() ? player->GetMap()->GetGameObject(session.chair) : nullptr;
+        GameObject* chair = player->IsInWorld() ? player->GetMap()->GetGameObject(session->chair) : nullptr;
         stay = chair && player->GetDistance(chair) <= MaxChairDistance;
     }
 
     if (!stay)
-        Close(player, session, true);
+        Close(player, *session, true);
 }
 
 void BarbershopMgr::OnLogout(Player* player)
@@ -366,26 +437,8 @@ void BarbershopMgr::OnLogout(Player* player)
 
     std::lock_guard<std::mutex> guard(m_lock);
 
-    Session session;
-    if (GetSession(player, session))
-        Close(player, session, false);
-}
-
-void BarbershopMgr::GetSaveBytes(Player const* player, uint32& bytes, uint32& bytes2) const
-{
-    if (!m_count.load())
-        return;
-
-    std::lock_guard<std::mutex> guard(m_lock);
-
-    Session session;
-    if (!GetSession(player, session))
-        return;
-
-    // PLAYER_BYTES is exactly skin, face, hair style and hair colour, low byte
-    // first; PLAYER_BYTES_2 byte 0 is facial hair and the rest is left alone.
-    uint8 const* v = session.original.values;
-    bytes = uint32(v[CUSTOMIZATION_SKIN]) | (uint32(v[CUSTOMIZATION_FACE]) << 8) |
-        (uint32(v[CUSTOMIZATION_STYLE]) << 16) | (uint32(v[CUSTOMIZATION_COLOR]) << 24);
-    bytes2 = (bytes2 & 0xFFFFFF00) | uint32(v[CUSTOMIZATION_FACIAL]);
+    // The real fields never held the preview, so there is nothing to undo.
+    Session* session = GetSession(player);
+    if (session)
+        Close(player, *session, false);
 }

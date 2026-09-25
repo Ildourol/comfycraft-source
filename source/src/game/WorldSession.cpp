@@ -773,7 +773,7 @@ void WorldSession::LogoutPlayer(bool Save)
 
         sLFTMgr.OnPlayerLogout(_player->GetObjectGuid());
 
-        // An open barbershop puts the old look back before the save below.
+        // Ends an open barbershop session.
         sBarbershopMgr.OnLogout(_player);
 
         ///- Remove pet

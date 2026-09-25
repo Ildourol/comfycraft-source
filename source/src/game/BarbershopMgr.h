@@ -46,12 +46,14 @@ class Player;
  *   S2C_PURCHASE_RESULT;...;facial;skin;face
  *   C2S_PREVIEW_SKIN;n  C2S_PREVIEW_FACE;n
  *
- * A PREVIEW IS A REAL CHANGE TO THE CHARACTER, because the client's model
- * redraws from the player's own fields. So every way out of a session that is
- * not a purchase has to put the old bytes back: the Cancel button, standing
- * up, walking off, dying, entering combat and logging out. And the save writes
- * the ORIGINAL bytes while a session is open, so an autosave followed by a
- * crash cannot turn a preview into a free haircut.
+ * A PREVIEW IS SENT TO THE PLAYER ALONE. The client's model redraws from the
+ * player's own fields, so a preview is a values update carrying the new bytes,
+ * built by hand and sent only to that player's session. The real fields are
+ * not touched until a purchase. So nobody else in view sees a preview or pays
+ * for one in bandwidth, a save cannot write one, and a session that ends
+ * without a purchase only has to send the old look back to the one client
+ * that saw the new one. A purchase sets the real fields and redraws the model
+ * for everyone in view, once.
  */
 class BarbershopMgr
 {
@@ -64,22 +66,24 @@ class BarbershopMgr
 
         // From Player::Update. Closes a session the player has walked out of.
         void Update(Player* player);
-        // From WorldSession::LogoutPlayer, before the logout save.
+        // From WorldSession::LogoutPlayer.
         void OnLogout(Player* player);
-        // From Player::SaveToDB: the bytes to write, originals while in a session.
-        void GetSaveBytes(Player const* player, uint32& bytes, uint32& bytes2) const;
 
     private:
         // The five appearance bytes a 1.12 character has.
         struct Look
         {
             uint8 values[5] = {};
+
+            bool operator==(Look const& other) const;
+            bool operator!=(Look const& other) const { return !(*this == other); }
         };
 
         struct Session
         {
             ObjectGuid chair;
-            Look original;
+            Look original;  // what the player owns, and what the real fields hold
+            Look preview;   // what the player's own client is showing
         };
 
         // Copper for going from one look to the other at the player's level.
@@ -87,10 +91,13 @@ class BarbershopMgr
 
         // Callers hold m_lock.
         void Close(Player* player, Session const& session, bool notify);
-        bool GetSession(Player const* player, Session& out) const;
+        Session* GetSession(Player const* player);
 
         static Look ReadLook(Player const* player);
+        // Sets the real fields and redraws the model for everyone in view.
         static void ApplyLook(Player* player, Look const& look);
+        // Redraws the model with this look for the player's own client only.
+        static void ShowLook(Player* player, Look const& look);
         static bool IsAllowed(Player const* player, Look const& original, uint32 customization, uint8 value);
         static uint8 GetLimit(Player const* player, uint32 customization);
 
