@@ -311,8 +311,14 @@ void WorldSession::HandleDestroyItemOpcode(WorldPacket & recv_data)
 
     bool save = true;
 
+    // ComfyCraft: the City Protector's Medallion lasts 7 days, which would exclude it,
+    // but Player::MailCityProtectorMedallion sends no new one while this row exists.
+    // The Lost and Found (Trash Collector Gaston, Ratchet) is then the way back to it.
+    // A restored copy starts a new 7 days.
+    bool const hasDuration = pProto->Duration && pProto->ItemId != 50056;
+
     // don't recover these.
-    if (pProto->Duration ||
+    if (hasDuration ||
         hasSpellCharges ||
         pProto->IsQuestItem ||
         pProto->DisplayInfoID == 33537) // Signet Ring of the Bronze Dragonflight
@@ -320,7 +326,7 @@ void WorldSession::HandleDestroyItemOpcode(WorldPacket & recv_data)
 
     // Turtle: save destroyed items so they can be restored
     if (save && (count <= pItem->GetCount()) &&
-        !pProto->Duration && !pProto->Map && !pProto->Area &&
+        !hasDuration && !pProto->Map && !pProto->Area &&
         (pProto->Quality >= ITEM_QUALITY_RARE || pProto->StartQuest))
         CharacterDatabase.PExecute("INSERT INTO `character_destroyed_items` (`player_guid`, `item_entry`, `stack_count`, `time`) VALUES (%u, %u, %u, %u)", _player->GetGUIDLow(), pProto->ItemId, count ? count : pItem->GetCount(), uint64(sWorld.GetGameTime()));
 

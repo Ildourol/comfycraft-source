@@ -18501,8 +18501,11 @@ void Player::_LoadInventory(QueryResult *result, uint32 timediff, bool &has_epic
                      * the character saves wearing it, and then THIS line strips
                      * every piece on the way back in -- CanEquipItem ends in
                      * CanUseItem, which enforces AllowableClass. The row in
-                     * `character_inventory` is deleted, the `item_instance`
-                     * behind it is orphaned, and the NPC stands back up naked.
+                     * `character_inventory` is deleted, the item is MAILED to
+                     * the character (problematicItems, below), and the NPC
+                     * stands back up naked. Its `item_instance` row stays: an
+                     * orphan sweep that checks only character_inventory
+                     * deletes it and leaves a dead mail behind.
                      *
                      * It took a while to find because it looks like the dressing
                      * failing. It is not: the dressing works, saves, and is
@@ -26038,15 +26041,29 @@ void Player::MailCityProtectorMedallion()
     std::string subject = "City Protector";
     std::string message = "Defend the weak, protect both young and old, never desert your friends. Give justice to all, be fearless in battle and always ready to defend the right.";
 
-    if (!HasItemCount(50056, 1, true))
-    {
-        Item* ToMailItem = Item::CreateItem(50056, 1, this);
-        ToMailItem->SaveToDB();
+    // This runs at every login. HasItemCount sees bags and bank only, so a medallion
+    // left unopened in the mailbox also counts, or each login mails another one.
+    // A deleted one counts too while Gaston's Lost and Found can still give it back
+    // (ItemHandler.cpp keeps it; World.cpp drops the row after 30 days). A medallion
+    // that expired leaves no row, so an expired one is still replaced.
+    if (HasItemCount(50056, 1, true))
+        return;
 
-        MailDraft(subject, sObjectMgr.CreateItemText(message))
-            .AddItem(ToMailItem)
-            .SendMailTo(this, MailSender(MAIL_CREATURE, uint32(4968), MAIL_STATIONERY_DEFAULT), MAIL_CHECK_MASK_COPIED, 0, 30 * DAY);
-    }      
+    if (QueryResult* held = CharacterDatabase.PQuery(
+            "SELECT 1 FROM `mail_items` WHERE `receiver` = '%u' AND `item_template` = 50056 "
+            "UNION ALL SELECT 1 FROM `character_destroyed_items` WHERE `player_guid` = '%u' AND `item_entry` = 50056 LIMIT 1",
+            GetGUIDLow(), GetGUIDLow()))
+    {
+        delete held;
+        return;
+    }
+
+    Item* ToMailItem = Item::CreateItem(50056, 1, this);
+    ToMailItem->SaveToDB();
+
+    MailDraft(subject, sObjectMgr.CreateItemText(message))
+        .AddItem(ToMailItem)
+        .SendMailTo(this, MailSender(MAIL_CREATURE, uint32(4968), MAIL_STATIONERY_DEFAULT), MAIL_CHECK_MASK_COPIED, 0, 30 * DAY);
 }
 
 bool Player::IsIgnoringTitles() { return m_isIgnoringTitles; }

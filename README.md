@@ -1,5 +1,9 @@
 # ComfyCraft source
 
+**Bugs, questions and screenshots: [join our Discord](https://discord.gg/YSWzYk8xP).**
+
+[![Discord](https://img.shields.io/badge/Discord-ComfyCraft-5865F2?logo=discord&logoColor=white&style=for-the-badge)](https://discord.gg/YSWzYk8xP)
+
 The server source for ComfyCraft, a small World of Warcraft 1.18.1 server
 (build 7272) built around companions and player housing.
 
