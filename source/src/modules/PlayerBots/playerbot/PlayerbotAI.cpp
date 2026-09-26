@@ -7472,11 +7472,35 @@ static bool DressBotNpc(Player* bot, BotNpcLook const& look, std::string& error,
     // The customisation half. These are the same four bytes Player::Create
     // writes at character creation, and the same ones the barbershop chair
     // changes (BarbershopMgr).
+    uint32 const bytesBefore = bot->GetUInt32Value(PLAYER_BYTES);
+    uint8 const facialBefore = bot->GetByteValue(PLAYER_BYTES_2, 0);
+
     bot->SetByteValue(PLAYER_BYTES, 0, uint8(look.skin));
     bot->SetByteValue(PLAYER_BYTES, 1, uint8(look.face));
     bot->SetByteValue(PLAYER_BYTES, 2, uint8(look.hair));
     bot->SetByteValue(PLAYER_BYTES, 3, uint8(look.hairColor));
     bot->SetByteValue(PLAYER_BYTES_2, 0, uint8(look.facialHair));
+
+    /*
+     * THE CLIENT DOES NOT REDRAW A FACE FOR NEW BYTES ALONE. A body dressed
+     * while somebody is looking at it kept the face and hair it was created
+     * with (all zeros) until it left their view and came back. Measured on the
+     * VPS on 2026-09-26, the first place after the random bot cleanup: the
+     * database held the design's face and the client showed the default one.
+     *
+     * The barbershop's flash, copied from BarbershopMgr::ApplyLook: a box
+     * display sent at once, then the real display id, which goes out with the
+     * new bytes in the next values update. Not Player::UpdateAppearance, which
+     * ends in DeMorph and would drop a morph.
+     */
+    if (bot->IsInWorld() &&
+        (bot->GetUInt32Value(PLAYER_BYTES) != bytesBefore || bot->GetByteValue(PLAYER_BYTES_2, 0) != facialBefore))
+    {
+        uint32 const display = bot->GetDisplayId();
+        bot->SetDisplayId(4);   // BarbershopMgr's DisplayIdBox
+        bot->DirectSendPublicValueUpdate(UNIT_FIELD_DISPLAYID);
+        bot->SetDisplayId(display);
+    }
 
     for (size_t s = 0; s < sizeof(DRESS_SLOTS) / sizeof(DRESS_SLOTS[0]); ++s)
     {

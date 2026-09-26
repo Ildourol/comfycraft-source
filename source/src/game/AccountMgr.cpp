@@ -103,6 +103,21 @@ AccountOpResult AccountMgr::DeleteAccount(uint32 accid)
     if (!res)
         return AOR_DB_INTERNAL_ERROR;                       // unexpected error;
 
+    /*
+     * FORGET THE NAME. GetId answers from m_accountNameToId before it asks the
+     * database, so a deleted account kept its id there until the next restart.
+     * On the VPS on 2026-09-26 the random bot cleanup deleted RNDBOT0 (id 4) at
+     * startup, and the next .npcbot place asked GetId("RNDBOT0"), got 4, and
+     * made a character on an account that no longer existed.
+     */
+    for (auto itr = m_accountNameToId.begin(); itr != m_accountNameToId.end();)
+    {
+        if (itr->second == accid)
+            itr = m_accountNameToId.erase(itr);
+        else
+            ++itr;
+    }
+
     return AOR_OK;
 }
 
