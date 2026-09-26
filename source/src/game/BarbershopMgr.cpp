@@ -29,6 +29,14 @@ namespace
     // How far the player may be from the chair before the session ends.
     float const MaxChairDistance = 5.0f;
 
+    // The heights the chair sells, in thousandths of the race's own scale.
+    // Chosen by eye on 2026-09-26: shorter reads as a different build, taller
+    // than 1025 starts to look like a buff. A height outside this set that a
+    // character already has is still allowed, as with the bytes.
+    int const HeightMin = 900;
+    int const HeightMax = 1025;
+    int const HeightStep = 5;
+
     // Index into Look::values, Limits and the byte table below.
     enum Customization
     {
@@ -154,7 +162,7 @@ namespace
 
 bool BarbershopMgr::Look::operator==(Look const& other) const
 {
-    return memcmp(values, other.values, sizeof(values)) == 0;
+    return memcmp(values, other.values, sizeof(values)) == 0 && height == other.height;
 }
 
 /*
@@ -186,6 +194,8 @@ uint32 BarbershopMgr::GetCost(Player const* player, Look const& from, Look const
         percent += sWorld.getConfig(CONFIG_UINT32_BARBERSHOP_COST_SKIN);
     if (to.values[CUSTOMIZATION_FACE] != from.values[CUSTOMIZATION_FACE])
         percent += sWorld.getConfig(CONFIG_UINT32_BARBERSHOP_COST_FACE);
+    if (to.height != from.height)
+        percent += sWorld.getConfig(CONFIG_UINT32_BARBERSHOP_COST_HEIGHT);
 
     return uint32(std::min<uint64>(base * percent / 100, MAX_MONEY_AMOUNT));
 }
@@ -195,11 +205,17 @@ BarbershopMgr::Look BarbershopMgr::ReadLook(Player const* player)
     Look look;
     for (uint32 i = 0; i < CUSTOMIZATION_COUNT; ++i)
         look.values[i] = player->GetByteValue(Bytes[i][0], Bytes[i][1]);
+    look.height = uint16(player->GetNativeScale() * 1000.0f + 0.5f);
     return look;
 }
 
 void BarbershopMgr::ApplyLook(Player* player, Look const& look)
 {
+    // The scale field is an ordinary value update; no flash is needed for it.
+    // SaveToDB writes the native scale to characters.height.
+    if (ReadLook(player).height != look.height)
+        player->SetNativeScale(look.height / 1000.0f);
+
     bool changed = false;
     for (uint32 i = 0; i < CUSTOMIZATION_COUNT; ++i)
     {
@@ -221,24 +237,40 @@ void BarbershopMgr::ApplyLook(Player* player, Look const& look)
     player->SetDisplayId(display);
 }
 
-void BarbershopMgr::ShowLook(Player* player, Look const& look)
+void BarbershopMgr::ShowLook(Player* player, Look const& shown, Look const& look)
 {
-    uint32 fields[2] = { player->GetUInt32Value(PLAYER_BYTES), player->GetUInt32Value(PLAYER_BYTES_2) };
-    for (uint32 i = 0; i < CUSTOMIZATION_COUNT; ++i)
+    std::vector<std::pair<uint16, uint32>> update;
+
+    // The real field is the display's scale times the owned height times any
+    // scale aura, so the preview swaps the owned height for the new one.
+    if (look.height != shown.height)
     {
-        uint32& field = fields[Bytes[i][0] == PLAYER_BYTES ? 0 : 1];
-        uint32 shift = Bytes[i][1] * 8;
-        field = (field & ~(0xFFu << shift)) | (uint32(look.values[i]) << shift);
+        float scale = player->GetObjectScale() * (look.height / 1000.0f) / player->GetNativeScale();
+        uint32 bits;
+        memcpy(&bits, &scale, sizeof(bits));
+        update.push_back({ OBJECT_FIELD_SCALE_X, bits });
     }
 
-    // The same flash as ApplyLook, in the same order: the box first, then the
-    // bytes with the real display id.
-    SendValuesToSelf(player, { { UNIT_FIELD_DISPLAYID, DisplayIdBox } });
-    SendValuesToSelf(player, {
-        { UNIT_FIELD_DISPLAYID, player->GetDisplayId() },
-        { PLAYER_BYTES, fields[0] },
-        { PLAYER_BYTES_2, fields[1] },
-    });
+    if (memcmp(look.values, shown.values, sizeof(look.values)) != 0)
+    {
+        uint32 fields[2] = { player->GetUInt32Value(PLAYER_BYTES), player->GetUInt32Value(PLAYER_BYTES_2) };
+        for (uint32 i = 0; i < CUSTOMIZATION_COUNT; ++i)
+        {
+            uint32& field = fields[Bytes[i][0] == PLAYER_BYTES ? 0 : 1];
+            uint32 shift = Bytes[i][1] * 8;
+            field = (field & ~(0xFFu << shift)) | (uint32(look.values[i]) << shift);
+        }
+
+        // The same flash as ApplyLook, in the same order: the box first, then
+        // the bytes with the real display id.
+        SendValuesToSelf(player, { { UNIT_FIELD_DISPLAYID, DisplayIdBox } });
+        update.push_back({ UNIT_FIELD_DISPLAYID, player->GetDisplayId() });
+        update.push_back({ PLAYER_BYTES, fields[0] });
+        update.push_back({ PLAYER_BYTES_2, fields[1] });
+    }
+
+    if (!update.empty())
+        SendValuesToSelf(player, update);
 }
 
 uint8 BarbershopMgr::GetLimit(Player const* player, uint32 customization)
@@ -258,6 +290,16 @@ bool BarbershopMgr::IsAllowed(Player const* player, Look const& original, uint32
     return value < GetLimit(player, customization);
 }
 
+bool BarbershopMgr::IsSoldHeight(int height)
+{
+    return height >= HeightMin && height <= HeightMax && (height - HeightMin) % HeightStep == 0;
+}
+
+bool BarbershopMgr::IsHeightAllowed(Look const& original, int height)
+{
+    return height == original.height || IsSoldHeight(height);
+}
+
 void BarbershopMgr::Send(Player* player, std::string const& message)
 {
     player->SendAddonMessage(BarbershopPrefix, message);
@@ -268,6 +310,7 @@ void BarbershopMgr::SendPreview(Player* player, Session const& session)
     std::string message = "S2C_UPDATE_PREVIEW;" + std::to_string(GetCost(player, session.original, session.preview));
     for (uint32 i = 0; i < CUSTOMIZATION_COUNT; ++i)
         message += ";" + std::to_string(session.preview.values[i]);
+    message += ";" + std::to_string(session.preview.height);
     Send(player, message);
 }
 
@@ -307,14 +350,16 @@ void BarbershopMgr::Open(Player* player, GameObject* chair)
         std::to_string(v[CUSTOMIZATION_COLOR]) + ";;" + std::to_string(v[CUSTOMIZATION_FACIAL]) + ";" +
         std::to_string(v[CUSTOMIZATION_SKIN]) + ";" + std::to_string(v[CUSTOMIZATION_FACE]) + ";" +
         std::to_string(GetLimit(player, CUSTOMIZATION_SKIN)) + ";" +
-        std::to_string(GetLimit(player, CUSTOMIZATION_FACE)));
+        std::to_string(GetLimit(player, CUSTOMIZATION_FACE)) + ";" +
+        std::to_string(session.original.height) + ";" + std::to_string(HeightMin) + ";" +
+        std::to_string(HeightMax) + ";" + std::to_string(HeightStep));
 }
 
 void BarbershopMgr::Close(Player* player, Session const& session, bool notify)
 {
     // Only this player's client ever saw the preview.
     if (notify && session.preview != session.original)
-        ShowLook(player, session.original);
+        ShowLook(player, session.preview, session.original);
     if (m_sessions.erase(player->GetGUIDLow()))
         --m_count;
     if (notify)
@@ -360,8 +405,32 @@ bool BarbershopMgr::HandleAddonMessage(Player* player, uint32 type, std::string 
         look.values[customization] = uint8(value);
         if (look != session->preview)
         {
+            ShowLook(player, session->preview, look);
             session->preview = look;
-            ShowLook(player, look);
+        }
+        SendPreview(player, *session);
+        return true;
+    }
+
+    if (command == "C2S_PREVIEW_HEIGHT")
+    {
+        if (fields.size() < 2)
+            return true;
+
+        int value = atoi(fields[1].c_str());
+        if (!IsHeightAllowed(session->original, value))
+        {
+            Send(player, "S2C_ERROR;" + std::to_string(BARBERSHOP_ERROR_NOT_ALLOWED));
+            SendPreview(player, *session);
+            return true;
+        }
+
+        Look look = session->preview;
+        look.height = uint16(value);
+        if (look != session->preview)
+        {
+            ShowLook(player, session->preview, look);
+            session->preview = look;
         }
         SendPreview(player, *session);
         return true;
@@ -388,14 +457,15 @@ bool BarbershopMgr::HandleAddonMessage(Player* player, uint32 type, std::string 
         std::string message = "S2C_PURCHASE_RESULT;1";
         for (uint32 i = 0; i < CUSTOMIZATION_COUNT; ++i)
             message += ";" + std::to_string(look.values[i]);
+        message += ";" + std::to_string(look.height);
         Send(player, message);
     }
     else if (command == "C2S_RESET")
     {
         if (session->preview != session->original)
         {
+            ShowLook(player, session->preview, session->original);
             session->preview = session->original;
-            ShowLook(player, session->original);
         }
         SendPreview(player, *session);
     }

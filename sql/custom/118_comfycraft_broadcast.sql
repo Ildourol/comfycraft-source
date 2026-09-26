@@ -10,6 +10,9 @@
 -- mangos_string 100000-100009 are ours, for broadcasts. The upstream string
 -- 50009 stays in mangos_string; only its autobroadcast row goes.
 --
+-- The messages are edited at /admin/broadcasts since 2026-09-26. Running
+-- this file again replaces whatever is there with these four.
+--
 -- Apply, then in the mangosd console, in this order:
 --   reload mangos_string
 --   reload autobroadcast

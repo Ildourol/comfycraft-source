@@ -1820,7 +1820,7 @@ Rate.RespecMinMultiplier = 2
 
 Barbershop.Cost.Base = 5
 
-# Barbershop.Cost.Style, .Color, .FacialHair, .Skin, .Face. The percentage of the
+# Barbershop.Cost.Style, .Color, .FacialHair, .Skin, .Face, .Height. The percentage of the
 # base charged for each change. A colour change is charged only when the style
 # stays the same.
 
@@ -1829,6 +1829,7 @@ Barbershop.Cost.Color = 50
 Barbershop.Cost.FacialHair = 75
 Barbershop.Cost.Skin = 75
 Barbershop.Cost.Face = 75
+Barbershop.Cost.Height = 75
 
 # Rate.Reputation.Gain. Reputation Gain rate.
 

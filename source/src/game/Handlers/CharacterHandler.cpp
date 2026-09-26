@@ -20,6 +20,7 @@
  */
 
 #include "Common.h"
+#include "BarbershopMgr.h"
 #include "Database/DatabaseEnv.h"
 #include "WorldPacket.h"
 #include "SharedDefines.h"
@@ -76,7 +77,7 @@ bool LoginQueryHolder::Initialize()
                      "resettalents_time, trans_x, trans_y, trans_z, trans_o, transguid, extra_flags, stable_slots, at_login, zone, online, death_expire_time, taxi_path, "
                      "honorRankPoints, honorHighestRank, honorStanding, honorLastWeekHK, honorLastWeekCP, honorStoredHK, honorStoredDK, "
                      "watchedFaction, drunk, health, power1, power2, power3, power4, power5, exploredZones, equipmentCache, ammoId, actionBars, "
-                     "world_phase_mask, customFlags, city_protector, ignore_titles, mortality_status, total_deaths, xp_gain, extraBonusTalentCount FROM characters WHERE guid = '%u'", m_guid.GetCounter());
+                     "world_phase_mask, customFlags, city_protector, ignore_titles, mortality_status, total_deaths, xp_gain, extraBonusTalentCount, height FROM characters WHERE guid = '%u'", m_guid.GetCounter());
     res &= SetPQuery(PLAYER_LOGIN_QUERY_LOADGROUP,           "SELECT groupId FROM group_member WHERE memberGuid ='%u'", m_guid.GetCounter());
     res &= SetPQuery(PLAYER_LOGIN_QUERY_LOADBOUNDINSTANCES,  "SELECT id, permanent, map, resettime FROM character_instance LEFT JOIN instance ON instance = id WHERE guid = '%u'", m_guid.GetCounter());
     res &= SetPQuery(PLAYER_LOGIN_QUERY_LOADAURAS,           "SELECT caster_guid,item_guid,spell,stackcount,remaincharges,basepoints0,basepoints1,basepoints2,periodictime0,periodictime1,periodictime2,maxduration,remaintime,effIndexMask FROM character_aura WHERE guid = '%u'", m_guid.GetCounter());
@@ -216,6 +217,14 @@ void WorldSession::HandleCharCreateOpcode(WorldPacket & recv_data)
 
     uint32 challengeMask;
     recv_data >> challengeMask;
+
+    // Bits 16-26 are ComfyCraft's: a height for the new character, in
+    // thousandths. SetSelectedChallengeModes is the one glue call whose value
+    // reaches this packet, and Turtle's challenges use the low bits only. No
+    // shipped client sends one: the create screen row was removed on
+    // 2026-09-26 for want of a preview. docs/ai/content/barbershop.md.
+    uint32 height = (challengeMask >> 16) & 0x7FF;
+    challengeMask &= 0xFFFF;
 
     WorldPacket data(SMSG_CHAR_CREATE, 1);                  // returned with diff.values in all cases
 
@@ -375,6 +384,10 @@ void WorldSession::HandleCharCreateOpcode(WorldPacket & recv_data)
         pNewChar->SetCinematic(1);                          // not show intro
 
     pNewChar->SetAtLoginFlag(AT_LOGIN_FIRST);               // First login
+
+    // SaveToDB writes the native scale to characters.height.
+    if (height && height != 1000 && BarbershopMgr::IsSoldHeight(int(height)))
+        pNewChar->SetNativeScale(height / 1000.0f);
 
     // Challenge spells are given on first login and not on character creation
     if (challengeMask)

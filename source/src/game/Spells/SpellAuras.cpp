@@ -2280,6 +2280,9 @@ std::pair<unsigned int, float> GetShapeshiftDisplayInfo(ShapeshiftForm form, Uni
     default:
         break;
     }
+    // A player's native scale is the barbershop height, so a form keeps it.
+    if (target->IsPlayer())
+        mod *= target->GetNativeScale();
     return {display_id,mod};
 }
 
@@ -2687,6 +2690,10 @@ void Aura::HandleAuraTransform(bool apply, bool Real)
 
             if (display_id)
             {
+                // A player's native scale is the barbershop height, so a
+                // transform keeps it.
+                if (target->IsPlayer())
+                    mod_x *= target->GetNativeScale();
                 target->SetDisplayId(display_id);
                 target->SetTransformScale(mod_x);
             }

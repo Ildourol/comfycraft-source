@@ -17392,8 +17392,8 @@ bool Player::LoadFromDB(ObjectGuid guid, SqlQueryHolder *holder)
     //"honorRankPoints, honorRighestRank, honorStanding, honorLastWeekHK, honorLastWeekCP, honorStoredHK, honorStoredDK,"
     // 45               46     47      48      49      50      51      52      53             54              55      56
     //"watchedFaction,  drunk, health, power1, power2, power3, power4, power5, exploredZones, equipmentCache, ammoId, actionBars,"
-    // 57                58                59              60               61                62        63        64
-    //"world_phase_mask, customFlags, city_protector, ignore_titles, mortality_status, total_deaths, xp_gain, extraBonusTalentCount FROM characters WHERE guid = '%u'", GUID_LOPART(m_guid));
+    // 57                58                59              60               61                62        63        64                     65
+    //"world_phase_mask, customFlags, city_protector, ignore_titles, mortality_status, total_deaths, xp_gain, extraBonusTalentCount, height FROM characters WHERE guid = '%u'", GUID_LOPART(m_guid));
 
     QueryResult *result = holder->GetResult(PLAYER_LOGIN_QUERY_LOADFROM);
 
@@ -17477,6 +17477,12 @@ bool Player::LoadFromDB(ObjectGuid guid, SqlQueryHolder *holder)
     _LoadIntoDataField(fields[53].GetString(), PLAYER_EXPLORED_ZONES_1, PLAYER_EXPLORED_ZONES_SIZE);
 
     InitPlayerDisplayIds();                                       // model, scale and model data
+
+    // The height bought in the barbershop chair, in thousandths (sql/custom/124).
+    // Native, so a form or a transform that ends puts it back.
+    uint32 height = fields[65].GetUInt32();
+    if (height && height != 1000)
+        SetNativeScale(height / 1000.0f);
 
     uint32 money = fields[8].GetUInt32();
     if (money > MAX_MONEY_AMOUNT)
@@ -19379,7 +19385,7 @@ bool Player::SaveToDB(bool online, bool force, bool direct)
                               "honorRankPoints, honorHighestRank, honorStanding, honorLastWeekHK, honorLastWeekCP, honorStoredHK, honorStoredDK, "
                               "watchedFaction, drunk, health, power1, power2, power3, "
                               "power4, power5, exploredZones, equipmentCache, ammoId, actionBars, "
-                              "area, world_phase_mask, customFlags, city_protector, ignore_titles, mortality_status, total_deaths, xp_gain, extraBonusTalentCount) "
+                              "area, world_phase_mask, customFlags, city_protector, ignore_titles, mortality_status, total_deaths, xp_gain, extraBonusTalentCount, height) "
                               "VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
                               "?, ?, ?, ?, ?, "
                               "?, ?, ?, "
@@ -19389,7 +19395,7 @@ bool Player::SaveToDB(bool online, bool force, bool direct)
                               "?, ?, ?, ?, ?, ?, ?, "
                               "?, ?, ?, ?, ?, ?, "
                               "?, ?, ?, ?, ?, ?, "
-                              "?, ?, ?, ?, ?, ?, ?, ?, ?) ");
+                              "?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ");
 
     uberInsert.addUInt32(GetGUIDLow());
     uberInsert.addUInt32(GetSession()->GetAccountId());
@@ -19523,7 +19529,10 @@ bool Player::SaveToDB(bool online, bool force, bool direct)
     uberInsert.addUInt32(GetTotalDeathCount());
     uberInsert.addUInt8(HasXPGainEnabled());
     uberInsert.addUInt32(m_extraBonusTalentCount);
-    
+    // Native scale is the barbershop height alone for a player; the display's
+    // own scale and every form are applied on top of it.
+    uberInsert.addUInt32(uint32(GetNativeScale() * 1000.0f + 0.5f));
+
     if (direct)
     {
         if (!uberInsert.DirectExecute())

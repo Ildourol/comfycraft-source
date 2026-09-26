@@ -46,6 +46,15 @@ class Player;
  *   S2C_PURCHASE_RESULT;...;facial;skin;face
  *   C2S_PREVIEW_SKIN;n  C2S_PREVIEW_FACE;n
  *
+ * HEIGHT IS OURS TOO, added 2026-09-26, and it is not a byte. It is the
+ * player's native scale in thousandths (characters.height, sql/custom/124),
+ * sold from 900 to 1025 in steps of 5, and it goes after the face:
+ *
+ *   S2C_OPEN_BARBER;...;faceCount;height;min;max;step
+ *   S2C_UPDATE_PREVIEW;...;face;height
+ *   S2C_PURCHASE_RESULT;...;face;height
+ *   C2S_PREVIEW_HEIGHT;n
+ *
  * A PREVIEW IS SENT TO THE PLAYER ALONE. The client's model redraws from the
  * player's own fields, so a preview is a values update carrying the new bytes,
  * built by hand and sent only to that player's session. The real fields are
@@ -59,6 +68,9 @@ class BarbershopMgr
 {
     public:
         static bool IsBarberChair(uint32 entry) { return entry == 105180; }
+        // A height the chair sells, in thousandths. HandleCharCreateOpcode checks a
+        // create-time height against it too.
+        static bool IsSoldHeight(int height);
 
         // From the chair case of GameObject::Use, after the player is seated.
         void Open(Player* player, GameObject* chair);
@@ -70,10 +82,11 @@ class BarbershopMgr
         void OnLogout(Player* player);
 
     private:
-        // The five appearance bytes a 1.12 character has.
+        // The five appearance bytes a 1.12 character has, and the height.
         struct Look
         {
             uint8 values[5] = {};
+            uint16 height = 1000;   // thousandths of the race's own scale
 
             bool operator==(Look const& other) const;
             bool operator!=(Look const& other) const { return !(*this == other); }
@@ -96,9 +109,11 @@ class BarbershopMgr
         static Look ReadLook(Player const* player);
         // Sets the real fields and redraws the model for everyone in view.
         static void ApplyLook(Player* player, Look const& look);
-        // Redraws the model with this look for the player's own client only.
-        static void ShowLook(Player* player, Look const& look);
+        // Shows this look to the player's own client only. `shown` is what that
+        // client shows now: the model flashes only when a byte changes.
+        static void ShowLook(Player* player, Look const& shown, Look const& look);
         static bool IsAllowed(Player const* player, Look const& original, uint32 customization, uint8 value);
+        static bool IsHeightAllowed(Look const& original, int height);
         static uint8 GetLimit(Player const* player, uint32 customization);
 
         static void Send(Player* player, std::string const& message);

@@ -1062,6 +1062,7 @@ void World::LoadConfigSettingsFromFile(bool reload)
     setConfig(CONFIG_UINT32_BARBERSHOP_COST_FACIAL_HAIR, "Barbershop.Cost.FacialHair", 75);
     setConfig(CONFIG_UINT32_BARBERSHOP_COST_SKIN,       "Barbershop.Cost.Skin", 75);
     setConfig(CONFIG_UINT32_BARBERSHOP_COST_FACE,       "Barbershop.Cost.Face", 75);
+    setConfig(CONFIG_UINT32_BARBERSHOP_COST_HEIGHT,     "Barbershop.Cost.Height", 75);
 
     setConfigMinMax(CONFIG_FLOAT_RATE_TARGET_POS_RECALCULATION_RANGE, "TargetPosRecalculateRange", 1.5f, CONTACT_DISTANCE, ATTACK_DISTANCE);
 
