@@ -39,6 +39,30 @@ static bool substrContainsInMap(const std::string& searchTerm, const std::map<st
 
 ChatHelper::ChatHelper(PlayerbotAI* ai) : PlayerbotAIAware(ai)
 {
+    InitTables();
+}
+
+/*
+ * THE TABLES ARE STATIC, AND THE STATIC PARSERS READ THEM WITHOUT A BOT.
+ *
+ * They used to be filled in the constructor, so they were empty until the first
+ * bot logged in after a restart. `.npcbot place` calls CreateBot, which calls
+ * parseRace and parseClass, and on a server with no bot online both returned 0
+ * and CreateBot rolled a random race and class. Measured on the VPS on
+ * 2026-09-26: a Human design was placed on a Tauren druid, and the dress then
+ * refused it twice a second. Locally a bot is always standing, so it never
+ * showed there.
+ *
+ * So PlayerbotAIConfig::Initialize fills them at startup. The constructor
+ * still calls this, and the guard makes the second call free.
+ */
+void ChatHelper::InitTables()
+{
+    static bool filled = false;
+    if (filled)
+        return;
+    filled = true;
+
     itemQualities["poor"] = ITEM_QUALITY_POOR;
     itemQualities["gray"] = ITEM_QUALITY_POOR;
     itemQualities["normal"] = ITEM_QUALITY_NORMAL;

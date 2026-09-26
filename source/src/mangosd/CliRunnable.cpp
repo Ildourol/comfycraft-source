@@ -517,6 +517,27 @@ void CliRunnable::operator()()
 
     char commandbuf[256];
 
+#ifndef WIN32
+    /*
+     * UNBUFFERED, OR A BATCH OF LINES RUNS ONE AT A TIME.
+     *
+     * The loop below waits on select() for fd 0 and then calls fgets. A
+     * buffered fgets pulls every line waiting in the pipe into stdio's buffer
+     * and returns only the first. The pipe is then empty, select() waits, and
+     * the other lines stay in the buffer until something else is written.
+     *
+     * On the VPS the website writes a whole reload list to the FIFO in one
+     * write (website/lib/gamecommand.js). Measured 2026-09-26: an import sent
+     * nine reloads, the first ran, and `reload bot_npc` ran six minutes later
+     * when somebody typed the next command. Unbuffered, fgets reads up to the
+     * newline and leaves the rest in the pipe, where select() sees it.
+     *
+     * Windows has no select() here and fgets loops on its own, which is why
+     * Start-Server.ps1 never showed it.
+     */
+    setvbuf(stdin, nullptr, _IONBF, 0);
+#endif
+
     ///- Display the list of available CLI functions then beep
     
 

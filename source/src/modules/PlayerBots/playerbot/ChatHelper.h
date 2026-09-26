@@ -29,6 +29,10 @@ namespace ai
     public:
         ChatHelper(PlayerbotAI* ai);
 
+        // Fills the static lookup tables below. Called once at startup from
+        // PlayerbotAIConfig::Initialize; see ChatHelper.cpp for why.
+        static void InitTables();
+
     public:
         static std::string formatMoney(uint32 copper);
         static uint32 parseMoney(const std::string& text);

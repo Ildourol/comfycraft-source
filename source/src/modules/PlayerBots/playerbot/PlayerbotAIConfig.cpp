@@ -98,6 +98,10 @@ bool PlayerbotAIConfig::Initialize()
 {
     sLog.outString("Initializing AI Playerbot by ike3, based on the original Playerbot by blueboy");
 
+    // Before anything can call CreateBot: its race and class parsers read these
+    // tables, and they used to be empty until a bot logged in. ChatHelper.cpp.
+    ai::ChatHelper::InitTables();
+
     // The path used to be fixed at build time - SYSCONFDIR "aiplayerbot.conf" -
     // so a server run from anywhere other than the prefix it was configured with
     // could not find its bot settings, and the module switched itself off with a

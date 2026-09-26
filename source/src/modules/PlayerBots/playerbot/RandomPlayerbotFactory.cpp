@@ -12,6 +12,7 @@
 #include "SystemConfig.h"
 #include "SocialMgr.h"
 #include "Guild/GuildMgr.h"
+#include "BotNpc.h"
 
 #ifndef MANGOSBOT_ZERO
 #ifdef CMANGOS
@@ -23,6 +24,7 @@
 #endif
 
 #include <random>
+#include <set>
 
 std::map<uint8, std::vector<uint8> > RandomPlayerbotFactory::availableRaces;
 
@@ -627,6 +629,19 @@ void RandomPlayerbotFactory::CreateRandomBots()
             }
         }
 
+        /*
+         * NEVER A BOT NPC'S BODY. `.npcbot place` makes a body on the first
+         * RNDBOT account with room, so the prefix alone would sweep every bot
+         * NPC in the world. A body standing somewhere is known by its spawn; an
+         * unplaced one keeps its design's name so the next place adopts it, so
+         * the names are kept too. BotNpcMgr::Load runs in
+         * SetInitialWorldSettings, long before this does.
+         */
+        std::set<std::string> botNpcNames;
+        for (const auto& itr : sBotNpcMgr.All())
+            botNpcNames.insert(itr.second.name);
+        uint32 sparedBodies = 0;
+
         auto results = LoginDatabase.PQuery("SELECT id FROM account where username like '%s%%'", sPlayerbotAIConfig.randomBotAccountPrefix.c_str());
         if (results)
         {
@@ -640,7 +655,7 @@ void RandomPlayerbotFactory::CreateRandomBots()
                 if (!delFriends)
                 {
                     // existing characters list
-                    auto result = CharacterDatabase.PQuery("SELECT guid FROM characters WHERE account='%u'", accId);
+                    auto result = CharacterDatabase.PQuery("SELECT guid, name FROM characters WHERE account='%u'", accId);
                     if (result)
                     {
                         do
@@ -648,6 +663,12 @@ void RandomPlayerbotFactory::CreateRandomBots()
                             Field* fields = result->Fetch();
                             uint32 guidlo = fields[0].GetUInt32();
                             ObjectGuid guid = ObjectGuid(HIGHGUID_PLAYER, guidlo);
+
+                            if (sBotNpcMgr.GetSpawn(guidlo) || botNpcNames.count(fields[1].GetCppString()))
+                            {
+                                ++sparedBodies;
+                                continue;
+                            }
 
                             // if bot is someone's friend - don't delete it
                             if ((find(botFriends.begin(), botFriends.end(), guidlo) != botFriends.end()) && !delFriends)
@@ -657,10 +678,12 @@ void RandomPlayerbotFactory::CreateRandomBots()
                             uint32 guildId = Player::GetGuildIdFromDB(guid);
                             if (guildId && !delFriends)
                             {
+                                // A guild_member row can outlive its guild, and
+                                // the leader lookup below would dereference null.
                                 Guild* guild = sGuildMgr.GetGuildById(guildId);
-                                uint32 accountId = sObjectMgr.GetPlayerAccountIdByGUID(guild->GetLeaderGuid());
+                                uint32 accountId = guild ? sObjectMgr.GetPlayerAccountIdByGUID(guild->GetLeaderGuid()) : 0;
 
-                                if (find(botAccounts.begin(), botAccounts.end(), accountId) == botAccounts.end())
+                                if (guild && find(botAccounts.begin(), botAccounts.end(), accountId) == botAccounts.end())
                                     continue;
                             }
 
@@ -675,14 +698,32 @@ void RandomPlayerbotFactory::CreateRandomBots()
                 else
                 {
                     bar.step();
-                    sAccountMgr.DeleteAccount(accId);
+
+                    // The whole account goes here, so an account holding a
+                    // body is kept whole.
+                    bool holdsBody = false;
+                    if (auto chars = CharacterDatabase.PQuery("SELECT guid, name FROM characters WHERE account='%u'", accId))
+                    {
+                        do
+                        {
+                            Field* f = chars->Fetch();
+                            if (sBotNpcMgr.GetSpawn(f[0].GetUInt32()) || botNpcNames.count(f[1].GetCppString()))
+                                holdsBody = true;
+                        } while (!holdsBody && chars->NextRow());
+                    }
+
+                    if (holdsBody)
+                        ++sparedBodies;
+                    else
+                        sAccountMgr.DeleteAccount(accId);
                 }
 
             } while (results->NextRow());
         }
 
         CharacterDatabase.Execute("DELETE FROM ai_playerbot_random_bots WHERE bot NOT IN (SELECT guid FROM characters)");
-        sLog.outString("Random bot characters deleted");
+        // Characters in the first mode, whole accounts in the second.
+        sLog.outString("Random bot characters deleted. %u kept for bot NPCs.", sparedBodies);
     }
 
     //Delete temporary bots.
