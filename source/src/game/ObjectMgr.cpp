@@ -7988,9 +7988,40 @@ SkillRangeType GetSkillRangeType(SkillLineEntry const* skill, SkillRaceClassInfo
     return SKILL_RANGE_LEVEL;
 }
 
+/*
+ * THE game_tele LOCK. `.tele add` and `.tele del` write the map from whichever
+ * thread ran the command, and SCRIPT_COMMAND_TELEPORT_RANDOM reads it from map
+ * threads, so the writers here and CopyGameTele take this. The older readers
+ * (the `.tele` command itself, LFT) do not; they were unguarded before it.
+ * A static rather than a member so ObjectMgr.h, which 131 files include, is
+ * not touched.
+ */
+static std::mutex s_gameTeleLock;
+
+bool CopyGameTele(uint32 id, GameTele& out)
+{
+    std::lock_guard<std::mutex> guard(s_gameTeleLock);
+    GameTele const* tele = sObjectMgr.GetGameTele(id);
+    if (!tele)
+        return false;
+    out = *tele;
+    return true;
+}
+
+// Every place whose lower-case name contains `part`, copied under the lock,
+// for `.lookup tele`. Extern in Commands.cpp for the reason CopyGameTele is.
+void FindGameTeles(std::wstring const& part, std::vector<std::pair<uint32, GameTele>>& out)
+{
+    std::lock_guard<std::mutex> guard(s_gameTeleLock);
+    for (auto const& itr : sObjectMgr.GetGameTeleMap())
+        if (itr.second.wnameLow.find(part) != std::wstring::npos)
+            out.emplace_back(itr.first, itr.second);
+}
+
 void ObjectMgr::LoadGameTele()
 {
-    m_GameTeleMap.clear();                                  // for reload case
+    // Built aside and swapped in, so the lock is not held across the query.
+    GameTeleMap loaded;
 
     std::unique_ptr<QueryResult> result(WorldDatabase.Query("SELECT `id`, `position_x`, `position_y`, `position_z`, `orientation`, `map`, `name` FROM `game_tele`"));
 
@@ -8027,9 +8058,12 @@ void ObjectMgr::LoadGameTele()
 
         wstrToLower(gt.wnameLow);
 
-        m_GameTeleMap[id] = gt;
+        loaded[id] = gt;
     }
     while (result->NextRow());
+
+    std::lock_guard<std::mutex> guard(s_gameTeleLock);
+    m_GameTeleMap.swap(loaded);
 }
 
 GameTele const* ObjectMgr::GetGameTele(std::string const& name) const
@@ -8055,6 +8089,9 @@ GameTele const* ObjectMgr::GetGameTele(std::string const& name) const
 
 bool ObjectMgr::AddGameTele(GameTele& tele)
 {
+    // The whole function: finding the max id reads the map too.
+    std::lock_guard<std::mutex> guard(s_gameTeleLock);
+
     // find max id
     uint32 new_id = 0;
     for (const auto & itr : m_GameTeleMap)
@@ -8086,6 +8123,7 @@ bool ObjectMgr::DeleteGameTele(std::string const& name)
     // converting string that we try to find to lower case
     wstrToLower(wname);
 
+    std::lock_guard<std::mutex> guard(s_gameTeleLock);
     for (GameTeleMap::iterator itr = m_GameTeleMap.begin(); itr != m_GameTeleMap.end(); ++itr)
     {
         if (itr->second.wnameLow == wname)

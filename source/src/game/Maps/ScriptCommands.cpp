@@ -18,7 +18,6 @@
 
 #include "Map.h"
 #include "LuaScene.h"
-#include "DialogDest.h"
 #include "BotNpc.h"
 #include "ScriptMgr.h"
 #include "GridSearchers.h"
@@ -1527,16 +1526,18 @@ bool Map::ScriptCommand_WalkFromPost(const ScriptInfo& script, WorldObject* sour
 /*
  * SCRIPT_COMMAND_TELEPORT_RANDOM (100)
  *
- * Sends the player to one of a named list of places, picked when the button is
- * pressed. `datalong` is a dialog_dest_list row.
+ * Sends the player to one of up to eight `.tele` places, picked when the button
+ * is pressed. `datalong`-`datalong4` and `dataint`-`dataint4` are game_tele ids;
+ * 0 is an unused slot. One place is a fixed teleport, several are a random one.
  *
- * THE LIST, NOT THE PLACE, AND THAT IS THE WHOLE REASON THIS COMMAND EXISTS.
- * Everywhere else in this editor a script stores coordinates -- MOVE_TO does,
- * TELEPORT_TO does -- so renaming or deleting a spot cannot reach back into a
- * script already written. A random pick cannot work that way: the choice has to
- * happen at press time, so the row holds a reference and DialogDest resolves it.
- * The cost is the one that rule was avoiding, and it is paid knowingly: delete a
- * list and every button naming it does nothing but write a log line.
+ * GAME_TELE, NOT A TABLE OF OUR OWN. Until 2026-09-27 this named a list in
+ * dialog_dest, filled by a `.dest` command of ours. That was a second copy of
+ * what `.tele add` already does, next to 654 named places Turtle ships. Eight
+ * slots is the price of not having a list table: more would need one again.
+ *
+ * THE PLACE IS A REFERENCE, resolved at press time. `.tele del` does not know
+ * about buttons, so a slot naming a deleted place is skipped with a log line,
+ * and a button whose every place is gone does nothing.
  *
  * THE PLAYER, FROM EITHER SIDE. A gossip script arrives source = NPC,
  * target = player, so taking the source the way TELEPORT_TO (6) does would
@@ -1550,6 +1551,13 @@ bool Map::ScriptCommand_WalkFromPost(const ScriptInfo& script, WorldObject* sour
  * itself away from its post rather than the person who pressed it -- silently,
  * because from the core's side that is a perfectly good teleport.
  */
+
+// ObjectMgr.cpp. A COPY under the game_tele lock: `.tele add` and `.tele del`
+// change the map from whichever thread ran the command, and a pointer into it
+// can move under a rehash. Declared here rather than in ObjectMgr.h, which 131
+// files include.
+extern bool CopyGameTele(uint32 id, GameTele& out);
+
 bool Map::ScriptCommand_TeleportRandom(ScriptInfo const& script, WorldObject* source, WorldObject* target)
 {
     Player* pPlayer = ToPlayer(target);
@@ -1562,24 +1570,30 @@ bool Map::ScriptCommand_TeleportRandom(ScriptInfo const& script, WorldObject* so
         return ShouldAbortScript(script);
     }
 
-    auto data = DialogDest::Data();
-    auto it = data->lists.find(script.teleportRandom.listId);
-    if (it == data->lists.end())
+    uint32 ids[8];
+    for (uint32 i = 0; i < 4; ++i)
     {
-        sLog.outError("SCRIPT_COMMAND_TELEPORT_RANDOM (script id %u) wants dialog_dest_list %u, which is not loaded.", script.id, script.teleportRandom.listId);
-        return ShouldAbortScript(script);
+        ids[i] = script.teleportRandom.teleA[i];
+        ids[4 + i] = script.teleportRandom.teleB[i];
     }
 
-    // An EMPTY LIST is the ordinary state of one just named in game, so this is
-    // the failure a button hits most often. It says which list by name, because
-    // the number is not what the person who typed `.dest` is holding.
-    if (it->second.points.empty())
+    std::vector<GameTele> places;
+    for (uint32 id : ids)
     {
-        sLog.outError("SCRIPT_COMMAND_TELEPORT_RANDOM (script id %u): destination list \"%s\" (%u) is empty, skipping.", script.id, it->second.name.c_str(), script.teleportRandom.listId);
-        return ShouldAbortScript(script);
+        if (!id)
+            continue;
+        GameTele tele;
+        if (CopyGameTele(id, tele))
+            places.push_back(tele);
+        else
+            sLog.outError("SCRIPT_COMMAND_TELEPORT_RANDOM (script id %u): game_tele %u is gone, skipping that place.", script.id, id);
     }
 
-    DialogDestPoint const& p = it->second.points[urand(0, (uint32)it->second.points.size() - 1)];
+    if (places.empty())
+    {
+        sLog.outError("SCRIPT_COMMAND_TELEPORT_RANDOM (script id %u): none of its places exist, nobody is moved.", script.id);
+        return ShouldAbortScript(script);
+    }
 
     /*
      * UNIFORM, AND IT MAY PICK WHERE THEY ALREADY ARE. Pressing twice and not
@@ -1587,9 +1601,10 @@ bool Map::ScriptCommand_TeleportRandom(ScriptInfo const& script, WorldObject* so
      * or a rule about how near is too near, and neither is something a button
      * labelled "send me somewhere" has promised.
      */
-    if (!pPlayer->TeleportTo(p.map, p.x, p.y, p.z, p.o))
+    GameTele const& p = places[urand(0, (uint32)places.size() - 1)];
+    if (!pPlayer->TeleportTo(p.mapId, p.x, p.y, p.z, p.o))
     {
-        sLog.outError("SCRIPT_COMMAND_TELEPORT_RANDOM (script id %u): %s could not be sent to \"%s\" on map %u.", script.id, pPlayer->GetName(), p.name.c_str(), p.map);
+        sLog.outError("SCRIPT_COMMAND_TELEPORT_RANDOM (script id %u): %s could not be sent to \"%s\" on map %u.", script.id, pPlayer->GetName(), p.name.c_str(), p.mapId);
         return ShouldAbortScript(script);
     }
 

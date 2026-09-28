@@ -1486,14 +1486,50 @@ bool ComfyCommands::HandleHouseVisitCommand(ChatHandler* handler, char* args)
         return false;
     }
 
+    // An empty error with no trip is a KNOCK on a locked door, which printed
+    // its own line; that is the command working, not failing.
     std::string error;
-    if (!sHouseMgr.VisitHouse(handler->m_session->GetPlayer(), name, error))
+    if (!sHouseMgr.VisitHouse(handler->m_session->GetPlayer(), name, error) && !error.empty())
     {
         handler->SendSysMessage(error.c_str());
         handler->SetSentErrorMessage(true);
         return false;
     }
     return true;
+}
+
+// .house admit|refuse <name> -- the owner's answer to a knock on a locked door.
+// The ComfyUI popup types these; they work by hand for anybody without it.
+bool ComfyCommands::HouseAnswerKnock(ChatHandler* handler, char* args, bool admit)
+{
+    char* name = handler->ExtractQuotedOrLiteralArg(&args);
+    if (!name)
+    {
+        handler->SendSysMessage(admit ? "Usage: .house admit <character name>"
+                                      : "Usage: .house refuse <character name>");
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+
+    std::string error;
+    if (!sHouseMgr.AnswerKnock(handler->m_session->GetPlayer(), name, admit, error))
+    {
+        if (!error.empty())
+            handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+    return true;
+}
+
+bool ComfyCommands::HandleHouseAdmitCommand(ChatHandler* handler, char* args)
+{
+    return HouseAnswerKnock(handler, args, true);
+}
+
+bool ComfyCommands::HandleHouseRefuseCommand(ChatHandler* handler, char* args)
+{
+    return HouseAnswerKnock(handler, args, false);
 }
 
 // .house settings [<name> [on|off]] -- the handful of choices that are the
@@ -1965,6 +2001,7 @@ void HousePrintHouseHelp(Player* player)
     handler.SendSysMessage("  .house storage         a shelf for the crates you are not using");
     handler.SendSysMessage("  .house settings        how placing and the selection glow behave");
     handler.SendSysMessage("  .house visit <name>    their house, while they lead your party");
+    handler.SendSysMessage("  .house admit <name>    let in a knock, while your door is locked");
     handler.SendSysMessage("  /house opens the addon, which is buttons for all of it.");
 }
 

@@ -54,6 +54,7 @@
 #include "Player.h"
 #include "ScriptMgr.h"
 #include "ScriptedGossip.h"
+#include "Timer.h"
 #include "WorldSession.h"
 
 #include <cctype>
@@ -725,6 +726,7 @@ void HouseMgr::CheckPortal(GameObject* portal, bool leaving)
         return;
 
     time_t const now = time(nullptr);
+    uint32 const nowMs = WorldTimer::getMSTime();
 
     std::list<Player*> players;
     MaNGOS::AnyPlayerInObjectRangeCheck check(portal, HOUSE_PORTAL_RANGE);
@@ -754,6 +756,26 @@ void HouseMgr::CheckPortal(GameObject* portal, bool leaving)
         // reason but cost: the cheap disqualifiers go first.
         if (!GetSetting(player, HOUSE_SETTING_WALK_IN))
             continue;
+
+        // ONE KNOCK PER STEP INTO THE RING. After a knock here, standing in
+        // the doorway does nothing, silently, until they walk out and back.
+        // Checked BEFORE the cooldown, because it is what keeps the touch
+        // alive: it has to see them on every poll, not one in twenty.
+        //
+        // A touch not seen for HOUSE_KNOCK_TOUCH_MS is a step that ended. That
+        // is judged here as well as in the sweep below, because the sweep only
+        // runs while this portal's grid is loaded, and a touch left behind by
+        // an unloaded grid must not mute the next real step in.
+        auto touch = m_knockTouch.find(player->GetGUIDLow());
+        if (touch != m_knockTouch.end() && touch->second.portalGuid == portal->GetGUIDLow())
+        {
+            if (WorldTimer::getMSTimeDiff(touch->second.lastSeen, nowMs) <= HOUSE_KNOCK_TOUCH_MS)
+            {
+                touch->second.lastSeen = nowMs;
+                continue;
+            }
+            m_knockTouch.erase(touch);
+        }
 
         auto itr = m_portalCooldown.find(player->GetGUIDLow());
         if (itr != m_portalCooldown.end() && itr->second > now)
@@ -788,6 +810,17 @@ void HouseMgr::CheckPortal(GameObject* portal, bool leaving)
             HousePartyHost host;
             if (GetPartyLeaderHouse(player, portalId, host))
             {
+                // A LOCKED DOOR MARKS THE STEP, whatever the knock answers:
+                // the knock itself, "wait", and "nobody is home" are all said
+                // once per step in, not once per cooldown.
+                House const* leaderHouse = GetHouseById(host.houseId);
+                if (leaderHouse && IsLocked(*leaderHouse))
+                {
+                    HouseKnockTouch& t = m_knockTouch[player->GetGUIDLow()];
+                    t.portalGuid = portal->GetGUIDLow();
+                    t.lastSeen   = nowMs;
+                }
+
                 std::string error;
                 if (VisitPartyLeaderHouse(player, ObjectGuid(), portalId, error))
                     ChatHandler(player).PSendSysMessage("You follow your party into %s's home.", host.leaderName.c_str());
@@ -818,6 +851,13 @@ void HouseMgr::CheckPortal(GameObject* portal, bool leaving)
     // is a map that only ever grows unless somebody sweeps it.
     for (auto itr = m_portalCooldown.begin(); itr != m_portalCooldown.end();)
         itr = (itr->second <= now) ? m_portalCooldown.erase(itr) : ++itr;
+
+    // A step that ended: nobody by that guid was seen in this ring lately.
+    // Only this portal's touches, since only this portal's poll sees them.
+    for (auto itr = m_knockTouch.begin(); itr != m_knockTouch.end();)
+        itr = (itr->second.portalGuid == portal->GetGUIDLow() &&
+               WorldTimer::getMSTimeDiff(itr->second.lastSeen, nowMs) > HOUSE_KNOCK_TOUCH_MS)
+            ? m_knockTouch.erase(itr) : ++itr;
 }
 
 bool HouseMgr::IsHomePortal(House const& house, HousePortal const& portal) const
@@ -1505,7 +1545,12 @@ static bool GossipHello_go_house_portal_mark(Player* player, GameObject* go)
     HousePartyHost host;
     if (sHouseMgr.GetPartyLeaderHouse(player, id, host))
     {
-        std::string const label = "Join " + host.leaderName + " inside";
+        // A LOCKED DOOR SAYS SO BEFORE THE CLICK. Same action either way, since
+        // VisitPartyLeaderHouse decides; only the promise on the row changes.
+        House const* leaderHouse = sHouseMgr.GetHouseById(host.houseId);
+        std::string const label = (leaderHouse && sHouseMgr.IsLocked(*leaderHouse))
+                                ? "Knock on " + host.leaderName + "'s door"
+                                : "Join " + host.leaderName + " inside";
         menu.AddMenuItem(HOUSE_GOSSIP_ICON, label.c_str(), HOUSE_PORTAL_SENDER, ACT_PORTAL_PARTY);
         sHouseMgr.SetPartyOffer(player, host.leaderGuid);
     }
@@ -1697,6 +1742,7 @@ namespace
         ACT_CTL_SETTINGS  = 9,   // -> settings page
         ACT_CTL_BACK      = 10,  // -> main page
         ACT_CTL_LEAVE     = 11,  // out through the exit, without walking into it
+        ACT_CTL_LOCK      = 12,  // the front door, locked or open
 
         // One action per setting, and they are numbered FROM a base rather than
         // listed, so adding a setting to the HouseSetting enum puts a row on
@@ -1739,6 +1785,18 @@ namespace
         menu.AddMenuItem(HOUSE_GOSSIP_ICON,
                          sHouseMgr.IsEditingAll(player) ? "Edit mode: on" : "Edit mode: off",
                          HOUSE_CONTROL_SENDER, ACT_CTL_EDIT);
+
+        // THE LOCK IS ON THIS PAGE, not only under Settings, because it is
+        // something you change while people are about rather than once. Drawn
+        // only in your OWN house: the setting is per account, and a developer
+        // at a template's gear would otherwise be toggling their own door from
+        // somebody else's room.
+        if (sHouseMgr.GetHouseByAccount(player->GetSession()->GetAccountId()) ==
+            sHouseMgr.GetHouseByExitMarker(go->GetObjectGuid()))
+            menu.AddMenuItem(HOUSE_GOSSIP_ICON,
+                             sHouseMgr.GetSetting(player, HOUSE_SETTING_LOCKED) ? "Door: locked" : "Door: open",
+                             HOUSE_CONTROL_SENDER, ACT_CTL_LOCK);
+
         menu.AddMenuItem(HOUSE_GOSSIP_ICON, "Settings",             HOUSE_CONTROL_SENDER, ACT_CTL_SETTINGS);
         menu.AddMenuItem(HOUSE_GOSSIP_ICON, "House Manual",         HOUSE_CONTROL_SENDER, ACT_CTL_HELP);
         menu.AddMenuItem(HOUSE_GOSSIP_ICON, " ",                    HOUSE_CONTROL_SENDER, ACT_CTL_BACK);
@@ -1791,6 +1849,11 @@ namespace
             // changing it is not yours to do -- a list describes, a menu
             // offers, and those are different promises.
             if (HouseMgr::SettingIsGlobal(s) && !staff)
+                continue;
+
+            // The lock has its own row on the main page, and one control in
+            // two places is two labels that can disagree about the state.
+            if (s == HOUSE_SETTING_LOCKED)
                 continue;
 
             // "Point-and-click placing: on" -- the TITLE rather than the word
@@ -1894,6 +1957,16 @@ static bool GossipSelect_go_house_control(Player* player, GameObject* go, uint32
                 ChatHandler(player).SendSysMessage(error.c_str());
             return true;
         }
+
+        // Re-sends the page like the edit-mode row: the label is the answer.
+        // Refused outside your own house for the reason the row is not drawn
+        // there; the index arrives off the wire.
+        case ACT_CTL_LOCK:
+            if (sHouseMgr.GetHouseByAccount(player->GetSession()->GetAccountId()) == house)
+                sHouseMgr.SetSetting(player, HOUSE_SETTING_LOCKED,
+                                     sHouseMgr.GetSetting(player, HOUSE_SETTING_LOCKED) ? 0 : 1);
+            SendControlMain(player, go);
+            return true;
 
         case ACT_CTL_SETTINGS:
             SendControlSettings(player, go);

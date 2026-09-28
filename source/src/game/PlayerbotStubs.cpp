@@ -48,6 +48,8 @@ bool ComfyCommands::HandleNpcBotCommand(ChatHandler* handler, char*)
     { handler->SendSysMessage("Bot NPCs need the playerbots module (BUILD_PLAYERBOTS=OFF)."); return true; }
 bool ComfyCommands::HandleAddDressingRoomCommand(ChatHandler* handler, char*)
     { handler->SendSysMessage("Saved looks need the playerbots module (BUILD_PLAYERBOTS=OFF)."); return true; }
+bool ComfyCommands::HandleCompanionsCommand(ChatHandler* handler, char*)
+    { handler->SendSysMessage("No companions out."); return true; }
 bool ChatHandler::HandleRandomPlayerbotCommand(char*)
     { SendSysMessage("Random playerbots not built (BUILD_PLAYERBOTS=OFF)."); return true; }
 bool ChatHandler::HandleAhBotCommand(char*)

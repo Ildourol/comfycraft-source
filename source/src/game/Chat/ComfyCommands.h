@@ -24,14 +24,13 @@ struct ComfyCommands
     static bool HandleSetLevelCommand(ChatHandler* handler, char* args);
     static bool HandleEffectCommand(ChatHandler* handler, char* args);
     static bool HandleEmoteCommand(ChatHandler* handler, char* args);
-    static bool HandleDestCommand(ChatHandler* handler, char* args);
     static bool HandleSpotCommand(ChatHandler* handler, char* args);
     static bool HandleSpotFromCommand(ChatHandler* handler, char* args);
+    static bool HandleLookupTeleCommand(ChatHandler* handler, char* args);
     static bool HandleSceneCommand(ChatHandler* handler, char* args);
     static bool HandleReloadBotNpcCommand(ChatHandler* handler, char* args);
     static bool HandleReloadBroadcastTextCommand(ChatHandler* handler, char* args);
     static bool HandleReloadCustomMerchantCommand(ChatHandler* handler, char* args);
-    static bool HandleReloadDialogDestsCommand(ChatHandler* handler, char* args);
     static bool HandleReloadDialogScenesCommand(ChatHandler* handler, char* args);
     static bool HandleReloadGameObjectTemplateCommand(ChatHandler* handler, char* args);
     static bool HandleReloadRentedMountCommand(ChatHandler* handler, char* args);
@@ -44,6 +43,9 @@ struct ComfyCommands
     static bool HandleHouseGoCommand(ChatHandler* handler, char* args);
     static bool HandleHouseResetCommand(ChatHandler* handler, char* args);
     static bool HandleHouseVisitCommand(ChatHandler* handler, char* args);
+    static bool HandleHouseAdmitCommand(ChatHandler* handler, char* args);
+    static bool HandleHouseRefuseCommand(ChatHandler* handler, char* args);
+    static bool HouseAnswerKnock(ChatHandler* handler, char* args, bool admit);
     static bool HandleHouseEditCommand(ChatHandler* handler, char* args);
     static bool HandleHouseStorageCommand(ChatHandler* handler, char* args);
     static bool HandleHouseSettingCommand(ChatHandler* handler, char* args);
@@ -92,4 +94,7 @@ struct ComfyCommands
     // PlayerbotStubs.cpp for a build without it.
     static bool HandleNpcBotCommand(ChatHandler* handler, char* args);
     static bool HandleAddDressingRoomCommand(ChatHandler* handler, char* args);
+
+    // playerbot/CompanionOwnership.cpp, also stubbed in PlayerbotStubs.cpp.
+    static bool HandleCompanionsCommand(ChatHandler* handler, char* args);
 };

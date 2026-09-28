@@ -606,6 +606,19 @@ enum HouseSetting
     // Get/SetSetting have always dealt in uint32.
     HOUSE_SETTING_ARRIVE_PING = 3,
 
+    // 1 = the front door is locked: a party member who tries to come in
+    // KNOCKS instead, and the owner answers with a popup. 0 = the party walks
+    // straight in, which is how every house behaved before this existed.
+    //
+    // THE FIRST SETTING THAT DEFAULTS TO 0. "Every default is 1" was only ever
+    // true because 1 was what housing did before each setting existed; the
+    // same reasoning gives 0 here, so a house nobody has touched is unlocked.
+    //
+    // IT GATES THE DOOR, NOT THE ROOM. Guests already inside when it is locked
+    // stay, and the party is still the whole permission: the lock only adds
+    // the owner's yes to it. So EvictLapsedVisitors is unchanged.
+    HOUSE_SETTING_LOCKED = 4,
+
     HOUSE_SETTING_MAX
 };
 
@@ -906,6 +919,42 @@ struct HousePartyHost
     std::string leaderName;
 };
 
+// ONE NUMBER FOR THREE THINGS: how long a knock can be answered, how long the
+// addon's popup stays up, and the least time between two popups from one
+// visitor. 30 s is short enough to wait out and long enough that the owner is
+// not pestered; past that, the owner leads the party and can kick them.
+#define HOUSE_KNOCK_SECONDS     30
+
+// How long a player can go unseen by a portal's poll and still count as
+// standing in its ring. The poll runs every HOUSE_PORTAL_INTERVAL (250 ms), so
+// this allows for a missed poll or two without calling it a fresh step.
+#define HOUSE_KNOCK_TOUCH_MS    1000
+
+// A KNOCK ON A LOCKED DOOR. Memory only: a restart losing one costs a second
+// knock.
+//
+// `portalId` is the door they knocked at, so an admitted guest leaves by it
+// like any other visitor. 0 for `.house visit`, which has no door.
+//
+// `answered` keeps the row after Open or Deny, until it expires, so that a
+// Deny is not followed by a fresh popup the moment they step back in.
+struct HouseKnock
+{
+    uint32     houseId = 0;
+    uint32     portalId = 0;
+    time_t     expires = 0;
+    bool       answered = false;
+};
+
+// A player standing in a portal's ring after a knock there. The knock happens
+// once per step into the ring; standing still in it does nothing more until
+// they walk out and back.
+struct HouseKnockTouch
+{
+    uint32     portalGuid = 0;
+    uint32     lastSeen = 0;                            // WorldTimer ms
+};
+
 class HouseMgr
 {
     public:
@@ -1074,6 +1123,15 @@ class HouseMgr
         // "the leader I named" from "whoever leads now". Taking it clears it.
         void SetPartyOffer(Player* player, ObjectGuid leaderGuid);
         ObjectGuid TakePartyOffer(Player* player);
+
+        // THE LOCK. Read off the OWNER's account, never the visitor's, so it
+        // is one answer for everybody standing at that door.
+        bool IsLocked(House const& house) const;
+
+        // The owner's answer to a knock, from `.house admit` and `.house
+        // refuse`, which is what the ComfyUI popup types. Everything the knock
+        // was made on is checked again: the popup is a photograph too.
+        bool AnswerKnock(Player* owner, std::string const& visitorName, bool admit, std::string& error);
 
         // THE SELECTED OBJECT -- "the one I mean". Housing commands are
         // position-based because gameobjects cannot be targeted in 1.12, and
@@ -1781,6 +1839,11 @@ class HouseMgr
         // the guest list and by a party following its leader, so the two can
         // never drift on the forced instance or the teleport flag.
         bool   EnterHouseAsVisitor(Player* player, House& house, std::string& error);
+
+        // A party member at a LOCKED door: record the knock and ask the owner.
+        // Always returns false, since nobody travelled. `error` is empty when
+        // the knock went out, because the knock prints its own line.
+        bool   Knock(Player* visitor, House const& house, HousePartyHost const& host, uint32 portalId, std::string& error);
         uint32 AllocateObjectGuid();
 
         // Copy a template's frozen rows into a house: fresh guids, source =
@@ -1898,6 +1961,12 @@ class HouseMgr
         // quietly honoured against somebody else. Memory only, and cleared the
         // moment it is read: it is true only for as long as one menu is open.
         std::map<uint32, ObjectGuid> m_partyOffer;       // player guid -> the leader offered
+
+        // Knocks waiting on an owner. Keyed by the VISITOR, so one person has
+        // one knock at a time: standing in the ring re-trips the door every
+        // few seconds, and each trip must not be a new popup.
+        std::map<uint32, HouseKnock> m_knocks;           // visitor guid -> knock
+        std::map<uint32, HouseKnockTouch> m_knockTouch;  // visitor guid -> ring they knocked from
 
         uint32 m_portalDisplay;                          // 0 = whatever the template says
         float  m_portalScale;

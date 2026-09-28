@@ -814,14 +814,17 @@ void ScriptMgr::LoadScripts(ScriptMapMap& scripts, const char* tablename)
             }
             case SCRIPT_COMMAND_TELEPORT_RANDOM:
             {
-                // Whether the LIST exists is checked at run time, not here, for
-                // the same reason RUN_LUA checks its scene there: dialog_dest is
-                // loaded by its own loader and the order the two run in is not
-                // something this validation should depend on. Zero is the only
-                // value that cannot be a list.
-                if (!tmp.teleportRandom.listId)
+                // Whether each PLACE exists is checked at run time, not here:
+                // `.tele add` and `.tele del` change game_tele while the server
+                // runs, so a check at load would be stale by the first press.
+                // A row naming no place at all is one nobody filled in.
+                bool any = false;
+                for (uint32 i = 0; i < 4; ++i)
+                    if (tmp.teleportRandom.teleA[i] || tmp.teleportRandom.teleB[i])
+                        any = true;
+                if (!any)
                 {
-                    sLog.outErrorDb("Table `%s` has datalong = 0 in SCRIPT_COMMAND_TELEPORT_RANDOM for script id %u, which is not a dialog_dest_list row.", tablename, tmp.id);
+                    sLog.outErrorDb("Table `%s` has no game_tele id in SCRIPT_COMMAND_TELEPORT_RANDOM for script id %u.", tablename, tmp.id);
                     continue;
                 }
                 break;
@@ -829,9 +832,9 @@ void ScriptMgr::LoadScripts(ScriptMapMap& scripts, const char* tablename)
             case SCRIPT_COMMAND_SET_STORY_FLAG:
             {
                 // The NAME table is in tw_world and this loader has no business
-                // reaching across for it, the same call RUN_LUA and
-                // TELEPORT_RANDOM make one case up. Zero is the only value that
-                // cannot be a flag, and it means a row nobody filled in.
+                // reaching across for it, the same call RUN_LUA makes. Zero is
+                // the only value that cannot be a flag, and it means a row
+                // nobody filled in.
                 if (!tmp.storyFlag.flagId)
                 {
                     sLog.outErrorDb("Table `%s` has datalong = 0 in SCRIPT_COMMAND_SET_STORY_FLAG for script id %u, which is not a story flag.", tablename, tmp.id);

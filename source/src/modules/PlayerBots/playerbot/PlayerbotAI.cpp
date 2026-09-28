@@ -7959,17 +7959,11 @@ bool ComfyCommands::HandleNpcBotCommand(ChatHandler* handler, char* args)
         return true;
     }
 
+    // `add` and `del` are `place` and `unplace` by other names: they are the
+    // words people reach for. `add` used to refuse with a pointer to `place`,
+    // from when it made a character rather than standing up a design.
     if (action == "add")
-    {
-        handler->SendSysMessage("`.npcbot add` is gone. A bot NPC is a DESIGN now -- made on the website, "
-                       "named, raced and dressed there -- and `.npcbot place <name>` is what stands "
-                       "one up.");
-        handler->SetSentErrorMessage(true);
-        return false;
-    }
-
-    // `del` is `unplace` by another name: it is the word people reach for, and
-    // what it does is exactly unplace -- the body goes, the design stays.
+        action = "place";
     if (action == "del")
         action = "unplace";
 
@@ -7978,7 +7972,7 @@ bool ComfyCommands::HandleNpcBotCommand(ChatHandler* handler, char* args)
         action != "emote")
     {
         handler->SendSysMessage("Usage: .npcbot place|move|reset|save|dress|menu|idle|emote|unplace <name or #id>, or .npcbot list");
-        handler->SendSysMessage("  .npcbot place <name>      stand the design called <name> here, for good");
+        handler->SendSysMessage("  .npcbot place <name>      stand the design called <name> here, for good; also .npcbot add");
         handler->SendSysMessage("  .npcbot move <name>       bring it here for now; its post does not change");
         handler->SendSysMessage("  .npcbot reset <name>      send it back to its post");
         handler->SendSysMessage("  .npcbot save <name>       make where it is standing now its post");

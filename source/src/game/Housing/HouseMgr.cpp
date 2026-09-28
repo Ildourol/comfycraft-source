@@ -421,6 +421,7 @@ namespace
         { "glow",                    "Selection glow",          1, false, 0,   1     },
         { "walk_through_portals",    "Walk through portals",    1, false, 0,   1     },
         { "arrival_ping_ms",         "Arrival ping delay",   3000, true,  500, 30000 },
+        { "locked",                  "Door locked",             0, false, 0,   1     },
     };
 
     bool SettingIsBoolean(HouseSetting setting)
@@ -491,6 +492,9 @@ std::string HouseMgr::SettingHint(HouseSetting setting)
 
         case HOUSE_SETTING_WALK_IN:
             return "off: use the gear's Go home or Leave instead";
+
+        case HOUSE_SETTING_LOCKED:
+            return "off: your party walks straight in";
 
         // Not an "off:" line, because there is no off. What this one needs to
         // say is which way is safe to be wrong: too low and people standing in
@@ -1965,6 +1969,13 @@ bool HouseMgr::VisitHouse(Player* player, std::string const& ownerName, std::str
         return false;
     }
 
+    // THE LOCK GATES THE PARTY TICKET, and only that. Staff with no party are
+    // on their own bypass, which the lock is not about; staff who ARE in the
+    // party knock like anybody else, which is also what makes this testable
+    // from a GM account.
+    if (following && IsLocked(*house))
+        return Knock(player, *house, host, 0, error);
+
     return EnterHouseAsVisitor(player, *house, error);
 }
 
@@ -2106,6 +2117,139 @@ ObjectGuid HouseMgr::TakePartyOffer(Player* player)
     return guid;
 }
 
+//== the lock and the knock ==================================================
+//
+// A LOCKED DOOR TURNS THE PARTY TICKET INTO A QUESTION. The party is still the
+// whole permission; the lock adds the owner's yes on top, asked through a
+// ComfyUI popup (`CHOUSE K <name>`) and answered by the popup typing `.house
+// admit` or `.house refuse`. Nothing is written: a knock lives a minute in
+// memory, and a guest who is let in rides the same forced instance as any
+// other, so EvictLapsedVisitors still shows them out when the party ends.
+
+bool HouseMgr::IsLocked(House const& house) const
+{
+    return GetSetting(house.accountId, HOUSE_SETTING_LOCKED) != 0;
+}
+
+bool HouseMgr::Knock(Player* visitor, House const& house, HousePartyHost const& host, uint32 portalId, std::string& error)
+{
+    time_t const now = time(nullptr);
+
+    // Swept here rather than on a timer: the map holds a handful of rows at
+    // most, and this is the only place that adds to it.
+    for (auto itr = m_knocks.begin(); itr != m_knocks.end();)
+        itr = (itr->second.expires <= now) ? m_knocks.erase(itr) : ++itr;
+
+    // ONE POPUP PER VISITOR EVERY HOUSE_KNOCK_SECONDS, counted from the knock
+    // and not from the answer. CheckPortal already holds the walk-through to
+    // one knock per step into the ring; this holds every route, the gear and
+    // `.house visit` included, to one popup per half minute, answered or not.
+    auto pending = m_knocks.find(visitor->GetGUIDLow());
+    if (pending != m_knocks.end() && pending->second.houseId == house.id)
+    {
+        error = pending->second.answered
+              ? "Wait a moment before you knock again."
+              : "You have knocked. Wait for " + host.leaderName + ".";
+        return false;
+    }
+
+    // THE LEADER IS THE OWNER, because GetPartyLeader resolved the house from
+    // the leader's account, and an account has one character online at most.
+    // So the leader being offline is the owner being offline.
+    Player* owner = ObjectAccessor::FindPlayer(host.leaderGuid);
+    if (!owner || !owner->IsInWorld() || !owner->GetSession())
+    {
+        error = "Nobody is home.";
+        return false;
+    }
+
+    HouseKnock& knock = m_knocks[visitor->GetGUIDLow()];
+    knock.houseId  = house.id;
+    knock.portalId = portalId;
+    knock.expires  = now + HOUSE_KNOCK_SECONDS;
+
+    // The popup for ComfyUI, and one chat line so the knock is on record in
+    // the chat frame after the popup has gone.
+    owner->SendAddonMessage("CHOUSE", std::string("K ") + visitor->GetName());
+    ChatHandler(owner).PSendSysMessage("%s knocks at your door.", visitor->GetName());
+    ChatHandler(visitor).PSendSysMessage("You knock on %s's door.", host.leaderName.c_str());
+
+    error.clear();
+    return false;
+}
+
+bool HouseMgr::AnswerKnock(Player* owner, std::string const& visitorName, bool admit, std::string& error)
+{
+    if (!m_enabled || !owner || !owner->GetSession())
+        return false;
+
+    House* house = GetHouseByAccount(owner->GetSession()->GetAccountId());
+    if (!house)
+    {
+        error = "You do not have a house.";
+        return false;
+    }
+
+    std::string name = visitorName;
+    Player* visitor = normalizePlayerName(name) ? ObjectAccessor::FindPlayerByName(name.c_str()) : nullptr;
+
+    auto itr = visitor ? m_knocks.find(visitor->GetGUIDLow()) : m_knocks.end();
+    if (itr == m_knocks.end() || itr->second.houseId != house->id ||
+        itr->second.answered || itr->second.expires <= time(nullptr))
+    {
+        error = "Nobody by that name is at your door.";
+        return false;
+    }
+
+    HouseKnock const knock = itr->second;
+
+    // A DENY KEEPS THE ROW until the half minute is up, marked answered, so a
+    // visitor who steps straight back into the ring does not raise a second
+    // popup. Every Open ending, success or refusal, drops it: somebody the
+    // owner said yes to should not have to wait out a cooldown to try again.
+    if (!admit)
+    {
+        itr->second.answered = true;
+        ChatHandler(visitor).PSendSysMessage("%s does not let you in.", owner->GetName());
+        ChatHandler(owner).PSendSysMessage("You turn %s away.", visitor->GetName());
+        return true;
+    }
+
+    m_knocks.erase(itr);
+
+    // THE KNOCK WAS A PHOTOGRAPH. Half a minute is long enough for the party to
+    // break up, and the lock only ever added a yes to the party ticket; it
+    // never replaced it. Letting in somebody who has left the party would be
+    // undone by EvictLapsedVisitors half a second after they landed.
+    HousePartyHost host;
+    if (!GetPartyLeader(visitor, host) || host.leaderAccount != house->accountId)
+    {
+        error = std::string(visitor->GetName()) + " is not in your party any more.";
+        return false;
+    }
+    if (visitor->IsInCombat() || visitor->IsTaxiFlying() || visitor->IsBeingTeleported())
+    {
+        error = std::string(visitor->GetName()) + " cannot travel right now.";
+        return false;
+    }
+
+    std::string travelError;
+    if (!EnterHouseAsVisitor(visitor, *house, travelError))
+    {
+        error = std::string(visitor->GetName()) + " could not come in.";
+        return false;
+    }
+
+    // Leave takes them back out through the door they knocked at, the same
+    // bookkeeping VisitPartyLeaderHouse does. `.house visit` had no door, so
+    // Leave falls back down its ladder as it always has.
+    if (knock.portalId)
+        RememberEntrance(visitor, knock.portalId);
+
+    ChatHandler(visitor).PSendSysMessage("%s lets you in.", owner->GetName());
+    return true;
+}
+
 // EVERYTHING IS RE-CHECKED HERE. A gossip menu is a photograph: by the time an
 // option is clicked the group may have disbanded, promoted somebody else,
 // dropped this player, or the leader may have moved house. So the menu decides
@@ -2156,6 +2300,11 @@ bool HouseMgr::VisitPartyLeaderHouse(Player* player, ObjectGuid expectedLeader, 
         error = "Your party leader's home is not here any more.";
         return false;
     }
+
+    // Both routes through a door land here, the walk-through and the gear's
+    // "Join X inside", so this one line locks both.
+    if (IsLocked(*house))
+        return Knock(player, *house, host, portalId, error);
 
     if (!EnterHouseAsVisitor(player, *house, error))
         return false;

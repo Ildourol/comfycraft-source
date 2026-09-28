@@ -396,7 +396,8 @@ enum eScriptCommand
                                                             // datalong = copper amount
                                                             // Upstream numbers this 93, which is RECRUIT_BOT here.
     SCRIPT_COMMAND_TELEPORT_RANDOM          = 100,          // source = Player (from provided source or target)
-                                                            // datalong = dialog_dest_list.id
+                                                            // datalong-datalong4, dataint-dataint4 = game_tele.id,
+                                                            // up to 8, 0 = unused; one is picked at random
     /*
      * OURS. sql/custom/106 and 107.
      *
@@ -1226,7 +1227,9 @@ struct ScriptInfo
 
         struct                                              // SCRIPT_COMMAND_TELEPORT_RANDOM (100)
         {
-            uint32 listId;                                  // datalong: a row in dialog_dest_list
+            uint32 teleA[4];                                // datalong-datalong4: game_tele ids
+            uint32 dataFlags;                               // data_flags, sits between the two halves
+            uint32 teleB[4];                                // dataint-dataint4: game_tele ids
         } teleportRandom;
 
         struct                                              // SCRIPT_COMMAND_SET_STORY_FLAG (101)

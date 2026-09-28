@@ -2,6 +2,8 @@
 #include "CompanionOwnership.h"
 
 #include "AccountMgr.h"
+#include "Chat/Chat.h"
+#include "Chat/ComfyCommands.h"
 #include "Database/DatabaseEnv.h"
 #include "ObjectMgr.h"
 #include "Player.h"
@@ -386,4 +388,65 @@ namespace CompanionOwnership
                 ++n;
         return n;
     }
+}
+
+// `.companions` names your companions; `.companions sync` sends the same names
+// to ComfyUI and prints nothing.
+//
+// The addon needs this because nothing about a companion reaches the client: it
+// is an ordinary Player on a hidden pool account, so the bar cannot tell one
+// from a friend who joined you. The addon asks on every party change, which
+// covers hire, dismiss, relog and a parked companion coming back without a hook
+// in any of them, and it survives a /reload that a push would not.
+//
+// The reply is `CCOMP\t<name>;<name>`, empty after the tab when there are none.
+// Names rather than guids, because names are what the addon can compare against
+// its party. MAX_PER_PLAYER keeps it far under a chat packet's 255 bytes.
+bool ComfyCommands::HandleCompanionsCommand(ChatHandler* handler, char* args)
+{
+    Player* me = handler->m_session ? handler->m_session->GetPlayer() : nullptr;
+    if (!me)
+    {
+        handler->SendSysMessage("In game only.");
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+
+    std::vector<std::string> names;
+    for (uint32 guid : CompanionOwnership::CompanionsOf(me->GetGUIDLow()))
+    {
+        std::string name;
+        if (sObjectMgr.GetPlayerNameByGUID(ObjectGuid(HIGHGUID_PLAYER, guid), name))
+            names.push_back(name);
+    }
+
+    std::string list;
+    for (size_t i = 0; i < names.size(); ++i)
+    {
+        if (i)
+            list += ";";
+        list += names[i];
+    }
+
+    if (args && strcmp(args, "sync") == 0)
+    {
+        me->SendAddonMessage("CCOMP", list);
+        return true;
+    }
+
+    if (names.empty())
+    {
+        handler->SendSysMessage("No companions out.");
+        return true;
+    }
+
+    std::string shown;
+    for (size_t i = 0; i < names.size(); ++i)
+    {
+        if (i)
+            shown += ", ";
+        shown += names[i];
+    }
+    handler->PSendSysMessage("Companions: %s.", shown.c_str());
+    return true;
 }

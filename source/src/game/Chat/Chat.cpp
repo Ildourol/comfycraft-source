@@ -393,6 +393,10 @@ ChatCommand * ChatHandler::getCommandTable()
         // Before entrance, so `.house e` keeps meaning edit.
         { "edit",           SEC_PLAYER,        false, &ComfyCommands::HandleHouseEditCommand,         "", nullptr },
         { "visit",          SEC_PLAYER,        false, &ComfyCommands::HandleHouseVisitCommand,        "", nullptr },
+        // The answers to a knock. After "reset", so `.house r` keeps meaning
+        // reset; nothing else begins with a.
+        { "admit",          SEC_PLAYER,        false, &ComfyCommands::HandleHouseAdmitCommand,        "", nullptr },
+        { "refuse",         SEC_PLAYER,        false, &ComfyCommands::HandleHouseRefuseCommand,       "", nullptr },
         { "object",         SEC_PLAYER,        false, nullptr,                                        "", houseObjectCommandTable },
         // Nothing else in this table begins with c, so `.house c a 721` works.
         { "critter",        SEC_PLAYER,        false, nullptr,                                        "", houseCritterCommandTable },
@@ -476,6 +480,7 @@ ChatCommand * ChatHandler::getCommandTable()
         { "skill",          SEC_MODERATOR, true,  &ChatHandler::HandleLookupSkillCommand,         "", nullptr },
         { "spell",          SEC_MODERATOR, true,  &ChatHandler::HandleLookupSpellCommand,         "", nullptr },
         { "itemset",        SEC_MODERATOR, true,  &ChatHandler::HandleLookupItemSetCommand,       "", nullptr },
+        { "tele",           SEC_MODERATOR, true,  &ComfyCommands::HandleLookupTeleCommand,        "", nullptr },
         { "event",          SEC_MODERATOR, true,  &ChatHandler::HandleLookupEventCommand,         "", nullptr },
         { "guild",          SEC_MODERATOR, true,  &ChatHandler::HandleLookupGuildCommand,         "", nullptr },
         { "hwprint",        SEC_DEVELOPER, false, &ChatHandler::HandleLookupHwPrintCommand,       "", nullptr },
@@ -668,7 +673,6 @@ ChatCommand * ChatHandler::getCommandTable()
         { "areatrigger_teleport",        SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadAreaTriggerTeleportCommand,     "", nullptr },
         { "broadcast_text",              SEC_ADMINISTRATOR, true,  &ComfyCommands::HandleReloadBroadcastTextCommand,         "", nullptr },
         { "dialog_scenes",               SEC_ADMINISTRATOR, true,  &ComfyCommands::HandleReloadDialogScenesCommand,          "", nullptr },
-        { "dialog_dests",                SEC_ADMINISTRATOR, true,  &ComfyCommands::HandleReloadDialogDestsCommand,           "", nullptr },
         { "character_pet",               SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadCharacterPetCommand,            "", nullptr },
         { "conditions",                  SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadConditionsCommand,              "", nullptr },
         { "custom_merchant",             SEC_ADMINISTRATOR, true,  &ComfyCommands::HandleReloadCustomMerchantCommand,        "", nullptr },
@@ -976,7 +980,6 @@ ChatCommand * ChatHandler::getCommandTable()
         { "rename",         SEC_MODERATOR,       true,  &ChatHandler::HandleCharacterRenameCommand,     "", nullptr},
         { "effect",         SEC_DEVELOPER,       true,  &ComfyCommands::HandleEffectCommand,            "", nullptr },
         { "emote",          SEC_DEVELOPER,       true,  &ComfyCommands::HandleEmoteCommand,             "", nullptr },
-        { "dest",           SEC_DEVELOPER,       false, &ComfyCommands::HandleDestCommand,              "", nullptr },
         { "spot",           SEC_DEVELOPER,       false, &ComfyCommands::HandleSpotCommand,              "", nullptr },
         { "spotfrom",       SEC_DEVELOPER,       false, &ComfyCommands::HandleSpotFromCommand,          "", nullptr },
         { "scene",          SEC_DEVELOPER,       false, &ComfyCommands::HandleSceneCommand,             "", nullptr },
@@ -1150,6 +1153,7 @@ ChatCommand * ChatHandler::getCommandTable()
         { "npcbot",         SEC_DEVELOPER,        true,  &ComfyCommands::HandleNpcBotCommand,            "", nullptr },
         { "add_dressing_room", SEC_DEVELOPER,    false, &ComfyCommands::HandleAddDressingRoomCommand,   "", nullptr },
         { "comfyhelp",      SEC_PLAYER,           true,  &ComfyCommands::HandleComfyHelpCommand,         "", nullptr },
+        { "companions",     SEC_PLAYER,           false, &ComfyCommands::HandleCompanionsCommand,        "", nullptr },
         { "rndbot",         SEC_PLAYER,          true,  &ChatHandler::HandleRandomPlayerbotCommand,     "", nullptr },
         { "ahbot",          SEC_MODERATOR,       true,  &ChatHandler::HandleAhBotCommand,               "", nullptr },
         { "perfmon",        SEC_MODERATOR,       true,  &ChatHandler::HandlePerfMonCommand,             "", nullptr },

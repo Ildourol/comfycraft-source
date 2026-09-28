@@ -28,8 +28,6 @@ set (game_SRCS
     Conditions.cpp
     CreatureGroups.cpp
     CustomMerchantMgr.cpp
-    DialogDest.cpp
-    DialogDest.h
     DynamicVisibilityMgr.cpp
     DynamicVisibilityMgr.h
     DailyQuestHandler.cpp
