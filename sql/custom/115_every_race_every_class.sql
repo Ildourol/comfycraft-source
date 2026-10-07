@@ -5,7 +5,7 @@
 -- 2026-09-23. Edit the generator, not this file.
 --
 -- The client needs patch-V.mpq for the create screen to offer these
--- (tools/model-browser/build-patch-v.js). Without it the server accepts the
+-- (patches/build-patch-v.js). Without it the server accepts the
 -- pairs and nothing asks for them.
 --
 -- Apply BEFORE a restart. These tables load once, at startup, and have no

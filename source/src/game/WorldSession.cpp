@@ -36,6 +36,7 @@
 #include "LFTMgr.h"
 #include "InvasionMgr.h"
 #include "BarbershopMgr.h"
+#include "Housing/HouseMgr.h"
 #include "Guild.h"
 #include "GuildMgr.h"
 #include "World.h"
@@ -798,7 +799,16 @@ void WorldSession::LogoutPlayer(bool Save)
 
         if (Map* map = _player->FindMap())
         {
-            if (map->IsNonRaidDungeon() && _player->GetGroup())
+            // A HOUSE IS EXEMPT FOR ITS OWNER. Map 28 is a non-raid dungeon,
+            // and a hired companion puts you in a group, so logging out at home
+            // with a companion sent you to your hearthstone. The owner is
+            // permanently bound to the house, and LoadFromDB already puts a
+            // relog inside one at the way out. A guest rides a forced instance
+            // that does not survive the logout, so a guest still goes.
+            bool const homeOwner = map->GetId() == HOUSE_MAP_ID &&
+                                   !_player->GetForcedInstanceId(HOUSE_MAP_ID);
+
+            if (map->IsNonRaidDungeon() && _player->GetGroup() && !homeOwner)
             {
                 AreaTriggerTeleport const* at = sObjectMgr.GetGoBackTrigger(map->GetId());
                 if (at)
