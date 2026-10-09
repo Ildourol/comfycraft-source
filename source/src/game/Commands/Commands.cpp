@@ -9941,7 +9941,7 @@ bool ChatHandler::HandleGameObjectMoveCommand(char* args)
  * gameobject when GAMEOBJECT_POS_X/Y/Z change in an ordinary values update?
  *
  * Everything else in this core that moves a gameobject takes it out of the map
- * and puts it back -- `.gobject move` above, HouseMgr::ApplyPosition for
+ * and puts it back -- `.gobject move` above, HouseMgr::ApplyPlacement for
  * furniture, and Transport::Update at a map-change frame, which does
  * SendOutOfRangeUpdateToMap + SendCreateUpdateToMap. That is destroy and
  * recreate: the model pops out and back in, and any client-side transport
@@ -14798,6 +14798,7 @@ namespace
     ComfyCommandRow const COMFY_COMMANDS[] =
     {
         { "comfyhelp",         ".comfyhelp   this list" },
+        { "comfynpcs",         ".comfynpcs   send ComfyUI the bot NPC names (the addon sends this)" },
         { "bug",               ".bug <text>   file a bug report to the website" },
         { "house go",          ".house go | visit <name> | reset   your house, or somebody else's" },
         { "house edit",        ".house edit | storage | settings   decorating, the shelf, your options" },
@@ -14807,6 +14808,7 @@ namespace
         { "house template",    ".house template | entrance | furniture ...   house building tools" },
         { "add_dressing_room", ".add_dressing_room <id>   a saved dressing room look, into your bags" },
         { "setlevel",          ".setlevel <level> [name]   set a level, up or down" },
+        { "flightmode",        ".flightmode [on | off]   whether GM flight is on, or set it" },
         { "companions",        ".companions   name your companions" },
         { "npcbot",            ".npcbot place | move | dress | menu | idle | emote | unplace <name>, .npcbot list" },
         { "scene",             ".scene <id>   run a scene, your target as the NPC" },
@@ -14819,6 +14821,56 @@ namespace
         { "reload bot_npc",    "reload bot_npc | broadcast_text | custom_merchant | dialog_scenes | "
                                "gameobject_template | rented_mount   (console)" },
     };
+}
+
+// ComfyUI sends this when it enters the world, and the answer is addon
+// messages only, so nothing shows in chat. BotNpc.h has the protocol.
+bool ComfyCommands::HandleComfyNpcsCommand(ChatHandler* handler, char* /*args*/)
+{
+    sBotNpcMgr.SendNamesTo(handler->m_session ? handler->m_session->GetPlayer() : nullptr);
+    return true;
+}
+
+// .flightmode [on | off] (2026-10-07): GM flight's state as the server holds it, or set to one state. The spell
+// "Toggle GM Flight Mode" (56046, spell_item_gm_flight_mode) decides by the model alone: the flight form on, it
+// turns flight off, else on. The test tool read the client's movement flags instead, and when the client showed no
+// flight while the server kept the form (a teleport is the likely cause, not proved), its cast turned flight off. The
+// mismatch, when there is one, is in the answer: form, flying and the client's flags. This answers from the server, and
+// `on` or `off` casts the spell only when the form differs. `on` with the form already on sends the flags again
+// (SetFlying), for a client that lost them.
+bool ComfyCommands::HandleFlightModeCommand(ChatHandler* handler, char* args)
+{
+    Player* player = handler->m_session ? handler->m_session->GetPlayer() : nullptr;
+    if (!player)
+        return false;
+
+    auto formOn = [player]() { return player->GetDisplayId() == 6299 || player->GetDisplayId() == 4566; };
+
+    std::string const arg = args ? args : "";
+    if (arg == "on" || arg == "off")
+    {
+        bool const want = arg == "on";
+        if (formOn() != want)
+            player->CastSpell(player, 56046, true);
+        else if (want)
+            player->SetFlying(true);
+    }
+    else if (!arg.empty())
+    {
+        handler->SendSysMessage(".flightmode [on | off]");
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+
+    bool const form = formOn();
+    bool const flying = player->IsFlying();
+    bool const levitating = player->m_movementInfo.HasMovementFlag(MOVEFLAG_LEVITATING);
+    if (form == flying && flying == levitating)
+        handler->PSendSysMessage("GM flight %s.", form ? "on" : "off");
+    else
+        handler->PSendSysMessage("GM flight %s (form %s, flying %s, client flags %s).", form ? "on" : "off",
+                                 form ? "on" : "off", flying ? "on" : "off", levitating ? "on" : "off");
+    return true;
 }
 
 bool ComfyCommands::HandleComfyHelpCommand(ChatHandler* handler, char* /*args*/)

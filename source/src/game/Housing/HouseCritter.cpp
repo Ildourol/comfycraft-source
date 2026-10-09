@@ -780,7 +780,7 @@ bool HouseMgr::RemoveCritter(Player* player, uint32 guid, std::string& error, ui
 // creature, so a fresh one added immediately shares its guid until the map
 // finishes its update -- and the queued removal then takes the new one out.
 // The animal would vanish until the grid next reloaded. Relocating is also
-// what the furniture path does (ApplyPosition), for the same reason.
+// what the furniture path does (ApplyPlacement), for the same reason.
 //
 // The cost of not reloading is that the three things Creature::LoadFromDB
 // reads off CreatureData -- home position, wander distance, movement type --

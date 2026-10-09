@@ -555,6 +555,20 @@ class BotNpcMgr
         // has no business rewriting the rest of the row.
         void MarkLookApplied(uint32 characterGuid, std::string const& look);
 
+        /*
+         * THE NAMES OF EVERY PLACED BODY, FOR ComfyUI. A bot NPC with no
+         * subname has no guild and so no ComfyNPC rank, which is the marker
+         * the addon otherwise reads. ComfyUI asks with `.comfynpcs` when it
+         * enters the world; Update() sends the list to every client again when
+         * it changes. Prefix CNPC: "H", then "O name;name;...", then "E".
+         */
+        void SendNamesTo(Player* player);
+
+        // World thread, after the maps update: the map threads that change
+        // m_spawns are idle then. Rebuilds the name list every 5 s and sends
+        // it to every client when it differs from the last one sent.
+        void Update(uint32 diff);
+
         std::map<uint32, BotNpcEntry> const& All() const { return m_entries; }
 
     private:
@@ -564,6 +578,11 @@ class BotNpcMgr
 
         void LoadSpawns();
         void LoadIdleRules();
+
+        std::string BuildNameList() const;
+        static void SendNameList(Player* player, std::string const& names);
+        std::string m_sentNames;
+        uint32 m_namesTimer = 0;
 
         std::map<uint32 /*design id*/, BotNpcEntry> m_entries;
         // Every body, by its character guid. This is also the character index

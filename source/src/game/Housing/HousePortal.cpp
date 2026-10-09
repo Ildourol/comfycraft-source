@@ -963,6 +963,47 @@ bool HouseMgr::SendPlayerToPortal(Player* player, std::string& error)
     return true;
 }
 
+// A LOGIN INSIDE A HOUSE STARTS OUTSIDE THE DOOR (2026-10-07). A login joins
+// the map before the client has loaded, and the client applies gravity before
+// a spawned building's floor is solid, so a login indoors fell through the
+// floor. A lift and a 20 s rescue for a sink of up to 1.5 yd did not catch a
+// full fall. Open ground has real collision and does not have the race.
+//
+// The same door SendPlayerToPortal picks, with one more step: the house you
+// logged out in, found by instance, before your own. A guest after a restart
+// has no entry in m_enteredBy and comes out at the host's door.
+bool HouseMgr::GetLoginExit(Player* player, uint32 instanceId, WorldLocation& loc)
+{
+    HousePortal const* p = nullptr;
+
+    std::map<uint32, uint32>::const_iterator used = m_enteredBy.find(player->GetGUIDLow());
+    if (used != m_enteredBy.end())
+        p = GetPortal(used->second);
+
+    if (!p && instanceId)
+        if (House const* house = GetHouseByInstance(instanceId))
+            p = GetHomePortal(*house);
+
+    if (!p)
+        if (House const* house = GetHouseByAccount(player->GetSession()->GetAccountId()))
+            p = GetHomePortal(*house);
+
+    m_enteredBy.erase(player->GetGUIDLow());
+
+    if (!p)
+        return false;
+
+    // Same spot and facing as walking out: see SendPlayerToPortal.
+    loc.mapId = p->map;
+    loc.x     = p->x + cos(p->o) * HOUSE_PORTAL_PLACE_DISTANCE;
+    loc.y     = p->y + sin(p->o) * HOUSE_PORTAL_PLACE_DISTANCE;
+    loc.z     = p->z;
+    loc.o     = p->o;
+
+    m_portalCooldown[player->GetGUIDLow()] = time(nullptr) + PORTAL_COOLDOWN_SEC;
+    return true;
+}
+
 // The guid carries the id, so a clicked or walked-into portal can say which one
 // it is without a lookup. Zero means "not one of ours".
 uint32 HouseMgr::PortalIdFromGuid(uint32 lowGuid)

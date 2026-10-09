@@ -70,6 +70,18 @@ namespace
         return HouseMgr::ObjectLabel(objectGuid);
     }
 
+    // The label for a line about a move, a turn or a drag: "Wooden Table (3)
+    // and 4 more" when a group came along. The count is the check that the
+    // whole group moved.
+    std::string MovedLabel(uint32 objectGuid)
+    {
+        std::string label = HouseMgr::ObjectLabel(objectGuid);
+        uint32 const size = sHouseMgr.GroupSize(objectGuid);
+        if (size > 1)
+            label += " and " + std::to_string(size - 1) + " more";
+        return label;
+    }
+
     // `#<id>` -- the unambiguous way to name an object.
     //
     // A bare trailing id already worked, and still does. It cannot work
@@ -434,6 +446,60 @@ bool ComfyCommands::HandleHouseObjectUnselectCommand(ChatHandler* handler, char*
     return true;
 }
 
+// .house object group [id] -- put the target in the same group as the
+// selected piece. The right-click menu's "Group with" row, typed: select the
+// table once, then group each chair with it.
+bool ComfyCommands::HandleHouseObjectGroupCommand(ChatHandler* handler, char* args)
+{
+    Player* player = handler->m_session->GetPlayer();
+
+    uint32 const withGuid = sHouseMgr.GetSelectedObject(player);
+    if (!withGuid)
+    {
+        handler->SendSysMessage("Select the piece to group with first: .house object select <number>.");
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+
+    // false: the bare form must not resolve to the selection itself.
+    House* house = nullptr;
+    uint32 const guid = HouseTarget(handler, args, house, false);
+    if (!guid)
+        return false;
+
+    std::string error;
+    if (!sHouseMgr.JoinGroup(player, guid, withGuid, error))
+    {
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+
+    handler->PSendSysMessage("Grouped %s with %s: %u pieces.", ObjectLabel(guid).c_str(),
+                             ObjectLabel(withGuid).c_str(), sHouseMgr.GroupSize(guid));
+    return true;
+}
+
+// .house object ungroup [id] -- take one piece out of its group.
+bool ComfyCommands::HandleHouseObjectUngroupCommand(ChatHandler* handler, char* args)
+{
+    House* house = nullptr;
+    uint32 const guid = HouseTarget(handler, args, house);
+    if (!guid)
+        return false;
+
+    std::string error;
+    if (!sHouseMgr.LeaveGroup(handler->m_session->GetPlayer(), guid, error))
+    {
+        handler->SendSysMessage(error.c_str());
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+
+    handler->PSendSysMessage("Ungrouped %s.", ObjectLabel(guid).c_str());
+    return true;
+}
+
 // .house object chalk [clear] -- what the Decorator's Chalk set, in words.
 //
 // NAMED AFTER THE ITEM, not after the state, and not `mark`. `.house object
@@ -500,7 +566,7 @@ bool ComfyCommands::HandleHouseObjectDragCommand(ChatHandler* handler, char* arg
         handler->SetSentErrorMessage(true);
         return false;
     }
-    handler->PSendSysMessage("Dragged %s to you.", ObjectLabel(guid).c_str());
+    handler->PSendSysMessage("Dragged %s to you.", MovedLabel(guid).c_str());
     return true;
 }
 
@@ -570,7 +636,7 @@ bool ComfyCommands::HandleHouseObjectMoveCommand(ChatHandler* handler, char* arg
         handler->SetSentErrorMessage(true);
         return false;
     }
-    handler->PSendSysMessage("Moved %s by (%.2f, %.2f, %.2f).", ObjectLabel(guid).c_str(), dx, dy, dz);
+    handler->PSendSysMessage("Moved %s by (%.2f, %.2f, %.2f).", MovedLabel(guid).c_str(), dx, dy, dz);
     return true;
 }
 
@@ -605,11 +671,11 @@ bool ComfyCommands::HandleHouseObjectRotateCommand(ChatHandler* handler, char* a
     }
 
     if (away)
-        handler->PSendSysMessage("%s now faces away from you.", ObjectLabel(guid).c_str());
+        handler->PSendSysMessage("Turned %s to face away from you.", MovedLabel(guid).c_str());
     else if (faceMe)
-        handler->PSendSysMessage("%s now faces the way you do.", ObjectLabel(guid).c_str());
+        handler->PSendSysMessage("Turned %s to face the way you do.", MovedLabel(guid).c_str());
     else
-        handler->PSendSysMessage("Spun %s by %.0f degrees.", ObjectLabel(guid).c_str(), degrees);
+        handler->PSendSysMessage("Spun %s by %.0f degrees.", MovedLabel(guid).c_str(), degrees);
     return true;
 }
 
@@ -1470,7 +1536,12 @@ bool ComfyCommands::HandleHouseObjectScaleCommand(ChatHandler* handler, char* ar
     }
 
     HouseObject const* o = sHouseMgr.GetObject(guid);
-    handler->PSendSysMessage("%s is now %g times its normal size.", label.c_str(), o ? o->scale : factor);
+    uint32 const size = sHouseMgr.GroupSize(guid);
+    if (size > 1)
+        handler->PSendSysMessage("%s is now %g times its normal size. %u more resized with it.",
+                                 label.c_str(), o ? o->scale : factor, size - 1);
+    else
+        handler->PSendSysMessage("%s is now %g times its normal size.", label.c_str(), o ? o->scale : factor);
     return true;
 }
 
@@ -1779,7 +1850,7 @@ static void SendHouseObjectSync(Player* player, House* house)
                 << uint32(player->GetDistance(o->x, o->y, o->z) + 0.5f) << ':'
                 << uint32(IsHouseFabric(*o) ? 1 : 0) << ':'
                 << o->goEntry << ':'
-                << SyncSafe(HouseMgr::ObjectDisplayName(o->goEntry));
+                << SyncSafe(HouseMgr::PieceName(*o));
 
             if (!chunk.empty() && chunk.size() + rec.str().size() > HOUSE_SYNC_CHUNK)
             {
@@ -1865,7 +1936,7 @@ void HousePrintObjectList(Player* player)
         // The SLOT, not the guid. This list is where a number comes from, so it
         // is the one place the two had to stop disagreeing.
         std::ostringstream line;
-        line << "  " << o->slot << " | " << HouseMgr::ObjectDisplayName(o->goEntry)
+        line << "  " << o->slot << " | " << HouseMgr::PieceName(*o)
              << " | " << uint32(player->GetDistance(o->x, o->y, o->z) + 0.5f) << " yd";
 
         // Everything else is a suffix, and only when it is true. Three columns
@@ -1874,6 +1945,8 @@ void HousePrintObjectList(Player* player)
             line << "  x" << o->scale;
         if (o->source == HOUSE_SOURCE_TEMPLATE)
             line << "  (came with the house)";
+        if (sHouseMgr.GroupSize(o->guid) > 1)
+            line << "  group " << o->groupNo;
         if (o->guid == selected)
             line << "  <- selected";
 

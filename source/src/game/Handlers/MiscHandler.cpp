@@ -50,6 +50,7 @@
 #include "MasterPlayer.h"
 #include "GossipDef.h"
 #include "Housing/HouseMgr.h"   // HOUSE_MAP_ID, for auto-tagging a report filed in a house
+#include "BotNpc.h"             // bot NPCs are left out of /who
 
 #include <map>                 // the bug-report cooldown table
 #include <mutex>
@@ -97,6 +98,10 @@ public:
     uint32 zoneids[10];                                     // 10 is client limit
     std::wstring str[4];                                    // 4 is client limit
     std::wstring wplayer_name, wguild_name;
+    // Bot NPCs are characters, but players see them as NPCs, so /who leaves
+    // them out for every viewer, GMs included. The handler copies the guids
+    // because this runs on a worker thread while bot AI edits BotNpcMgr.
+    std::set<uint32> botNpcGuids;
     void operator()()
     {
         WorldSession* sess = sWorld.FindSession(accountId);
@@ -123,6 +128,9 @@ public:
         for (const auto& itr : m)
         {
             Player* pPlayer = itr.second;
+
+            if (botNpcGuids.count(pPlayer->GetGUIDLow()))
+                continue;
 
             if (security == SEC_PLAYER)
             {
@@ -327,6 +335,9 @@ void WorldSession::HandleWhoOpcode(WorldPacket & recv_data)
     // update it to show GMs with characters after 100 level
     if (task.level_max >= MAX_LEVEL)
         task.level_max = PLAYER_STRONG_MAX_LEVEL;
+
+    for (auto const& spawn : sBotNpcMgr.AllSpawns())
+        task.botNpcGuids.insert(spawn.first);
 
     if (GetSecurity() == SEC_PLAYER)
         m_lastWhoRequest = time(nullptr);

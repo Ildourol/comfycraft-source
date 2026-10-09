@@ -19,9 +19,11 @@ struct ComfyCommands
 {
     // Commands/Commands.cpp
     static bool HandleComfyHelpCommand(ChatHandler* handler, char* args);
+    static bool HandleComfyNpcsCommand(ChatHandler* handler, char* args);
     static bool HandleGuildHouseCommand(ChatHandler* handler, char* args);
     static bool HandleModifyNpcFlagCommand(ChatHandler* handler, char* args);
     static bool HandleSetLevelCommand(ChatHandler* handler, char* args);
+    static bool HandleFlightModeCommand(ChatHandler* handler, char* args);
     static bool HandleEffectCommand(ChatHandler* handler, char* args);
     static bool HandleEmoteCommand(ChatHandler* handler, char* args);
     static bool HandleSpotCommand(ChatHandler* handler, char* args);
@@ -60,6 +62,8 @@ struct ComfyCommands
     static bool HandleHouseObjectListCommand(ChatHandler* handler, char* args);
     static bool HandleHouseObjectSelectCommand(ChatHandler* handler, char* args);
     static bool HandleHouseObjectUnselectCommand(ChatHandler* handler, char* args);
+    static bool HandleHouseObjectGroupCommand(ChatHandler* handler, char* args);
+    static bool HandleHouseObjectUngroupCommand(ChatHandler* handler, char* args);
     static bool HandleHouseObjectChalkCommand(ChatHandler* handler, char* args);
     static bool HandleHouseObjectEditCommand(ChatHandler* handler, char* args);
     static bool HandleHouseObjectMarkerCommand(ChatHandler* handler, char* args);

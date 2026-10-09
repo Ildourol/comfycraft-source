@@ -3,6 +3,7 @@
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "Player.h"
+#include "WorldSession.h"
 #include "Creature.h"
 #include "Map.h"
 #include "Policies/SingletonImp.h"
@@ -14,6 +15,7 @@
 #include "BotNpcIdle.h"
 
 #include <cmath>
+#include <set>
 
 INSTANTIATE_SINGLETON_1(BotNpcMgr);
 
@@ -824,4 +826,96 @@ void BotNpcMgr::MarkLookApplied(uint32 characterGuid, std::string const& look)
     CharacterDatabase.escape_string(safe);
     CharacterDatabase.DirectPExecute("UPDATE bot_npc_spawn SET look_applied = '%s' WHERE character_guid = %u",
                                      safe.c_str(), characterGuid);
+}
+
+/*
+ * THE NAME LIST FOR ComfyUI. BotNpc.h has what it is for.
+ *
+ * Names, not guids: the 1.12 client has no UnitGUID. A body's name is a
+ * character name, and a player cannot make a character with a name that is
+ * taken, so no player can match. Twins share a name and are one entry.
+ *
+ * From the player cache, never the database: this runs every 5 s.
+ */
+std::string BotNpcMgr::BuildNameList() const
+{
+    std::set<std::string> names;
+    for (auto const& spawn : m_spawns)
+    {
+        std::string name;
+        if (sObjectMgr.GetPlayerNameByGUID(ObjectGuid(HIGHGUID_PLAYER, spawn.first), name) && !name.empty())
+            names.insert(name);
+    }
+
+    std::string list;
+    for (auto const& name : names)
+    {
+        if (!list.empty())
+            list += ';';
+        list += name;
+    }
+    return list;
+}
+
+void BotNpcMgr::SendNameList(Player* player, std::string const& names)
+{
+    // Characters of body per message. The client's limit is about 250 with the
+    // prefix; housing's sync uses the same margin.
+    size_t const CHUNK = 180;
+
+    player->SendAddonMessage("CNPC", "H");
+
+    std::string chunk;
+    size_t start = 0;
+    while (start < names.size())
+    {
+        size_t end = names.find(';', start);
+        if (end == std::string::npos)
+            end = names.size();
+        std::string name = names.substr(start, end - start);
+        start = end + 1;
+
+        if (!chunk.empty() && chunk.size() + 1 + name.size() > CHUNK)
+        {
+            player->SendAddonMessage("CNPC", "O " + chunk);
+            chunk.clear();
+        }
+        if (!chunk.empty())
+            chunk += ';';
+        chunk += name;
+    }
+    if (!chunk.empty())
+        player->SendAddonMessage("CNPC", "O " + chunk);
+
+    player->SendAddonMessage("CNPC", "E");
+}
+
+void BotNpcMgr::SendNamesTo(Player* player)
+{
+    if (!player)
+        return;
+
+    SendNameList(player, BuildNameList());
+}
+
+void BotNpcMgr::Update(uint32 diff)
+{
+    m_namesTimer += diff;
+    if (m_namesTimer < 5 * IN_MILLISECONDS)
+        return;
+    m_namesTimer = 0;
+
+    std::string names = BuildNameList();
+    if (names == m_sentNames)
+        return;
+    m_sentNames = names;
+
+    // Real clients only. A bot's session has no socket, and a bot reads a
+    // guild chat packet as chat.
+    for (auto const& itr : sObjectAccessor.GetPlayers())
+    {
+        Player* player = itr.second;
+        if (player && player->IsInWorld() && player->GetSession() && player->GetSession()->GetSocket())
+            SendNameList(player, names);
+    }
 }

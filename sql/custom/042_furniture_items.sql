@@ -36,19 +36,18 @@
 --  one and leave the rest, and the pick-up path would have to decide whether
 --  to merge.
 --
---  THE STOCK LIST IS NOT EDITED HERE ANY MORE. tools/furniture-list.js is the
---  source; the three blocks between `-- >>> generated:` and `-- <<< generated`
---  markers below are written from it, and everything else in this file -- this
---  header, the research trail on the crates' on-use spell, the vendor
---  rationale, and Carpenter Bram's frozen fifteen -- is hand-written and stays
---  that way.
+--  THE DATABASE OWNS FURNITURE NOW, AND THIS FILE IS A SEED (2026-10-08).
+--  New crates are made, renamed and repriced in the website's Workshop, at
+--  /admin/furniture, on whichever server the site runs, production included.
+--  That page writes item_template, house_furniture_item and Adela's npc_vendor
+--  directly. tools/furniture-list.js and tools/gen-furniture-sql.js are
+--  retired; git has them.
 --
---    node tools/gen-furniture-sql.js add <goEntry...>   propose new rows
---    node tools/gen-furniture-sql.js check              validate, write nothing
---    node tools/gen-furniture-sql.js build              rewrite the blocks here
---
---  Editing a generated block by hand is not wrong, it is just temporary -- the
---  next build overwrites it. Change the list instead.
+--  So this file DELETES NO FURNITURE and every furniture INSERT is an INSERT
+--  IGNORE. The rows below are the 65 crates as they stood on 2026-10-08. A
+--  re-run adds only what is missing and never undoes an edit made on the page.
+--  The deploy re-applies a file whose hash changed, which is why that matters.
+--  Do not add crates here: add them on the page.
 --
 --  Re-runnable. Apply with:
 --    Get-Content sql\custom\042_furniture_items.sql | DB\bin\mariadb.exe -h 127.0.0.1 -P 3307 -u root tw_world
@@ -199,15 +198,12 @@ CREATE TABLE IF NOT EXISTS `house_furniture_item` (
 --  entries and there are live rows in all three -- moving one orphans somebody's
 --  furniture. Two ranges is the correct answer, not a wart to tidy.
 --
---  KEEP THESE IN STEP WITH `RANGES` in tools/gen-furniture-sql.js. An item
---  outside them survives a re-run of this file as an orphan: still in
---  item_template, gone from house_furniture_item, so right-clicking it does
---  nothing and nothing says why.
-DELETE FROM house_furniture_item WHERE item_entry BETWEEN 100100 AND 100199
-                                    OR item_entry BETWEEN 100400 AND 100999;
-DELETE FROM item_template        WHERE entry      BETWEEN 100100 AND 100199
-                                    OR entry      BETWEEN 100400 AND 100999;
-DELETE FROM npc_vendor           WHERE entry IN (@VENDOR, @SHOP);
+--  The ranges live in website/lib/furniture.js now, which allocates from them.
+--
+--  NO FURNITURE IS DELETED HERE (see the header). The two vendors' creature
+--  rows are still owned by this file and are rewritten. Their stock is not:
+--  deleting npc_vendor would wipe crates the page added to Adela, and the
+--  Decorator's Chalk that 054 puts on Bram's shelf.
 DELETE FROM creature_template    WHERE entry IN (@VENDOR, @SHOP);
 
 -- ---------------------------------------------------------------------------
@@ -255,13 +251,13 @@ DELETE FROM creature_template    WHERE entry IN (@VENDOR, @SHOP);
 --  throughout, which is what the original fifteen already did.
 --
 --  material 2 is wood, which is only the pick-up sound.
-INSERT INTO item_template
+INSERT IGNORE INTO item_template
   (entry, class, subclass, name, description, display_id, quality, flags,
    buy_price, sell_price, inventory_type, allowable_class, allowable_race,
    item_level, required_level, stackable, max_count, bonding, material, sheath,
    spellid_1, spelltrigger_1, spellcharges_1, script_name)
 VALUES
--- >>> generated: item_template
+-- the seed: item_template, frozen 2026-10-08
   (100100,0,0,'Wooden Chair',            @DESC,@ICON,1,0,5000  ,1000 ,0,-1,-1,1,0,1,0,0,2,0,@USE,0,0,@SCRIPT),
   (100101,0,0,'Wooden Bench',            @DESC,@ICON,1,0,7500  ,1500 ,0,-1,-1,1,0,1,0,0,2,0,@USE,0,0,@SCRIPT),
   (100102,0,0,'Inn Table',               @DESC,@ICON,1,0,10000 ,2000 ,0,-1,-1,1,0,1,0,0,2,0,@USE,0,0,@SCRIPT),
@@ -325,14 +321,14 @@ VALUES
   (100160,0,0,'Dalaran Landscape',       @DESC,@ICON,1,0,40000 ,8000 ,0,-1,-1,1,0,1,0,0,2,0,@USE,0,0,@SCRIPT),
   (100161,0,0,'Purple Rug',              @DESC,@ICON,1,0,30000 ,6000 ,0,-1,-1,1,0,1,0,0,2,0,@USE,0,0,@SCRIPT),
   (100162,0,0,'Small Blue Rug',          @DESC,@ICON,1,0,20000 ,4000 ,0,-1,-1,1,0,1,0,0,2,0,@USE,0,0,@SCRIPT),
-  (100163,0,0,'Small Purple Rug',        @DESC,@ICON,1,0,20000 ,4000 ,0,-1,-1,1,0,1,0,0,2,0,@USE,0,0,@SCRIPT);
--- <<< generated -- edit tools/furniture-list.js, then: node tools/gen-furniture-sql.js build
+  (100163,0,0,'Small Purple Rug',        @DESC,@ICON,1,0,20000 ,4000 ,0,-1,-1,1,0,1,0,0,2,0,@USE,0,0,@SCRIPT),
+  (100164,0,0,'Woven Tauren Hanging',    @DESC,@ICON,1,0,15000 ,3000 ,0,-1,-1,1,0,1,0,0,2,0,@USE,0,0,@SCRIPT);
 
 --  CATEGORIES ARE COMPUTED, NEVER TYPED - see the CREATE TABLE above. Regenerate
 --  this block rather than editing a label by hand, or the vendor tab and the
 --  shelf filter start disagreeing about where a keg lives.
-INSERT INTO house_furniture_item (item_entry, go_entry, scale, category) VALUES
--- >>> generated: house_furniture_item
+INSERT IGNORE INTO house_furniture_item (item_entry, go_entry, scale, category) VALUES
+-- the seed: house_furniture_item, frozen 2026-10-08
   (100100, 2413,    0, 'Seating'     ), -- Wooden Chair
   (100101, 24538,   0, 'Seating'     ), -- Wooden Bench
   (100102, 2003527, 0, 'Tables'      ), -- Inn Table
@@ -396,8 +392,8 @@ INSERT INTO house_furniture_item (item_entry, go_entry, scale, category) VALUES
   (100160, 2010646, 0, 'Odds & Ends' ), -- Dalaran Landscape
   (100161, 2008707, 0, 'Odds & Ends' ), -- Purple Rug
   (100162, 2008711, 0, 'Odds & Ends' ), -- Small Blue Rug
-  (100163, 2008712, 0, 'Odds & Ends' ); -- Small Purple Rug
--- <<< generated -- edit tools/furniture-list.js, then: node tools/gen-furniture-sql.js build
+  (100163, 2008712, 0, 'Odds & Ends' ), -- Small Purple Rug
+  (100164, 2004709, 0, 'Odds & Ends' ); -- Woven Tauren Hanging
 
 -- ---------------------------------------------------------------------------
 --  The vendors
@@ -449,8 +445,8 @@ VALUES
 --  64, so there is room for another sixty-odd pieces before a second shop NPC
 --  is forced. The tabs do NOT help with this: they filter what is SENT, and
 --  every tab is drawn from the one npc_vendor list below.
-INSERT INTO npc_vendor (entry, slot, item, maxcount, incrtime) VALUES
--- >>> generated: npc_vendor (the shop)
+INSERT IGNORE INTO npc_vendor (entry, slot, item, maxcount, incrtime) VALUES
+-- the seed: Adela's stock, frozen 2026-10-08. The page adds the rest.
   (@SHOP, 1  , 100100, 0, 0), -- Seating     Wooden Chair
   (@SHOP, 2  , 100101, 0, 0), -- Seating     Wooden Bench
   (@SHOP, 3  , 100102, 0, 0), -- Tables      Inn Table
@@ -514,11 +510,11 @@ INSERT INTO npc_vendor (entry, slot, item, maxcount, incrtime) VALUES
   (@SHOP, 61 , 100160, 0, 0), -- Odds & Ends Dalaran Landscape
   (@SHOP, 62 , 100161, 0, 0), -- Odds & Ends Purple Rug
   (@SHOP, 63 , 100162, 0, 0), -- Odds & Ends Small Blue Rug
-  (@SHOP, 64 , 100163, 0, 0); -- Odds & Ends Small Purple Rug
--- <<< generated -- edit tools/furniture-list.js, then: node tools/gen-furniture-sql.js build
+  (@SHOP, 64 , 100163, 0, 0), -- Odds & Ends Small Purple Rug
+  (@SHOP, 65 , 100164, 0, 0); -- Odds & Ends Woven Tauren Hanging
 
 --  Bram keeps the original fifteen and nothing else.
-INSERT INTO npc_vendor (entry, slot, item, maxcount, incrtime) VALUES
+INSERT IGNORE INTO npc_vendor (entry, slot, item, maxcount, incrtime) VALUES
   (@VENDOR, 1  , 100100, 0, 0), -- Seating     Wooden Chair
   (@VENDOR, 2  , 100101, 0, 0), -- Seating     Wooden Bench
   (@VENDOR, 3  , 100102, 0, 0), -- Tables      Inn Table

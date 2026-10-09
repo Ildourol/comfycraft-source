@@ -799,16 +799,13 @@ void WorldSession::LogoutPlayer(bool Save)
 
         if (Map* map = _player->FindMap())
         {
-            // A HOUSE IS EXEMPT FOR ITS OWNER. Map 28 is a non-raid dungeon,
-            // and a hired companion puts you in a group, so logging out at home
-            // with a companion sent you to your hearthstone. The owner is
-            // permanently bound to the house, and LoadFromDB already puts a
-            // relog inside one at the way out. A guest rides a forced instance
-            // that does not survive the logout, so a guest still goes.
-            bool const homeOwner = map->GetId() == HOUSE_MAP_ID &&
-                                   !_player->GetForcedInstanceId(HOUSE_MAP_ID);
+            // A HOUSE IS EXEMPT. Map 28 is a non-raid dungeon, and a hired
+            // companion puts you in a group, so logging out in a house with a
+            // companion sent you to your hearthstone. LoadFromDB puts a login
+            // inside a house outside its door, owner and guest alike.
+            bool const inHouse = map->GetId() == HOUSE_MAP_ID;
 
-            if (map->IsNonRaidDungeon() && _player->GetGroup() && !homeOwner)
+            if (map->IsNonRaidDungeon() && _player->GetGroup() && !inHouse)
             {
                 AreaTriggerTeleport const* at = sObjectMgr.GetGoBackTrigger(map->GetId());
                 if (at)

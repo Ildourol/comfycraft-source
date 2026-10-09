@@ -126,6 +126,11 @@ namespace
         // wrong one.
         ACT_SELECT      = 35,
 
+        // Furniture groups. Both return to the main page themselves, like
+        // ACT_SELECT, and for the same reason sit outside the redraw bands.
+        ACT_GROUP_JOIN  = 36,
+        ACT_GROUP_LEAVE = 37,
+
         ACT_CLOSE       = 40,
 
         // Drawn only while global edit is on, so it is never the answer to a
@@ -166,16 +171,6 @@ namespace
         { STEPS_TURN, sizeof(STEPS_TURN) / sizeof(STEPS_TURN[0]), " degrees", ACT_STEP_TURN, ACT_PAGE_TURN },
         { STEPS_SIZE, sizeof(STEPS_SIZE) / sizeof(STEPS_SIZE[0]), "%",        ACT_STEP_SIZE, ACT_PAGE_SIZE },
     };
-
-    // Straight through to the manager, so the menu's "Picked up the ..." names
-    // an object exactly as the chat commands and the addon's cards do. It used
-    // to read gameobject_template.name raw, which for most of the catalogue is
-    // the model PATH -- 57 characters of "World GENERIC DWARF PASSIVE DOODADS
-    // Beds DwarvenBed01.mdx" where "Dwarven Bed 01" was wanted.
-    std::string ObjectName(uint32 goEntry)
-    {
-        return HouseMgr::ObjectDisplayName(goEntry);
-    }
 
     // Back sits at the TOP of a submenu, not the bottom. A gossip list grows
     // downwards and this one changes length -- the step option is wider or
@@ -251,6 +246,25 @@ namespace
         else
             menu.AddMenuItem(HOUSE_GOSSIP_ICON, "Select this one", HOUSE_SENDER, ACT_SELECT);
 
+        // FURNITURE GROUPS, in the selection's block because grouping is built
+        // on it: select the table, then open each chair and group it with the
+        // table. The selection stays on the table, so the next chair is one
+        // click too. Each row is drawn only where it can do something.
+        uint32 const selectedGuid = sHouseMgr.GetSelectedObject(player);
+        uint32 const groupSize = sHouseMgr.GroupSize(obj->guid);
+        HouseObject const* selectedObj = selectedGuid ? sHouseMgr.GetObject(selectedGuid) : nullptr;
+        bool const sameGroup = groupSize > 1 && selectedObj && selectedObj->groupNo == obj->groupNo;
+
+        if (selectedObj && !selected && !sameGroup)
+        {
+            // The name alone: the number is for typing at a command, and a
+            // button is clicked.
+            std::string const label = "Group with " + HouseMgr::PieceName(*selectedObj);
+            menu.AddMenuItem(HOUSE_GOSSIP_ICON, label.c_str(), HOUSE_SENDER, ACT_GROUP_JOIN);
+        }
+        if (groupSize > 1)
+            menu.AddMenuItem(HOUSE_GOSSIP_ICON, "Ungroup", HOUSE_SENDER, ACT_GROUP_LEAVE);
+
         AddSpacer(menu, ACT_PAGE_MAIN);
 
         // "Pick up", not "Delete", because for anything that came out of a bag
@@ -306,8 +320,14 @@ namespace
         // Selecting says so HERE rather than printing a second line of its own:
         // this greeting is redrawn by the toggle anyway, so a separate
         // announcement was two lines describing one state.
-        ChatHandler(player).PSendSysMessage("Editing %s.%s",
+        //
+        // A grouped piece says how many pieces its buttons will move.
+        std::ostringstream group;
+        if (groupSize > 1)
+            group << ", group of " << groupSize;
+        ChatHandler(player).PSendSysMessage("Editing %s%s.%s",
                                             HouseMgr::ObjectLabel(obj->guid).c_str(),
+                                            group.str().c_str(),
                                             note ? note : (selected ? " Selected." : ""));
 
         player->PlayerTalkClass->SendGossipMenu(HOUSE_TEXT_MAIN, handle);
@@ -958,6 +978,35 @@ static bool HouseObjectMenuSelect(Player* player, ObjectGuid senderGuid, uint32 
             return true;
         }
 
+        // Both redraw the main page, so the group row and the size in the
+        // greeting change under the cursor. The selection is left where it
+        // is: the next chair groups with the same table.
+        case ACT_GROUP_JOIN:
+        {
+            std::string note;
+            uint32 const withGuid = sHouseMgr.GetSelectedObject(player);
+            if (!withGuid)
+                ChatHandler(player).SendSysMessage("Select the piece to group with first.");
+            else if (!sHouseMgr.JoinGroup(player, objectGuid, withGuid, error))
+                ChatHandler(player).SendSysMessage(error.c_str());
+            else
+                note = " Grouped with " + HouseMgr::ObjectLabel(withGuid) + ".";
+
+            SendMain(player, senderGuid, obj, note.empty() ? nullptr : note.c_str());
+            return true;
+        }
+        case ACT_GROUP_LEAVE:
+        {
+            char const* note = nullptr;
+            if (!sHouseMgr.LeaveGroup(player, objectGuid, error))
+                ChatHandler(player).SendSysMessage(error.c_str());
+            else
+                note = " Ungrouped.";
+
+            SendMain(player, senderGuid, obj, note);
+            return true;
+        }
+
         // No confirmation, deliberately. Putting something down is one click,
         // so taking it back should be too -- and once furniture is an inventory
         // item this hands it back rather than destroying it, which makes a
@@ -967,7 +1016,7 @@ static bool HouseObjectMenuSelect(Player* player, ObjectGuid senderGuid, uint32 
         // never transmitted.
         case ACT_DELETE:
         {
-            std::string name = ObjectName(obj->goEntry);
+            std::string name = HouseMgr::PieceName(*obj);
             uint32 returned = 0;
             if (!sHouseMgr.RemoveObject(player, objectGuid, error, &returned))
                 ChatHandler(player).SendSysMessage(error.c_str());

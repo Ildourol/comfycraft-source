@@ -38,6 +38,7 @@ class Map;
 class GameObject;
 class Creature;
 struct GameObjectData;
+struct WorldLocation;
 
 // map_template.entry 28, made instanceable by sql/custom/029_house_map_28.sql.
 // Not a config: the house map is a content decision baked into that SQL and
@@ -310,6 +311,11 @@ bool HouseCritterPetName(uint32 creatureGuidLow, std::string& name);
 // at z = -800046, which Relocate asserts on at the next login (2026-09-04).
 #define HOUSE_MAX_NUDGE         100.0f
 
+// The most pieces one furniture group may hold. Every member of a group is
+// taken out of the map and put back on each click, so this keeps one click
+// cheap. A table, its chairs and the things on it fit with room to spare.
+#define HOUSE_GROUP_MAX         40
+
 // The entrance. sql/custom/027 -- 100011 is the swirl out in the world, 100012
 // the one inside the house that takes you back to it. See HousePortal.cpp for
 // why this is a gameobject that polls rather than an areatrigger.
@@ -343,6 +349,20 @@ bool HouseCritterPetName(uint32 creatureGuidLow, std::string& name);
 // they fall until the ground catches up. Coming in a couple of yards high means
 // the worst case is a short drop onto the floor instead of a trip under it.
 #define HOUSE_ARRIVE_LIFT       2.0f
+
+// A DOOR ARRIVAL CAN STILL FALL THROUGH (2026-10-08, Goldshire Inn, floor 9.26,
+// once in many entries). The lift and the settle do not catch a client that
+// falls before the building is solid. A full fall ends on map 28's ground plane
+// at z = 0, so the rescue looks for a player ON THE PLANE, not under the floor:
+// a cellar is above the plane and is never mistaken for a fall. For WATCH ms
+// after the settle, a player within PLANE_Z of the plane and RADIUS of the
+// arrival point goes back to the arrival point. A floor under MIN_FLOOR stands
+// on the plane and has nothing to fall through. RADIUS keeps a player who
+// walked out of the building onto the plane from being pulled back.
+#define HOUSE_FALL_WATCH        10000
+#define HOUSE_FALL_PLANE_Z      1.0f
+#define HOUSE_FALL_MIN_FLOOR    2.0f
+#define HOUSE_FALL_RADIUS       10.0f
 
 // THE CLICKABLE HEART OF A PORTAL. The swirl itself cannot be moused over:
 // Creature_Spellportal_Purple.m2 carries no hit volume, so the client never
@@ -638,6 +658,13 @@ struct HouseObject
     // ExtractOptUInt32 uses 0 for "no id given", so a slot 0 would be an object
     // no command could ever name.
     uint32 slot = 0;
+
+    // THE FURNITURE GROUP, or 0. Numbered per house like `slot` (sql/custom/127).
+    // A group is LIVE only while two or more loaded, non-fabric pieces of one
+    // house share the number, and that is checked on every read by
+    // HouseMgr::GroupMembers. A piece left alone after the others were picked
+    // up keeps its number and acts ungrouped, so no path has to clean up.
+    uint32 groupNo = 0;
     uint32 goEntry;
 
     // The furniture item this was placed from, or 0. Picking a row up with an
@@ -816,8 +843,8 @@ struct HouseEdit
 // kind -- three callers that all wanted the same collapse, and three places to
 // get it subtly different if each did its own. `slot` is the lowest square
 // holding one, so a row can still be handed to `.house storage take`.
-// One armed arrival, waiting out HOUSE_NUDGE_DELAY. Memory-only and erased when
-// it fires -- nothing here outlives the second and a half it describes.
+// One armed arrival, waiting out the ping, then HOUSE_FALL_WATCH. Memory-only
+// and erased when the watch ends.
 //
 // It carries the FLOOR because the floor cannot be asked for later:
 // map->GetHeight reads the raw .map surface and map 28 is one plane at z = 0,
@@ -830,6 +857,7 @@ struct HouseArrival
     float  x          = 0.0f;
     float  y          = 0.0f;
     float  floorZ     = 0.0f;
+    uint32 watchTicks = 0;      // HOUSE_FALL_WATCH, counted after the settle
 };
 
 struct HouseStorageStack
@@ -1007,6 +1035,7 @@ class HouseMgr
         void NudgeOccupants(Player* player);
         void RunPendingNudges(Map* map);
         void SettleArrival(Player* player, HouseArrival const& a);
+        void RescueFall(Player* player, HouseArrival const& a);
         void BeatOccupants(Map* map);
 
         // THE ANIMALS NEED THE SAME PACKET, and for the same reason -- proven
@@ -1177,6 +1206,12 @@ class HouseMgr
         // player types, and guids are what nothing prints.
         static std::string ObjectLabel(uint32 objectGuid);
 
+        // The name half of ObjectLabel: the furniture item's name when the
+        // piece came from one, else ObjectDisplayName of the model. Every line
+        // that names a PLACED piece uses this; ObjectDisplayName alone is for
+        // a model with no piece behind it (the catalogue, `.house object add`).
+        static std::string PieceName(HouseObject const& o);
+
         uint32 GetSelectedObject(Player* player);
 
         // BLINK ONE PIECE OF FURNITURE, which is how "that one" is said in the
@@ -1257,6 +1292,30 @@ class HouseMgr
         // rather than "removed" without looking the row up again after it is
         // gone.
         bool RemoveObject(Player* player, uint32 guid, std::string& error, uint32* returnedItem = nullptr);
+
+        // ---- furniture groups ------------------------------------------------
+        //
+        // A group is a set of pieces that move, turn and resize as one. THE
+        // RULE LIVES IN THE FOUR MUTATORS ABOVE, not in the menu, so the menu,
+        // the chat commands and the addon's nudge pad all get it. Each mutator
+        // computes every member's new place, checks all of them, and only then
+        // applies any: one bad member refuses the whole action, so a set never
+        // half-moves.
+        //
+        // The clicked piece is the pivot for a turn and a resize.
+
+        // Every live member of o's group, o first. Only o when the group is
+        // not live (see HouseObject::groupNo). The one place that decides
+        // membership.
+        void   GroupMembers(HouseObject const& o, std::vector<HouseObject*>& out);
+        // How many pieces move when this one moves: 1 when it is not grouped.
+        uint32 GroupSize(uint32 guid);
+        // Put guid in the same group as withGuid. When guid is already in a
+        // live group, that WHOLE group joins: a group is a unit, and joining
+        // two units makes one.
+        bool   JoinGroup(Player* player, uint32 guid, uint32 withGuid, std::string& error);
+        // Take one piece out. When that leaves one piece, it is let go too.
+        bool   LeaveGroup(Player* player, uint32 guid, std::string& error);
 
         // ---- furniture items -------------------------------------------------
         //
@@ -1661,6 +1720,11 @@ class HouseMgr
 
         bool SendPlayerToPortal(Player* player, std::string& error);
 
+        // Where a login inside a house puts the player: outside the door, for
+        // Player::LoadFromDB. False means no door, and the caller uses the
+        // hearthstone. instanceId is the house they logged out in, 0 if unknown.
+        bool GetLoginExit(Player* player, uint32 instanceId, WorldLocation& loc);
+
         // Keeps one exit portal standing in a house. Called from the instance
         // script's update, alongside UpdateHandles.
         void UpdateExitPortal(Map* map);
@@ -1874,8 +1938,25 @@ class HouseMgr
         uint32 AllocateCritterGuid();
         uint32 AllocateCritterSlot(House const& house) const;
         uint32 CountCritters(House const& house) const;
-        void   ApplyPosition(Map* map, HouseObject& o, float nx, float ny, float nz);
-        void   ApplyOrientation(Map* map, HouseObject& o, float no);
+        // Where one piece is to stand: position, facing and size. scale 0
+        // leaves the size alone.
+        struct Placement
+        {
+            HouseObject* obj;
+            float x, y, z, o;
+            float scale;
+        };
+
+        // Position, facing and size in ONE take-out-and-put-back. A group turn
+        // moves and turns every member, and a group resize moves and resizes
+        // them; two separate updates would blink each piece twice.
+        void   ApplyPlacement(Map* map, Placement const& p);
+        // Check all, then apply all. The group mutators end here.
+        bool   PlaceAll(Map* map, std::vector<Placement> const& all, std::string& error);
+
+        // One past the highest group number in this house. Computed, like
+        // AllocateSlot, for the same reason.
+        uint32 AllocateGroupNo(House const& house) const;
 
         // The one place that decides whether a gear exists. Every route that
         // changes a session ends here, so no two of them can disagree.

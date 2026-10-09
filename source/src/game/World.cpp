@@ -2850,6 +2850,7 @@ void World::Update(uint32 diff)
 
     sTransportMgr.Update(diff);
     sMapMgr.Update(diff);
+    sBotNpcMgr.Update(diff);           // after the maps: their threads change the spawn list
     sBattleGroundMgr.Update(diff);
     sLFGMgr.Update(diff);
     sLFTMgr.Update(diff);

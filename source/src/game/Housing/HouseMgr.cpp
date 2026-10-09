@@ -91,7 +91,7 @@ void HouseMgr::LoadFromDB()
     // stowed = 0: rows stowed into the furniture chest stay in the table but
     // never load, which is what makes stowing a flip rather than a delete.
     if (QueryResult* result = CharacterDatabase.Query(
-            "SELECT id, house_id, go_entry, x, y, z, o, rot0, rot1, rot2, rot3, scale, source, slot, item_entry FROM house_object WHERE stowed = 0 ORDER BY id"))
+            "SELECT id, house_id, go_entry, x, y, z, o, rot0, rot1, rot2, rot3, scale, source, slot, item_entry, group_no FROM house_object WHERE stowed = 0 ORDER BY id"))
     {
         do
         {
@@ -108,6 +108,7 @@ void HouseMgr::LoadFromDB()
             o.source = uint8(f[12].GetUInt32());
             o.slot   = f[13].GetUInt32();
             o.itemEntry = f[14].GetUInt32();
+            o.groupNo   = f[15].GetUInt32();
 
             // house_object is the authority, so push it back into the core's
             // registry rather than trusting tw_world.object_scaling to agree.
@@ -1590,6 +1591,7 @@ void HouseMgr::NudgeOccupants(Player* player)
     a.x          = player->GetPositionX();
     a.y          = player->GetPositionY();
     a.floorZ     = player->GetPositionZ() - HOUSE_ARRIVE_LIFT;
+    a.watchTicks = ArrivePingTicks(HOUSE_FALL_WATCH);
 }
 
 // The ping itself, from the instance script's own throttle.
@@ -1600,17 +1602,38 @@ void HouseMgr::RunPendingNudges(Map* map)
 
     for (std::map<uint32, HouseArrival>::iterator itr = m_arrivals.begin(); itr != m_arrivals.end();)
     {
-        if (itr->second.instanceId != map->GetInstanceId() || --itr->second.ticks)
+        HouseArrival& a = itr->second;
+        if (a.instanceId != map->GetInstanceId())
         {
             ++itr;
             continue;
         }
 
-        if (Player* p = map->GetPlayer(ObjectGuid(HIGHGUID_PLAYER, itr->first)))
+        Player* p = map->GetPlayer(ObjectGuid(HIGHGUID_PLAYER, itr->first));
+
+        if (a.ticks)                    // waiting for the ping
         {
-            SettleArrival(p, itr->second);
-            BeatOccupants(map);
-            BeatCritters(map);
+            if (--a.ticks)
+            {
+                ++itr;
+                continue;
+            }
+
+            if (p)
+            {
+                SettleArrival(p, a);
+                BeatOccupants(map);
+                BeatCritters(map);
+            }
+        }
+        else if (p)                     // after it: see HOUSE_FALL_WATCH
+            RescueFall(p, a);
+
+        if (p && a.watchTicks)
+        {
+            --a.watchTicks;
+            ++itr;
+            continue;
         }
 
         m_arrivals.erase(itr++);        // SPENT, so an arrival nobody is around
@@ -1654,6 +1677,21 @@ void HouseMgr::SettleArrival(Player* player, HouseArrival const& a)
 
     if (!player->IsWithinDist3d(a.x, a.y, player->GetPositionZ(), 1.0f))
         return;                         // moved off the arrival point
+
+    player->NearTeleportTo(a.x, a.y, a.floorZ, player->GetOrientation());
+}
+
+// Fell through the building onto the ground plane. See HOUSE_FALL_WATCH.
+void HouseMgr::RescueFall(Player* player, HouseArrival const& a)
+{
+    if (a.floorZ < HOUSE_FALL_MIN_FLOOR)
+        return;                         // built on the plane
+
+    if (player->GetPositionZ() > HOUSE_FALL_PLANE_Z)
+        return;                         // not on the plane
+
+    if (!player->IsWithinDist2d(a.x, a.y, HOUSE_FALL_RADIUS))
+        return;                         // walked out of the building
 
     player->NearTeleportTo(a.x, a.y, a.floorZ, player->GetOrientation());
 }
@@ -3218,8 +3256,20 @@ std::string HouseMgr::ObjectLabel(uint32 objectGuid)
         return "that object";
 
     std::ostringstream out;
-    out << ObjectDisplayName(o->goEntry) << " (" << o->slot << ")";
+    out << PieceName(*o) << " (" << o->slot << ")";
     return out.str();
+}
+
+// The item's name when the piece came out of a bag, so the painting from item
+// 100109 reads "Framed Painting" and not "Communitypainting 5". Anything with
+// no item behind it (.house object add, template stamps) keeps the model name.
+std::string HouseMgr::PieceName(HouseObject const& o)
+{
+    if (o.itemEntry)
+        if (ItemPrototype const* proto = sObjectMgr.GetItemPrototype(o.itemEntry))
+            if (!proto->Name1.empty())
+                return proto->Name1;
+    return ObjectDisplayName(o.goEntry);
 }
 
 std::string HouseMgr::ObjectDisplayName(uint32 goEntry)
@@ -3529,7 +3579,14 @@ bool HouseMgr::SelectObject(Player* player, uint32 objectGuid, std::string& erro
 
     if (previous && previous != objectGuid)
         FlashObject(player, previous);
-    FlashObject(player, objectGuid);
+
+    // A grouped piece blinks with its whole group: what a command on it will
+    // move is the group, so that is what "this one" means. The glow stays on
+    // the one piece.
+    std::vector<HouseObject*> members;
+    GroupMembers(*o, members);
+    for (HouseObject* m : members)
+        FlashObject(player, m->guid);
     RefreshSelectionMarker(player);
     return true;
 }
@@ -3983,76 +4040,122 @@ bool HouseMgr::PlaceObject(Player* player, uint32 goEntry, float distance, std::
     return true;
 }
 
-// Position and orientation both need the same three things done: update our
-// row, update the GameObjectData the grid loader reads, and move the live
-// object if one is spawned. Kept here so drag and move cannot drift apart.
+// THE ONE PATH THAT REARRANGES A PIECE: position, facing and size in one
+// take-out-and-put-back, one row update and one GameObjectData update. Drag,
+// move, turn and resize all come here, for one piece or for a whole group, so
+// they cannot drift apart.
 //
-// The grid cell is derived from x and y only, so a purely vertical change never
-// needs the persistent state touched -- but going through one path is worth
-// more than saving that.
-void HouseMgr::ApplyPosition(Map* map, HouseObject& o, float nx, float ny, float nz)
+// Each part runs only when it changed. A plain move must not call
+// UpdateRotationFields, which rebuilds the quaternion from the yaw alone.
+void HouseMgr::ApplyPlacement(Map* map, Placement const& p)
 {
+    HouseObject& o = *p.obj;
+    float const no = MapManager::NormalizeOrientation(p.o);
+    bool const moved   = p.x != o.x || p.y != o.y || p.z != o.z;
+    bool const turned  = no != o.o;
+    bool const resized = p.scale > 0.0f && p.scale != o.scale;
+    if (!moved && !turned && !resized)
+        return;
+
     GameObjectData* data = const_cast<GameObjectData*>(sObjectMgr.GetGOData(o.guid));
 
     // Remove using the OLD position: the cell is computed from the data, so
     // this has to happen before the coordinates change.
-    if (data && map)
+    if (moved && data && map)
         map->GetPersistentState()->RemoveGameobjectFromGrid(o.guid, data);
 
-    o.x = nx; o.y = ny; o.z = nz;
+    o.x = p.x; o.y = p.y; o.z = p.z; o.o = no;
+    if (resized)
+        o.scale = p.scale;
 
     if (data)
     {
         data->position.x = o.x;
         data->position.y = o.y;
         data->position.z = o.z;
-        if (map)
+        data->position.o = o.o;
+        if (moved && map)
             map->GetPersistentState()->AddGameobjectToGrid(o.guid, data);
     }
 
-    CharacterDatabase.PExecute("UPDATE house_object SET x = %f, y = %f, z = %f WHERE id = %u", o.x, o.y, o.z, o.guid);
+    CharacterDatabase.PExecute("UPDATE house_object SET x = %f, y = %f, z = %f, o = %f, scale = %f WHERE id = %u",
+                               o.x, o.y, o.z, o.o, o.scale, o.guid);
 
-    if (map)
-        if (GameObject* go = map->GetGameObject(ObjectGuid(HIGHGUID_GAMEOBJECT, o.goEntry, o.guid)))
+    // See ScaleObject for why the core's own registry carries the size.
+    ObjectGuid const fullGuid(HIGHGUID_GAMEOBJECT, o.goEntry, o.guid);
+    if (resized)
+        sGuidObjectScaling.AddOrEdit(fullGuid.GetRawValue(), o.scale);
+
+    if (!map)
+        return;
+
+    // Remove and re-Add the SAME object rather than deleting and respawning it.
+    //
+    // GameObject::Delete() does not remove anything at once. It queues the
+    // object on the map removal list, which is drained at the end of the map
+    // update. A replacement created with the same guid in between is then torn
+    // out by the deferred cleanup, because the map indexes objects by guid.
+    // Symptom: the object vanishes on resize and never comes back until the
+    // grid reloads.
+    //
+    // Remove(go, false) leaves the object alive and takes it out of the world,
+    // so the client gets a despawn and then a fresh creation block from Add.
+    // That is what .gobject scale does (Commands.cpp:9620).
+    if (GameObject* go = map->GetGameObject(fullGuid))
+    {
+        map->Remove(go, false);
+        go->Relocate(o.x, o.y, o.z, o.o);
+        if (moved)
         {
-            map->Remove(go, false);
-            go->Relocate(o.x, o.y, o.z, o.o);
             go->SetFloatValue(GAMEOBJECT_POS_X, o.x);
             go->SetFloatValue(GAMEOBJECT_POS_Y, o.y);
             go->SetFloatValue(GAMEOBJECT_POS_Z, o.z);
-            map->Add(go);
-            go->Refresh();
         }
-}
-
-void HouseMgr::ApplyOrientation(Map* map, HouseObject& o, float no)
-{
-    o.o = MapManager::NormalizeOrientation(no);
-
-    if (GameObjectData* data = const_cast<GameObjectData*>(sObjectMgr.GetGOData(o.guid)))
-        data->position.o = o.o;
-
-    CharacterDatabase.PExecute("UPDATE house_object SET o = %f WHERE id = %u", o.o, o.guid);
-
-    if (map)
-        if (GameObject* go = map->GetGameObject(ObjectGuid(HIGHGUID_GAMEOBJECT, o.goEntry, o.guid)))
-        {
-            map->Remove(go, false);
-            go->Relocate(o.x, o.y, o.z, o.o);
+        if (turned)
             go->SetFloatValue(GAMEOBJECT_FACING, o.o);
+        if (resized)
+            go->SetObjectScale(o.scale);
 
-            // GAMEOBJECT_FACING alone does nothing visible. The client renders a
-            // gameobject from the ROTATION quaternion, and UpdateRotationFields
-            // is what recomputes it from the orientation just set -- it is the
-            // second half of what GameObject::Create does and is easy to miss,
-            // because the facing field looks like it ought to be enough.
-            // Without it the server, the database and .house list all agree the
-            // object turned while the model never moves.
+        // GAMEOBJECT_FACING alone does nothing visible. The client renders a
+        // gameobject from the ROTATION quaternion, and UpdateRotationFields
+        // is what recomputes it from the orientation just set -- it is the
+        // second half of what GameObject::Create does and is easy to miss,
+        // because the facing field looks like it ought to be enough.
+        // Without it the server, the database and .house list all agree the
+        // object turned while the model never moves.
+        if (turned || resized)
             go->UpdateRotationFields();
 
-            map->Add(go);
-            go->Refresh();
+        map->Add(go);
+        go->Refresh();
+    }
+    else if (resized)
+    {
+        // Not spawned: its grid is not loaded. Create reads the registry when
+        // the grid comes in.
+        SpawnObjectNow(map, o);
+    }
+}
+
+// Check every placement, then apply every one. One placement off the map
+// refuses the lot, so a group never half-moves.
+//
+// The map check is the same guard OffsetObject has always had, and here it is
+// the only one: a turn or a resize can carry a far member a long way, and
+// that is not a typo the way a large nudge is. An off-map row crashes the
+// server at the owner's next login (HOUSE_MAX_NUDGE has the story).
+bool HouseMgr::PlaceAll(Map* map, std::vector<Placement> const& all, std::string& error)
+{
+    for (Placement const& p : all)
+        if (!MaNGOS::IsValidMapCoord(p.x, p.y, p.z, p.o))
+        {
+            error = all.size() > 1 ? "Too far for one of the pieces." : "Too far.";
+            return false;
         }
+
+    for (Placement const& p : all)
+        ApplyPlacement(map, p);
+    return true;
 }
 
 // Look the object up, confirm it is in the house the player is standing in, and
@@ -4095,8 +4198,22 @@ bool HouseMgr::DragObject(Player* player, uint32 guid, std::string& error)
     // whatever is under the player's feet unless it is lifted. Measured from
     // the PLAYER, not from the object, so dragging a rug back and forth across
     // a room does not walk it into the ceiling.
-    ApplyPosition(player->GetMap(), *o, player->GetPositionX(), player->GetPositionY(),
-                  player->GetPositionZ() + HOUSE_PLACE_LIFT);
+    //
+    // A GROUP COMES ALONG: the clicked piece lands at the player's feet and
+    // every other member keeps its place relative to it.
+    float const dx = player->GetPositionX() - o->x;
+    float const dy = player->GetPositionY() - o->y;
+    float const dz = player->GetPositionZ() + HOUSE_PLACE_LIFT - o->z;
+
+    std::vector<HouseObject*> members;
+    GroupMembers(*o, members);
+
+    std::vector<Placement> all;
+    for (HouseObject* m : members)
+        all.push_back({ m, m->x + dx, m->y + dy, m->z + dz, m->o, 0.0f });
+
+    if (!PlaceAll(player->GetMap(), all, error))
+        return false;
     RefreshSelectionMarker(player);
     return true;
 }
@@ -4116,14 +4233,23 @@ bool HouseMgr::OffsetObject(Player* player, uint32 guid, float dx, float dy, flo
     // would have skipped the object, so the row crashes the server on every
     // login of the house's owner from then on. One object at z = -800046 did
     // exactly that on 2026-09-04.
-    if (std::fabs(dx) > HOUSE_MAX_NUDGE || std::fabs(dy) > HOUSE_MAX_NUDGE || std::fabs(dz) > HOUSE_MAX_NUDGE
-        || !MaNGOS::IsValidMapCoord(o->x + dx, o->y + dy, o->z + dz))
+    //
+    // PlaceAll checks the map coordinate of every member.
+    if (std::fabs(dx) > HOUSE_MAX_NUDGE || std::fabs(dy) > HOUSE_MAX_NUDGE || std::fabs(dz) > HOUSE_MAX_NUDGE)
     {
         error = "Too far.";
         return false;
     }
 
-    ApplyPosition(player->GetMap(), *o, o->x + dx, o->y + dy, o->z + dz);
+    std::vector<HouseObject*> members;
+    GroupMembers(*o, members);
+
+    std::vector<Placement> all;
+    for (HouseObject* m : members)
+        all.push_back({ m, m->x + dx, m->y + dy, m->z + dz, m->o, 0.0f });
+
+    if (!PlaceAll(player->GetMap(), all, error))
+        return false;
 
     // NOTHING TO CHASE ANY MORE. A gear used to stand beside each object and
     // had to be moved with it -- the rule was "whatever moves a piece of
@@ -4148,11 +4274,30 @@ bool HouseMgr::TurnObject(Player* player, uint32 guid, float degrees, bool faceM
         return false;
 
     float const from = faceMe ? player->GetOrientation() : o->o;
-    // Turning does not move the anchor, so the gear does not strictly need to
-    // move -- but ApplyOrientation re-adds the object to the map, and the gear
-    // is refreshed here for the same reason ScaleObject refreshes it: the two
-    // are drawn as one thing and either may only ever be half-updated.
-    ApplyOrientation(player->GetMap(), *o, from + degrees * (M_PI_F / 180.0f));
+
+    // A GROUP SWINGS AROUND THE CLICKED PIECE. Every member turns by the same
+    // angle, and its spot turns by that angle about the pivot, so a chair in
+    // front of the table stays in front of it. "Face me" needs nothing of its
+    // own: it only picks the angle the pivot ends up at.
+    float const theta = from + degrees * (M_PI_F / 180.0f) - o->o;
+    float const c = cos(theta);
+    float const s = sin(theta);
+
+    std::vector<HouseObject*> members;
+    GroupMembers(*o, members);
+
+    std::vector<Placement> all;
+    for (HouseObject* m : members)
+    {
+        float const rx = m->x - o->x;
+        float const ry = m->y - o->y;
+        all.push_back({ m, o->x + rx * c - ry * s, o->y + rx * s + ry * c, m->z, m->o + theta, 0.0f });
+    }
+
+    if (!PlaceAll(player->GetMap(), all, error))
+        return false;
+    // The glow is re-summoned after every change, turns included: see
+    // RefreshSelectionMarker.
     RefreshSelectionMarker(player);
     return true;
 }
@@ -4200,48 +4345,46 @@ bool HouseMgr::ScaleObject(Player* player, uint32 guid, float factor, bool relat
     if (wanted < 0.1f) wanted = 0.1f;
     if (wanted > 50.0f) wanted = 50.0f;
 
-    o->scale = wanted;
-    CharacterDatabase.PExecute("UPDATE house_object SET scale = %f WHERE id = %u", wanted, guid);
-
-    ObjectGuid const fullGuid(HIGHGUID_GAMEOBJECT, o->goEntry, guid);
-    sGuidObjectScaling.AddOrEdit(fullGuid.GetRawValue(), wanted);
-
-    // Remove and re-Add the SAME object rather than deleting and respawning it.
+    // A GROUP SCALES AS A SET: every member by the same factor, and every gap
+    // to the clicked piece by it too, height included, so a table and chairs
+    // at twice the size are a table and chairs at twice the size. The factor
+    // comes from the clicked piece after its own clamp, which covers "Set
+    // size" and "Reset size" as well.
     //
-    // GameObject::Delete() does not remove anything immediately -- it queues the
-    // object on the map removal list, which is drained at the end of the map
-    // update. Creating a replacement with the same guid in between means the
-    // deferred cleanup then tears out the REPLACEMENT, because the map indexes
-    // objects by guid. Symptom: the object vanishes on resize and never comes
-    // back until the grid reloads.
-    //
-    // Remove(go, false) leaves the object alive and merely takes it out of the
-    // world, so the client gets a despawn and then a fresh creation block from
-    // Add. That is what .gobject scale does (Commands.cpp:9620) and what
-    // ApplyPosition above already does for moves.
-    Map* map = player->GetMap();
-    if (map)
+    // A member that would pass a limit refuses the lot. Flooring it the way
+    // the clicked piece is floored would change the set's proportions.
+    float const f = wanted / current;
+
+    std::vector<HouseObject*> members;
+    GroupMembers(*o, members);
+
+    std::vector<Placement> all;
+    for (HouseObject* m : members)
     {
-        if (GameObject* go = map->GetGameObject(fullGuid))
+        if (m == o)
         {
-            map->Remove(go, false);
-            go->SetObjectScale(wanted);
-            go->UpdateRotationFields();
-            map->Add(go);
-            go->Refresh();
+            all.push_back({ m, m->x, m->y, m->z, m->o, wanted });
+            continue;
         }
-        else
+
+        GameObjectInfo const* mInfo = sObjectMgr.GetGameObjectInfo(m->goEntry);
+        float const mBase = mInfo && mInfo->size > 0.0f ? mInfo->size : 1.0f;
+        float const mWanted = (m->scale > 0.0f ? m->scale : mBase) * f;
+        if (mWanted < 0.1f || mWanted > 50.0f)
         {
-            // Not spawned -- its grid is not loaded. Nothing to do; Create will
-            // read the registry when the grid comes in.
-            SpawnObjectNow(map, *o);
+            error = mWanted < 0.1f ? "Too small for one of the pieces." : "Too big for one of the pieces.";
+            return false;
         }
+        all.push_back({ m, o->x + (m->x - o->x) * f, o->y + (m->y - o->y) * f, o->z + (m->z - o->z) * f,
+                        m->o, mWanted });
     }
+
+    if (!PlaceAll(player->GetMap(), all, error))
+        return false;
 
     // The object under the handle just changed shape; the handle itself sits a
     // fixed distance above the anchor and has not moved. Refreshed anyway, the
-    // same as the three above -- this is the rule, not the exception it used to
-    // be.
+    // same as the three above.
     RefreshSelectionMarker(player);
     return true;
 }
@@ -4348,6 +4491,146 @@ bool HouseMgr::RemoveObject(Player* player, uint32 guid, std::string& error, uin
     // refresh resolves to "nothing selected" -- which takes the glow down. Run
     // before it, the object would still be there and the glow would be put
     // straight back on something about to vanish.
+    RefreshSelectionMarker(player);
+    return true;
+}
+
+//== furniture groups ========================================================
+//
+// VALIDATED ON READ, like the selection. A group is the set of loaded,
+// non-fabric pieces of one house sharing a groupNo, and it is live only with
+// two or more. Picking up, a purge, a reset and a move of house all change the
+// set without any group code running, and the next read sees the result.
+
+void HouseMgr::GroupMembers(HouseObject const& o, std::vector<HouseObject*>& out)
+{
+    out.clear();
+
+    auto self = m_objects.find(o.guid);
+    if (self == m_objects.end())
+        return;
+    out.push_back(&self->second);
+
+    House* house = GetHouseById(o.houseId);
+    if (!o.groupNo || IsHouseFabric(o) || !house)
+        return;
+
+    for (uint32 guid : house->objects)
+    {
+        if (guid == o.guid)
+            continue;
+        auto itr = m_objects.find(guid);
+        if (itr != m_objects.end() && itr->second.groupNo == o.groupNo && !IsHouseFabric(itr->second))
+            out.push_back(&itr->second);
+    }
+}
+
+uint32 HouseMgr::GroupSize(uint32 guid)
+{
+    HouseObject const* o = GetObject(guid);
+    if (!o)
+        return 0;
+
+    std::vector<HouseObject*> members;
+    GroupMembers(*o, members);
+    return uint32(members.size());
+}
+
+// Counts stale numbers too: a lone piece still holding group 4 must not end
+// up in a new group 4 with two pieces it was never grouped with.
+uint32 HouseMgr::AllocateGroupNo(House const& house) const
+{
+    uint32 highest = 0;
+    for (uint32 guid : house.objects)
+    {
+        std::map<uint32, HouseObject>::const_iterator itr = m_objects.find(guid);
+        if (itr != m_objects.end() && itr->second.groupNo > highest)
+            highest = itr->second.groupNo;
+    }
+    return highest + 1;
+}
+
+bool HouseMgr::JoinGroup(Player* player, uint32 guid, uint32 withGuid, std::string& error)
+{
+    if (guid == withGuid)
+    {
+        error = "Choose a different piece to group with.";
+        return false;
+    }
+
+    House* house = nullptr;
+    HouseObject* o = Resolve(*this, player, guid, house, m_objects, error);
+    if (!o)
+        return false;
+    HouseObject* with = Resolve(*this, player, withGuid, house, m_objects, error);
+    if (!with)
+        return false;
+
+    std::vector<HouseObject*> mine, theirs;
+    GroupMembers(*o, mine);
+    GroupMembers(*with, theirs);
+
+    if (std::find(mine.begin(), mine.end(), with) != mine.end())
+    {
+        error = "Those are already grouped.";
+        return false;
+    }
+    if (mine.size() + theirs.size() > HOUSE_GROUP_MAX)
+    {
+        error = "A group holds at most " + std::to_string(HOUSE_GROUP_MAX) + " pieces.";
+        return false;
+    }
+
+    // The number of the group being joined, else the clicked piece's own,
+    // else a new one. Fewest rows change that way.
+    uint32 target = 0;
+    if (theirs.size() > 1)
+        target = with->groupNo;
+    else if (mine.size() > 1)
+        target = o->groupNo;
+    else
+        target = AllocateGroupNo(*house);
+
+    // One row per piece. Each write is to a different row, so the order the
+    // four async workers run them in does not matter.
+    mine.insert(mine.end(), theirs.begin(), theirs.end());
+    for (HouseObject* m : mine)
+    {
+        if (m->groupNo != target)
+        {
+            m->groupNo = target;
+            CharacterDatabase.PExecute("UPDATE house_object SET group_no = %u WHERE id = %u", target, m->guid);
+        }
+        FlashObject(player, m->guid);
+    }
+    RefreshSelectionMarker(player);
+    return true;
+}
+
+bool HouseMgr::LeaveGroup(Player* player, uint32 guid, std::string& error)
+{
+    House* house = nullptr;
+    HouseObject* o = Resolve(*this, player, guid, house, m_objects, error);
+    if (!o)
+        return false;
+
+    std::vector<HouseObject*> members;
+    GroupMembers(*o, members);
+    if (members.size() < 2)
+    {
+        error = ObjectLabel(guid) + " is not in a group.";
+        return false;
+    }
+
+    // members[0] is o. With two pieces, the other one is let go as well:
+    // a group of one is no group, and a stale number would show in the list.
+    size_t const release = members.size() == 2 ? 2 : 1;
+    for (size_t i = 0; i < release; ++i)
+    {
+        members[i]->groupNo = 0;
+        CharacterDatabase.PExecute("UPDATE house_object SET group_no = 0 WHERE id = %u", members[i]->guid);
+    }
+    FlashObject(player, guid);
     RefreshSelectionMarker(player);
     return true;
 }

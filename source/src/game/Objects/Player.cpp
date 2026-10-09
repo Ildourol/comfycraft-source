@@ -17703,34 +17703,20 @@ bool Player::LoadFromDB(ObjectGuid guid, SqlQueryHolder *holder)
         }
     }
 
-    // LOGGING IN INSIDE A HOUSE puts you at the way out, a little above it,
-    // rather than exactly where you stood when you logged off.
-    //
-    // The saved position is a point in a world that has not been built yet.
-    // Furniture and any building the owner placed are grid spawns that arrive
-    // after the player does, so logging out on an inn floor and back in again
-    // drops you straight through it -- the same reason arriving by teleport
-    // needed HOUSE_ARRIVE_LIFT. And the way out is the one spot in a house that
-    // is always worth standing on.
-    //
-    // GetArrivalPosition is the same answer .house go and the entrance portals
-    // use, so every route into a house agrees on where you end up.
-    //
-    // By INSTANCE first, not by account: a guest logging in inside somebody
-    // else's house would otherwise be sent to the coordinates of their OWN way
-    // out, which in the host's instance is an arbitrary spot on the plain.
+    // LOGGING IN INSIDE A HOUSE puts you outside its door, or at the hearthstone
+    // when it has none. A login indoors fell through the floor: see
+    // HouseMgr::GetLoginExit.
     if (GetMapId() == HOUSE_MAP_ID)
     {
-        House const* house = state ? sHouseMgr.GetHouseByInstance(state->GetInstanceId()) : nullptr;
-        if (!house)
-            house = sHouseMgr.GetHouseByAccount(GetSession()->GetAccountId());
-
-        if (house)
+        WorldLocation loc;
+        if (sHouseMgr.GetLoginExit(this, state ? state->GetInstanceId() : 0, loc))
         {
-            float ax, ay, az, ao;
-            sHouseMgr.GetArrivalPosition(*house, ax, ay, az, ao);
-            Relocate(ax, ay, az, ao);
+            Relocate(loc.x, loc.y, loc.z, loc.o);
+            SetLocationMapId(loc.mapId);
+            SetLocationInstanceId(0);
         }
+        else
+            RelocateToHomebind();
     }
 
     // load the player's map here if it's not already loaded
