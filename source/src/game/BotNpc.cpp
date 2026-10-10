@@ -835,15 +835,28 @@ void BotNpcMgr::MarkLookApplied(uint32 characterGuid, std::string const& look)
  * character name, and a player cannot make a character with a name that is
  * taken, so no player can match. Twins share a name and are one entry.
  *
- * From the player cache, never the database: this runs every 5 s.
+ * From the body in world, else the player cache, never the database: this
+ * runs every 5 s.
+ *
+ * THE BODY FIRST, BECAUSE THE CACHE CHANGES THE CASE. LoadPlayerCacheData puts
+ * every name through normalizePlayerName, which lowercases all but the first
+ * letter, so after a restart the cache says "The old man". The client is sent
+ * Player::GetName, "The Old Man", and the addon compares the two exactly: a
+ * spaced bot NPC with no subname (so no guild marker) read as a player.
  */
 std::string BotNpcMgr::BuildNameList() const
 {
     std::set<std::string> names;
     for (auto const& spawn : m_spawns)
     {
+        ObjectGuid const guid(HIGHGUID_PLAYER, spawn.first);
         std::string name;
-        if (sObjectMgr.GetPlayerNameByGUID(ObjectGuid(HIGHGUID_PLAYER, spawn.first), name) && !name.empty())
+        if (Player* body = sObjectMgr.GetPlayer(guid, false))
+            name = body->GetName();
+        else
+            sObjectMgr.GetPlayerNameByGUID(guid, name);
+
+        if (!name.empty())
             names.insert(name);
     }
 

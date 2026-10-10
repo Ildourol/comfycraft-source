@@ -7357,6 +7357,15 @@ namespace
 
     char const* SexName(uint32 sex) { return sex ? "female" : "male"; }
 
+    char const* ClassName(uint32 cls)
+    {
+        if (ChrClassesEntry const* entry = sChrClassesStore.LookupEntry(cls))
+            if (entry->name[0] && entry->name[0][0])
+                return entry->name[0];
+
+        return "class ?";
+    }
+
     struct BotNpcLook
     {
         uint32 race, sex, skin, face, hair, hairColor, facialHair;
@@ -7988,9 +7997,10 @@ bool ComfyCommands::HandleNpcBotCommand(ChatHandler* handler, char* args)
 
     if (action != "place" && action != "move" && action != "reset" && action != "save" &&
         action != "unplace" && action != "menu" && action != "dress" && action != "idle" &&
-        action != "emote")
+        action != "emote" && action != "info")
     {
-        handler->SendSysMessage("Usage: .npcbot place|move|reset|save|dress|menu|idle|emote|unplace <name or #id>, or .npcbot list");
+        handler->SendSysMessage("Usage: .npcbot place|move|reset|save|dress|menu|idle|emote|unplace|info <name or #id>, or .npcbot list");
+        handler->SendSysMessage("  .npcbot info [name]       its id, guid, menu, shop, quests and post");
         handler->SendSysMessage("  .npcbot place <name>      stand the design called <name> here, for good; also .npcbot add");
         handler->SendSysMessage("  .npcbot move <name>       bring it here for now; its post does not change");
         handler->SendSysMessage("  .npcbot reset <name>      send it back to its post");
@@ -8000,7 +8010,7 @@ bool ComfyCommands::HandleNpcBotCommand(ChatHandler* handler, char* args)
         handler->SendSysMessage("  .npcbot idle <name>       what it does unprompted; add a trigger to run one now");
         handler->SendSysMessage("  .npcbot emote <name>      what it answers emotes with; add an emote id to run one now");
         handler->SendSysMessage("  .npcbot unplace [name]    put the body away, the design stays; also .npcbot del");
-        handler->SendSysMessage("Leave out the name on place, move, reset, save, dress and unplace to use the bot NPC you have selected.");
+        handler->SendSysMessage("Leave out the name on place, move, reset, save, dress, unplace and info to use the bot NPC you have selected.");
         // Not .npcbot subcommands, but they are the other half of giving an NPC
         // somewhere to walk, and this is where somebody looks for that.
         handler->SendSysMessage("With the NPC selected:");
@@ -8034,10 +8044,32 @@ bool ComfyCommands::HandleNpcBotCommand(ChatHandler* handler, char* args)
          * a design with no body has nothing to select.
          */
         if (action == "unplace" || action == "move" || action == "reset" || action == "save" ||
-            action == "dress" || action == "place")
+            action == "dress" || action == "place" || action == "info")
         {
             Player* target = handler->GetSelectedPlayer();
             found = target ? sBotNpcMgr.Get(target->GetGUIDLow()) : nullptr;
+
+            // INFO ON ANY SELECTED CHARACTER. A companion or a pool bot has no
+            // design, but its guid is still what somebody selected it for.
+            if (!found && action == "info" && target && target != me)
+            {
+                uint32 const guid = target->GetGUIDLow();
+                uint32 const owner = CompanionOwnership::GetOwner(guid);
+                std::string what = "a player";
+                if (owner)
+                {
+                    std::string ownerName;
+                    sObjectMgr.GetPlayerNameByGUID(ObjectGuid(HIGHGUID_PLAYER, owner), ownerName);
+                    what = "companion of " + (ownerName.empty() ? "guid " + std::to_string(owner) : ownerName);
+                }
+                else if (GetBotAI(target))
+                    what = "a bot";
+
+                handler->PSendSysMessage("%s: guid %u, level %u %s %s, %s. Not a bot NPC.", target->GetName(), guid,
+                                target->GetLevel(), RaceName(target->GetRace()).c_str(),
+                                ClassName(target->getClass()), what.c_str());
+                return true;
+            }
 
             if (!found)
             {
@@ -8208,6 +8240,54 @@ bool ComfyCommands::HandleNpcBotCommand(ChatHandler* handler, char* args)
         handler->SetSentErrorMessage(true);
         return false;
     };
+
+    // ------------------------------------------------------------- info
+    if (action == "info")
+    {
+        auto idOrNone = [](uint32 v) { return v ? std::to_string(v) : std::string("none"); };
+
+        handler->PSendSysMessage("%s (#%u): %s %s", name.c_str(), entry.id, SexName(entry.gender),
+                        RaceName(entry.race).c_str());
+
+        // One line per body, each with the guid the character tables know it by.
+        // The selected copy only, when one is selected: that is the one asked about.
+        std::vector<BotNpcSpawn const*> shown;
+        if (chosenBySelection)
+            shown.push_back(chosen);
+        else
+            shown = spawns;
+
+        if (shown.empty())
+            handler->SendSysMessage("  not placed");
+
+        for (BotNpcSpawn const* s : shown)
+        {
+            std::string state = "not logged in";
+            if (Player* body = bodyOf(s))
+            {
+                if (!body->IsInWorld())
+                    state = "logging in";
+                else if (body->GetMapId() != s->mapId)
+                    state = "on map " + std::to_string(body->GetMapId());
+                else
+                {
+                    float const dx = body->GetPositionX() - s->x;
+                    float const dy = body->GetPositionY() - s->y;
+                    float const dz = body->GetPositionZ() - s->z;
+                    uint32 const yards = uint32(std::sqrt(dx * dx + dy * dy + dz * dz) + 0.5f);
+                    state = yards ? std::to_string(yards) + " yd from its post" : "at its post";
+                }
+            }
+
+            handler->PSendSysMessage("  guid %u, post map %u at %.0f %.0f %.0f, %s", s->characterGuid,
+                            s->mapId, s->x, s->y, s->z, state.c_str());
+        }
+
+        handler->PSendSysMessage("  menu %s, shop %s, quests %s", idOrNone(entry.gossipMenuId).c_str(),
+                        idOrNone(entry.vendorTemplateId).c_str(), idOrNone(entry.questGiverId).c_str());
+        handler->PSendSysMessage("  edit at /admin/npcbots/%u", entry.id);
+        return true;
+    }
 
     // ---------------------------------------------------------- unplace
     if (action == "unplace")

@@ -14810,7 +14810,7 @@ namespace
         { "setlevel",          ".setlevel <level> [name]   set a level, up or down" },
         { "flightmode",        ".flightmode [on | off]   whether GM flight is on, or set it" },
         { "companions",        ".companions   name your companions" },
-        { "npcbot",            ".npcbot place | move | dress | menu | idle | emote | unplace <name>, .npcbot list" },
+        { "npcbot",            ".npcbot place | move | dress | menu | idle | emote | unplace | info <name>, .npcbot list" },
         { "scene",             ".scene <id>   run a scene, your target as the NPC" },
         { "spot",              ".spot <name>   save where the selected NPC walks to" },
         { "spotfrom",          ".spotfrom   how far you stand from the selected NPC's post" },
