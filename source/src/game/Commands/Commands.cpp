@@ -14811,6 +14811,7 @@ namespace
         { "flightmode",        ".flightmode [on | off]   whether GM flight is on, or set it" },
         { "companions",        ".companions   name your companions" },
         { "npcbot",            ".npcbot place | move | dress | menu | idle | emote | unplace | info <name>, .npcbot list" },
+        { "obj",               ".obj list | info | near | where | go | place (add) | select | move | turn | remove (del)   Workshop objects by #id" },
         { "scene",             ".scene <id>   run a scene, your target as the NPC" },
         { "spot",              ".spot <name>   save where the selected NPC walks to" },
         { "spotfrom",          ".spotfrom   how far you stand from the selected NPC's post" },

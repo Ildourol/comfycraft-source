@@ -37,6 +37,9 @@ struct ComfyCommands
     static bool HandleReloadGameObjectTemplateCommand(ChatHandler* handler, char* args);
     static bool HandleReloadRentedMountCommand(ChatHandler* handler, char* args);
 
+    // Commands/ObjCommands.cpp
+    static bool HandleObjCommand(ChatHandler* handler, char* args);
+
     // Handlers/MiscHandler.cpp, beside the bug-report code it shares with
     // CMSG_BUG rather than beside the other chat commands.
     static bool HandleBugCommand(ChatHandler* handler, char* args);

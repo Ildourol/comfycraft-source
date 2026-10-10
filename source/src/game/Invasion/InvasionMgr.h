@@ -107,6 +107,9 @@ class InvasionManager
             WorldLocation origin;       // where the sigil was used, and where the invader goes back to
             InvasionPhase phase = PHASE_STALKING;
             uint32 timer = 0;           // ms left in the current phase
+            WorldLocation arena;        // where the invader landed: the duel flag's job
+            uint32 outInvader = 0;      // ms before the invader forfeits; 0 is in bounds
+            uint32 outDefender = 0;     // the same for the defender
         };
 
         // Both message the player on refusal. CanInvadeFrom is about the person
@@ -122,6 +125,7 @@ class InvasionManager
         Player* PickDefender(Player* invader) const;
 
         void Arrive(Invasion& inv, Player* invader, Player* defender);
+        bool ArenaForfeit(Invasion& inv, Player* invader, Player* defender, uint32 diff);
         void SendHome(Invasion const& inv, Player* invader);
 
         // Moves an invasion into PHASE_LEAVING and says why. Either line may be

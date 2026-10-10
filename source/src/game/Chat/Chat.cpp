@@ -1154,6 +1154,7 @@ ChatCommand * ChatHandler::getCommandTable()
         // a server operator who wants tighter control can raise it.
         { "bot",            SEC_PLAYER,           false, &ChatHandler::HandlePlayerbotCommand,           "", nullptr },
         { "npcbot",         SEC_DEVELOPER,        true,  &ComfyCommands::HandleNpcBotCommand,            "", nullptr },
+        { "obj",            SEC_DEVELOPER,        true,  &ComfyCommands::HandleObjCommand,               "", nullptr },
         { "add_dressing_room", SEC_DEVELOPER,    false, &ComfyCommands::HandleAddDressingRoomCommand,   "", nullptr },
         { "comfyhelp",      SEC_PLAYER,           true,  &ComfyCommands::HandleComfyHelpCommand,         "", nullptr },
         { "comfynpcs",      SEC_PLAYER,           false, &ComfyCommands::HandleComfyNpcsCommand,         "", nullptr },

@@ -7963,26 +7963,10 @@ bool ComfyCommands::HandleNpcBotCommand(ChatHandler* handler, char* args)
         {
             BotNpcEntry const& e = itr.second;
 
-            std::vector<BotNpcSpawn const*> copies = sBotNpcMgr.SpawnsOf(e.id);
-
-            if (copies.empty())
-            {
-                handler->PSendSysMessage("%s (#%u) -- %s %s, not placed", e.name.c_str(), e.id,
-                                SexName(e.gender), RaceName(e.race).c_str());
-                continue;
-            }
-
-            handler->PSendSysMessage("%s (#%u) -- %s %s, menu %u",
-                            e.name.c_str(), e.id, SexName(e.gender), RaceName(e.race).c_str(),
-                            e.gossipMenuId);
-
-            // One line per body: a design may stand in several places.
-            for (BotNpcSpawn const* c : copies)
-            {
-                Player* inWorld = sObjectMgr.GetPlayer(ObjectGuid(HIGHGUID_PLAYER, c->characterGuid), false);
-                handler->PSendSysMessage("  map %u at %.0f %.0f %.0f -- %s", c->mapId, c->x, c->y, c->z,
-                                inWorld ? "standing" : "not logged in");
-            }
+            // The name, the id and a count. .npcbot info has the rest: race,
+            // menu, and where each body stands.
+            handler->PSendSysMessage("%s (#%u) %u placed", e.name.c_str(), e.id,
+                            uint32(sBotNpcMgr.SpawnsOf(e.id).size()));
         }
         return true;
     }

@@ -79,6 +79,7 @@
 #include "Player.h"
 #include "Item.h"
 #include "Spell.h"
+#include "SpellMgr.h"
 #include "InvasionMgr.h"
 
 bool ItemUse_item_invasion_sigil(Player* player, Item* item, SpellCastTargets& /*targets*/)
@@ -92,11 +93,21 @@ bool ItemUse_item_invasion_sigil(Player* player, Item* item, SpellCastTargets& /
         return false;
 
     // A refusal has already been explained in the chat frame, so all that is
-    // left is to release the client's item-use animation -- nothing is casting
-    // on this path, and without this it keeps its hands glowing. Same signal
-    // HandleUseItemOpcode sends on a failed item cast, one branch above where
-    // this script is called from.
+    // left is to release the client -- nothing is casting on this path. BOTH
+    // signals HandleUseItemOpcode sends on a failed item cast, one branch above
+    // where this script is called from: the equip error frees the greyed item,
+    // and the cast result stops the cast. With the first alone the client sat
+    // in the cast with its hands glowing (a GM in GM mode, 2026-10-10).
+    // DONT_REPORT, so no red error joins the chat line that already said why.
     player->SendEquipError(EQUIP_ERR_NONE, item, nullptr);
+    for (auto const& use : item->GetProto()->Spells)
+    {
+        if (use.SpellTrigger != ITEM_SPELLTRIGGER_ON_USE || !use.SpellId)
+            continue;
+        if (SpellEntry const* spellInfo = sSpellMgr.GetSpellEntry(use.SpellId))
+            Spell::SendCastResult(player, spellInfo, SPELL_FAILED_DONT_REPORT);
+        break;
+    }
     return true;
 }
 

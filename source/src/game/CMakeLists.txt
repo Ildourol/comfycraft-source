@@ -97,6 +97,7 @@ set (game_SRCS
     Chat/AsyncCommandHandlers.cpp
     Chat/WhisperTargetLimits.cpp
     Commands/Commands.cpp
+    Commands/ObjCommands.cpp
     Database/CharacterDatabaseCache.cpp
     Database/CharacterDatabaseCleaner.cpp
     Database/DBCStores.cpp

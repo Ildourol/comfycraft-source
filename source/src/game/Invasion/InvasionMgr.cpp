@@ -41,6 +41,19 @@ namespace
         return sWorld.getConfig(index) * IN_MILLISECONDS;
     }
 
+    /*
+     * THE ARENA, a duel's rule at a hundred yards. A duel measures from its flag
+     * (Player::CheckDuelDistance: 75 yd out, 70 back, 10 s to return, and the
+     * one who left loses). An invasion has no flag, so the spot the invader
+     * landed is one. Either side past ARENA_OUT_YARDS gets ARENA_FORFEIT_MS to
+     * come back within ARENA_BACK_YARDS, or forfeits. That also ends a fight
+     * the defender took a flight path out of, which used to sit until
+     * Invasion.DurationSeconds ran out.
+     */
+    float const ARENA_OUT_YARDS = 100.0f;
+    float const ARENA_BACK_YARDS = 95.0f;
+    uint32 const ARENA_FORFEIT_MS = 10 * IN_MILLISECONDS;
+
     inline void Tell(Player* player, char const* text)
     {
         if (!player || !player->GetSession())
@@ -145,6 +158,15 @@ bool InvasionManager::CanInvadeFrom(Player* invader) const
     if (invader->IsHardcore())
     {
         Tell(invader, "Hardcore characters cannot invade. Losing would be permanent.");
+        return false;
+    }
+
+    // Said on its own: IsAvailableForInvasion refuses a GM too, and "you
+    // cannot invade from here" sent people looking for what was wrong with
+    // the place.
+    if (invader->IsGameMaster())
+    {
+        Tell(invader, "Not in GM mode. Type .gm off first.");
         return false;
     }
 
@@ -319,6 +341,61 @@ bool InvasionManager::BeginInvasion(Player* invader)
     return true;
 }
 
+// One tick of the arena (ARENA_OUT_YARDS above). True when somebody forfeited
+// and the match is concluded.
+bool InvasionManager::ArenaForfeit(Invasion& inv, Player* invader, Player* defender, uint32 diff)
+{
+    Player* const sides[2] = { invader, defender };
+    uint32* const clocks[2] = { &inv.outInvader, &inv.outDefender };
+
+    for (int i = 0; i < 2; ++i)
+    {
+        Player* const p = sides[i];
+        uint32& left = *clocks[i];
+
+        // A teleport in flight is not leaving: the invader's own arrival is a
+        // far teleport, with a loading screen, and reads as another map.
+        if (!p || p->IsBeingTeleported())
+            continue;
+
+        float const dist = (p->GetMapId() == inv.arena.mapId)
+            ? p->GetDistance(inv.arena.x, inv.arena.y, inv.arena.z)
+            : ARENA_OUT_YARDS * 100.0f;
+
+        if (!left)
+        {
+            if (dist > ARENA_OUT_YARDS)
+            {
+                left = ARENA_FORFEIT_MS;
+                p->GetSession()->SendAreaTriggerMessage("Go back within 10 seconds or forfeit.");
+                Tell(p, "You are leaving the fight. Go back within 10 seconds or forfeit.");
+            }
+            continue;
+        }
+
+        if (dist < ARENA_BACK_YARDS)
+        {
+            left = 0;
+            Tell(p, "You are back in the fight.");
+            continue;
+        }
+
+        if (left > diff)
+        {
+            left -= diff;
+            continue;
+        }
+
+        // The one who left loses, as in a duel.
+        if (i == 0)
+            Conclude(inv, "You left the fight. You forfeit.", "Your invader fled. You win.", 0, inv.defender);
+        else
+            Conclude(inv, "Your quarry fled. You win.", "You left the fight. You forfeit.", 0, inv.invader);
+        return true;
+    }
+    return false;
+}
+
 void InvasionManager::Arrive(Invasion& inv, Player* invader, Player* defender)
 {
     // Ten yards BEHIND them: GetClosePoint works off the object's own
@@ -335,6 +412,9 @@ void InvasionManager::Arrive(Invasion& inv, Player* invader, Player* defender)
     // which is the map the point is actually on.
     invader->TeleportTo(defender->GetMapId(), x, y, z, defender->GetOrientation());
 
+    inv.arena = WorldLocation(defender->GetMapId(), x, y, z, defender->GetOrientation());
+    inv.outInvader = 0;
+    inv.outDefender = 0;
     inv.phase = PHASE_FIGHTING;
     inv.timer = SecondsConfig(CONFIG_UINT32_INVASION_DURATION_SECONDS);
 
@@ -348,6 +428,11 @@ void InvasionManager::Arrive(Invasion& inv, Player* invader, Player* defender)
 
     TellFmt(invader, "You have invaded %s.", defender->GetName());
     TellFmt(defender, "%s has invaded you!", invader->GetName());
+
+    // ComfyUI/Invasion.lua puts "You've been invaded!" in the middle of the
+    // screen from this. Prefix CINV, "I <invader>". An addon never reads the
+    // chat line above: this client has no chat filter to read it with.
+    defender->SendAddonMessage("CINV", std::string("I ") + invader->GetName());
 }
 
 void InvasionManager::SendHome(Invasion const& inv, Player* invader)
@@ -594,6 +679,9 @@ void InvasionManager::Update(uint32 diff)
                     Conclude(inv, "Your quarry is beyond reach.", nullptr);
                     break;
                 }
+
+                if (ArenaForfeit(inv, invader, defender, diff))
+                    break;
 
                 if (!inv.timer)
                     Conclude(inv, "Time is up. The hunt is over.", "Your invader's time is up.");

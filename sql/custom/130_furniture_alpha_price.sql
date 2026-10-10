@@ -1,0 +1,89 @@
+-- Every furniture crate costs 20 silver for the alpha (tw_world).
+--
+-- buy_price 2000 copper, sell_price 400 (a fifth, the same ratio as 042).
+-- Every crate in house_furniture_item, so a crate made on the furniture page
+-- is included. 042 inserts with INSERT IGNORE, so a redeploy does not put the
+-- old prices back. Re-runnable.
+--
+-- After the file: reload item_template. A vendor reads the price from the
+-- server; a client's tooltip price comes from its item cache, which the
+-- launcher clears at every start.
+
+UPDATE item_template i
+JOIN house_furniture_item f ON f.item_entry = i.entry
+SET i.buy_price = 2000, i.sell_price = 400;
+
+-- TO RESTORE THE PRICES FROM BEFORE THE ALPHA, run this (sell_price is a
+-- fifth of buy_price). A crate not listed here was made after 2026-10-09.
+--
+-- UPDATE item_template SET buy_price = CASE entry
+--   WHEN 100100 THEN 5000   -- Wooden Chair
+--   WHEN 100101 THEN 7500   -- Wooden Bench
+--   WHEN 100102 THEN 10000   -- Inn Table
+--   WHEN 100103 THEN 25000   -- Feather Bed
+--   WHEN 100104 THEN 20000   -- Tall Bookshelf
+--   WHEN 100105 THEN 12500   -- Foot Locker
+--   WHEN 100106 THEN 7500   -- Iron Lantern
+--   WHEN 100107 THEN 15000   -- Stone Brazier
+--   WHEN 100108 THEN 30000   -- Bearskin Rug
+--   WHEN 100109 THEN 40000   -- Framed Painting
+--   WHEN 100110 THEN 5000   -- Stack of Books
+--   WHEN 100111 THEN 10000   -- Ale Keg
+--   WHEN 100112 THEN 25000   -- Dwarven Bed
+--   WHEN 100113 THEN 25000   -- Elven Bed
+--   WHEN 100114 THEN 25000   -- Westfall Bed
+--   WHEN 100115 THEN 5000   -- Dark Iron Chair
+--   WHEN 100116 THEN 7500   -- Dark Iron Bench
+--   WHEN 100117 THEN 7500   -- Dark Iron Seat
+--   WHEN 100118 THEN 7500   -- Stone Bench
+--   WHEN 100119 THEN 7500   -- Stormwind Bench
+--   WHEN 100120 THEN 3000   -- Log Seat
+--   WHEN 100121 THEN 3000   -- Westfall Stool
+--   WHEN 100122 THEN 7500   -- Garden Bench
+--   WHEN 100123 THEN 3000   -- Stump Seat
+--   WHEN 100124 THEN 5000   -- Mossy Stone Seat
+--   WHEN 100125 THEN 25000   -- Dark Iron Bed
+--   WHEN 100126 THEN 25000   -- Gnome Bed
+--   WHEN 100127 THEN 10000   -- Bedroll
+--   WHEN 100128 THEN 10000   -- Packed Bedroll
+--   WHEN 100129 THEN 10000   -- Dwarven Table
+--   WHEN 100130 THEN 12500   -- Checkered Table
+--   WHEN 100131 THEN 15000   -- Long Checkered Table
+--   WHEN 100132 THEN 10000   -- Round Wooden Table
+--   WHEN 100133 THEN 12500   -- Draped Stone Table
+--   WHEN 100134 THEN 7500   -- Small Inn Table
+--   WHEN 100135 THEN 15000   -- Uldaman Stone Table
+--   WHEN 100136 THEN 12500   -- Reading Lectern
+--   WHEN 100137 THEN 20000   -- Abbey Bookshelf
+--   WHEN 100138 THEN 15000   -- Dwarven Shelf
+--   WHEN 100139 THEN 25000   -- Dwarven Bookcase
+--   WHEN 100140 THEN 20000   -- Tall Dwarven Bookshelf
+--   WHEN 100141 THEN 15000   -- Low Dwarven Shelf
+--   WHEN 100142 THEN 5000   -- Vase of Marigolds
+--   WHEN 100143 THEN 5000   -- Flower Planter
+--   WHEN 100144 THEN 2500   -- Orange Dreamflower
+--   WHEN 100145 THEN 2500   -- Purple Dreamflower
+--   WHEN 100146 THEN 2500   -- Drooping Dreamflower
+--   WHEN 100147 THEN 2500   -- Elwynn Wildflowers
+--   WHEN 100148 THEN 2500   -- Bunch of White Flowers
+--   WHEN 100149 THEN 20000   -- Troll Stone Tablet
+--   WHEN 100150 THEN 35000   -- Eagle Statue
+--   WHEN 100151 THEN 15000   -- Uldaman Banner
+--   WHEN 100152 THEN 15000   -- Wide Blue Banner
+--   WHEN 100153 THEN 15000   -- Wide Purple Banner
+--   WHEN 100154 THEN 15000   -- Wide Red Banner
+--   WHEN 100155 THEN 15000   -- Tall Red Banner
+--   WHEN 100156 THEN 15000   -- Horde Banner
+--   WHEN 100157 THEN 40000   -- Planet Painting
+--   WHEN 100158 THEN 40000   -- Dark Forest Painting
+--   WHEN 100159 THEN 40000   -- Oval Portrait
+--   WHEN 100160 THEN 40000   -- Dalaran Landscape
+--   WHEN 100161 THEN 30000   -- Purple Rug
+--   WHEN 100162 THEN 20000   -- Small Blue Rug
+--   WHEN 100163 THEN 20000   -- Small Purple Rug
+--   WHEN 100164 THEN 15000   -- Woven Tauren Hanging
+--   WHEN 100165 THEN 2500   -- Tauren Wall Art
+--   ELSE buy_price END
+-- WHERE entry IN (SELECT item_entry FROM house_furniture_item);
+-- UPDATE item_template SET sell_price = buy_price DIV 5
+-- WHERE entry IN (SELECT item_entry FROM house_furniture_item);
