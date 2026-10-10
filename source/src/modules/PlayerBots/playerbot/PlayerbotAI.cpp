@@ -8,6 +8,7 @@
 #include <iomanip>
 
 #include "playerbot/AiFactory.h"
+#include "playerbot/CompanionOwnership.h"
 
 #include "Movement/MovementGenerator.h"
 #include "Maps/GridNotifiers.h"
@@ -1601,6 +1602,24 @@ bool PlayerbotAI::IsAllowedCommand(std::string text)
 void PlayerbotAI::HandleCommand(uint32 type, const std::string& text, Player& fromPlayer, const uint32 lang)
 {
     std::string filtered = text;
+
+    // COMFYCRAFT: A COMPANION TAKES ORDERS, NOT ERRANDS. From anybody below GM
+    // rank it answers only the four orders the companion bar sends: attack,
+    // pull, follow, stay (the bar's CC is a raid mark and sends no line).
+    // Trade, give, sell, quests, strategy toggles and the module's other
+    // commands are dropped in silence. A GM keeps all of them, for debugging
+    // (`nc +debug`). The bot's own internal commands come from itself and pass.
+    if (&fromPlayer != bot && CompanionOwnership::IsCompanion(bot->GetGUIDLow()) &&
+        (!fromPlayer.GetSession() || fromPlayer.GetSession()->GetSecurity() < SEC_DEVELOPER))
+    {
+        static const std::set<std::string> orders = { "attack", "pull", "follow", "stay" };
+        std::string order = text;
+        order.erase(0, order.find_first_not_of(" \t\r\n"));
+        order.erase(order.find_last_not_of(" \t\r\n") + 1);
+        std::transform(order.begin(), order.end(), order.begin(), ::tolower);
+        if (!orders.count(order))
+            return;
+    }
 
     if (!IsAllowedCommand(filtered) && !GetSecurity()->CheckLevelFor(PlayerbotSecurityLevel::PLAYERBOT_SECURITY_INVITE, type != CHAT_MSG_WHISPER, &fromPlayer))
         return;

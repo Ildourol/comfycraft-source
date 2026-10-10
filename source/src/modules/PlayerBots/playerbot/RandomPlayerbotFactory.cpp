@@ -126,6 +126,20 @@ RandomPlayerbotFactory::RandomPlayerbotFactory(uint32 accountId) : accountId(acc
     availableRaces[CLASS_DRUID].push_back(RACE_NIGHTELF);
     availableRaces[CLASS_DRUID].push_back(RACE_TAUREN);
 
+#ifdef MANGOSBOT_ZERO
+    // ComfyCraft: every race is every class (sql/custom/115 has a
+    // playercreateinfo row for each pair), so a bot may be any pair too.
+    // With the vanilla lists above, a Horde player's paladin companion fell
+    // back to availableRaces.front(), a Human. assign() also stops the
+    // push_backs above growing this static map on every construction.
+    static const uint8 comfyRaces[] = { RACE_HUMAN, RACE_ORC, RACE_DWARF, RACE_NIGHTELF, RACE_UNDEAD,
+                                        RACE_TAUREN, RACE_GNOME, RACE_TROLL, RACE_GOBLIN, RACE_HIGH_ELF };
+    static const uint8 comfyClasses[] = { CLASS_WARRIOR, CLASS_PALADIN, CLASS_HUNTER, CLASS_ROGUE, CLASS_PRIEST,
+                                          CLASS_SHAMAN, CLASS_MAGE, CLASS_WARLOCK, CLASS_DRUID };
+    for (uint8 cls : comfyClasses)
+        availableRaces[cls].assign(std::begin(comfyRaces), std::end(comfyRaces));
+#endif
+
 #ifdef MANGOSBOT_TWO
     availableRaces[CLASS_DEATH_KNIGHT].push_back(RACE_NIGHTELF);
     availableRaces[CLASS_DEATH_KNIGHT].push_back(RACE_TAUREN);

@@ -1569,10 +1569,30 @@ bool Group::_addMember(ObjectGuid guid, const char* name, bool isAssistant)
 
 bool Group::_addMember(ObjectGuid guid, const char* name, bool isAssistant, uint8 group)
 {
-    if (IsFull())
+    if (!guid)
         return false;
 
-    if (!guid)
+    // ComfyCraft: A MEMBER IS NEVER LISTED TWICE. Nothing here checked, so a
+    // second add appended a second slot: the party frame showed the member
+    // twice, while group_member's key refused the second row in silence, so
+    // the database looked right. Seen 2026-10-09 with a companion brought back
+    // after its owner's dropped connection. A repeat add now links the player
+    // to the slot it already has and succeeds, so the caller's join is done.
+    member_citerator existing = _getMemberCSlot(guid);
+    if (existing != m_memberSlots.end())
+    {
+        if (Player* player = sObjectMgr.GetPlayer(guid))
+        {
+            if (Group* invitedGroup = player->GetGroupInvite())
+                invitedGroup->RemoveInvite(player);
+            player->SetGroupInvite(nullptr);
+            if (!player->GetGroup() && !isBGGroup())
+                player->SetGroup(this, existing->group);
+        }
+        return true;
+    }
+
+    if (IsFull())
         return false;
 
     Player *player = sObjectMgr.GetPlayer(guid);

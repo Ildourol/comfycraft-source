@@ -76,6 +76,7 @@
 #include "SuspiciousStatisticMgr.h"
 #include "PerfStats.h"
 #include "AccountMgr.h"   // Leech restrictions: spotting RNDBOT accounts by name
+#include "Config/Config.h" // Death.XPLossPercent
 
 float baseMoveSpeed[MAX_MOVE_TYPE] =
 {
@@ -1482,6 +1483,22 @@ void Unit::Kill(Unit* pVictim, SpellEntry const *spellProto, bool durabilityLoss
     if (pPlayerVictim && pPlayerVictim->HasChallenge(CHALLENGE_SLOW_AND_STEADY) && !pPlayerVictim->InBattleGround() && !pPlayerTap)
     {
         pPlayerVictim->GiveNegativeXP(5, pPlayerVictim); // Percentage
+    }
+
+    // Death.XPLossPercent: a death takes that share of the XP earned in the
+    // current level. Not in a battleground, not when a player (or a player's
+    // pet) did the kill, and not for bots. A fall or lava death taps the
+    // victim itself, so it counts as PvE.
+    if (pPlayerVictim && !damageFromSpiritOfRedemptionTalent && !pPlayerVictim->InBattleGround() &&
+        (!pPlayerTap || pPlayerTap == pPlayerVictim) && !Script_IsAIControlled(pPlayerVictim))
+    {
+        uint32 const percent = std::min<uint32>(std::max(sConfig.GetIntDefault("Death.XPLossPercent", 0), 0), 100);
+        uint32 const curXP = pPlayerVictim->GetUInt32Value(PLAYER_XP);
+        if (uint32 const lost = curXP * percent / 100)
+        {
+            pPlayerVictim->SetUInt32Value(PLAYER_XP, curXP - lost);
+            ChatHandler(pPlayerVictim).PSendSysMessage("You lost %u experience.", lost);
+        }
     }
 
     // 10% durability loss on death

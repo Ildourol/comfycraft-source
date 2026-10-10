@@ -5,6 +5,7 @@
 #include "playerbot/strategy/ItemVisitors.h"
 #include "playerbot/PlayerbotAIConfig.h"
 #include "playerbot/RandomPlayerbotMgr.h"
+#include "playerbot/CompanionOwnership.h"
 #include "playerbot/ServerFacade.h"
 #include "playerbot/strategy/values/CraftValues.h"
 #include "playerbot/strategy/values/ItemUsageValue.h"
@@ -28,6 +29,12 @@ bool TradeStatusAction::Execute(Event& event)
             shouldTrade = ai->GetSecurity()->CheckLevelFor(PlayerbotSecurityLevel::PLAYERBOT_SECURITY_ALLOW_ALL, false, trader);
         }
     }
+
+    // ComfyCraft: a companion does not trade, except with a GM. The trade
+    // window opens and closes again at once, the same as any refused trade.
+    if (shouldTrade && CompanionOwnership::IsCompanion(bot->GetGUIDLow()) &&
+        (!trader->GetSession() || trader->GetSession()->GetSecurity() < SEC_DEVELOPER))
+        shouldTrade = false;
 
     if (!shouldTrade)
     {

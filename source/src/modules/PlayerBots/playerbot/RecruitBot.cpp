@@ -59,20 +59,6 @@ namespace
         }
     }
 
-    // Vanilla class/faction legality. GetRandomClass does not know the team, so
-    // a Horde player asking for a tank can be handed a paladin; roll again
-    // rather than create a character that cannot exist.
-    bool ClassAllowedForTeam(uint8 cls, Team team)
-    {
-#ifdef MANGOSBOT_ZERO
-        if (cls == CLASS_PALADIN && team == HORDE)
-            return false;
-        if (cls == CLASS_SHAMAN && team == ALLIANCE)
-            return false;
-#endif
-        return true;
-    }
-
     bool DismissAll(Player* player, ChatHandler& chat)
     {
         PlayerbotMgr* mgr = GetBotMgr(player);
@@ -158,18 +144,12 @@ bool Playerbot_RecruitBotForPlayer(Player* player, uint32 role, uint32 classId)
 
     uint8 cls = 0;
 
-    // A named class is checked the same two ways the roll below is, but each
-    // refusal says why: the gossip page offers paladin and shaman to both
-    // factions and lets the click sort it out, so "no" has to carry a reason.
+    // A named class is checked the same way the roll below is, but the refusal
+    // says why. Every race is every class here, so either side may hire any
+    // class (the factory picks a race of the player's side for it).
     if (classId)
     {
         const std::string name = ChatHelper::formatClass(uint8(classId));
-
-        if (!ClassAllowedForTeam(uint8(classId), player->GetTeam()))
-        {
-            chat.PSendSysMessage("There is no %s to be had on your side.", name.c_str());
-            return false;
-        }
 
         if (ChangeTalentsAction::getPremadePaths(uint8(classId), "", wanted).empty())
         {
@@ -183,7 +163,7 @@ bool Playerbot_RecruitBotForPlayer(Player* player, uint32 role, uint32 classId)
     for (uint32 tries = 0; tries < 20 && !cls; ++tries)
     {
         const uint8 rolled = factory.GetRandomClass(0, wanted);
-        if (!rolled || !ClassAllowedForTeam(rolled, player->GetTeam()))
+        if (!rolled)
             continue;
 
         // AND THE CLASS MUST BE ABLE TO REACH THE ROLE.
