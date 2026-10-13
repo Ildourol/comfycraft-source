@@ -6777,14 +6777,19 @@ bool ChatHandler::HandleGMCommand(char* args)
         return false;
     }
 
+    // GOD MODE FOLLOWS GM MODE (2026-10-10, the owner's call). A GM login
+    // turned god mode on and `.gm off` left it on, so a GM with GM mode off
+    // still could not die. `.god on` and `.god off` still set it alone.
     if (value)
     {
         m_session->GetPlayer()->SetGameMaster(true);
+        m_session->GetPlayer()->SetInvincibilityHpThreshold(1);
         m_session->SendNotification(LANG_GM_ON);
     }
     else
     {
         m_session->GetPlayer()->SetGameMaster(false);
+        m_session->GetPlayer()->SetInvincibilityHpThreshold(0);
         m_session->SendNotification(LANG_GM_OFF);
     }
 

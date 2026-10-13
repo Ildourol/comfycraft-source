@@ -82,10 +82,32 @@
 #include "SpellMgr.h"
 #include "InvasionMgr.h"
 
+// Ends the client's item use when nothing is going to be cast. See below.
+static void ReleaseItemUse(Player* player, Item* item)
+{
+    player->SendEquipError(EQUIP_ERR_NONE, item, nullptr);
+    for (auto const& use : item->GetProto()->Spells)
+    {
+        if (use.SpellTrigger != ITEM_SPELLTRIGGER_ON_USE || !use.SpellId)
+            continue;
+        if (SpellEntry const* spellInfo = sSpellMgr.GetSpellEntry(use.SpellId))
+            Spell::SendCastResult(player, spellInfo, SPELL_FAILED_DONT_REPORT);
+        break;
+    }
+}
+
 bool ItemUse_item_invasion_sigil(Player* player, Item* item, SpellCastTargets& /*targets*/)
 {
     if (!player || !item)
         return true;
+
+    // The sigil used again by an invader is the way out (InvasionManager::
+    // Withdraw). No cast: it answers at once.
+    if (sInvasionMgr.Withdraw(player))
+    {
+        ReleaseItemUse(player, item);
+        return true;
+    }
 
     // FALSE hands it to the spell, which is the cast the client is about to
     // draw a bar for.
@@ -99,15 +121,7 @@ bool ItemUse_item_invasion_sigil(Player* player, Item* item, SpellCastTargets& /
     // and the cast result stops the cast. With the first alone the client sat
     // in the cast with its hands glowing (a GM in GM mode, 2026-10-10).
     // DONT_REPORT, so no red error joins the chat line that already said why.
-    player->SendEquipError(EQUIP_ERR_NONE, item, nullptr);
-    for (auto const& use : item->GetProto()->Spells)
-    {
-        if (use.SpellTrigger != ITEM_SPELLTRIGGER_ON_USE || !use.SpellId)
-            continue;
-        if (SpellEntry const* spellInfo = sSpellMgr.GetSpellEntry(use.SpellId))
-            Spell::SendCastResult(player, spellInfo, SPELL_FAILED_DONT_REPORT);
-        break;
-    }
+    ReleaseItemUse(player, item);
     return true;
 }
 

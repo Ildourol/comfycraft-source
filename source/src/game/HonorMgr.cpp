@@ -12,6 +12,7 @@
 #include "Policies/SingletonImp.h"
 #include "ObjectAccessor.h"
 #include "CharacterDatabaseCleaner.h"
+#include "ComfyTitles.h"
 
 #include <algorithm>
 #include <cmath>
@@ -808,7 +809,7 @@ void HonorMgr::Update() {
     m_owner->SetByteValue(PLAYER_FIELD_BYTES, 3, m_highestRank.rank);
     // RANK (Patent)
     if (!m_owner->IsIgnoringTitles()) {
-        m_owner->SetByteValue(PLAYER_BYTES_3, 3, m_rank.rank);
+        m_owner->SetByteValue(PLAYER_BYTES_3, 3, ComfyRankBeforeName(m_owner->GetActiveTitle(), m_rank.rank));
     
         float rankPoints = m_rankPoints >= 0.0f ? m_rankPoints : -1 * m_rankPoints;
         float rankProgress = (rankPoints - m_rank.minRP) / (m_rank.maxRP - m_rank.minRP);

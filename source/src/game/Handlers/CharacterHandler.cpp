@@ -51,6 +51,7 @@
 #include "miscellaneous/feature_transmog.h"
 #include "Config.hpp"
 #include "Logging/DatabaseLogger.hpp"
+#include "ComfyTitles.h"
 
 // config option SkipCinematics supported values
 enum CinematicsSkipMode
@@ -825,6 +826,18 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder *holder)
                 if (Guild* beginnersGuild = sGuildMgr.GetGuildById(beginnersGuildId))
                     beginnersGuild->AddMember(pCurrChar->GetObjectGuid(), beginnersGuild->GetLowestRank());
         }
+    }
+
+    // Unpaid Intern, the alpha title (ComfyTitles.h). Bots, companions and bot
+    // NPC bodies are all on RNDBOT accounts and do not get it. AwardTitle does
+    // nothing for a character that has it, and makes it active only when it is
+    // the character's first title.
+    if (UNPAID_INTERN_AT_LOGIN && !pCurrChar->HasTitle(TITLE_UNPAID_INTERN))
+    {
+        std::string internAccName;
+        sAccountMgr.GetName(GetAccountId(), internAccName);
+        if (internAccName.rfind("RNDBOT", 0) != 0)
+            pCurrChar->AwardTitle(TITLE_UNPAID_INTERN);
     }
 
     if (Guild* guild = sGuildMgr.GetGuildById(pCurrChar->GetGuildId()))

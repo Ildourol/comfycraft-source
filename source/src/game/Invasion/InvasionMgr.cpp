@@ -26,6 +26,14 @@
 #include "World.h"
 #include "WorldSession.h"
 #include "Util.h"
+#include "DBCStores.h"
+
+#include <cmath>
+#include <cstdio>
+
+// DBCStores.h comments this one out in favour of Map2ZoneCoordinates, which
+// gives a position and not the zone's size. The minimap dot needs both.
+extern DBCStorage<WorldMapAreaEntry> sWorldMapAreaStore;
 
 InvasionManager sInvasionMgr;
 
@@ -50,6 +58,82 @@ namespace
      * the defender took a flight path out of, which used to sit until
      * Invasion.DurationSeconds ran out.
      */
+    /*
+     * THE MINIMAP DOT. In the fight each side is told every RADAR_MS where the
+     * other one is, and ComfyUI/Invasion.lua puts a skull on the minimap there.
+     * Prefix CINV:
+     *
+     *   "Z <x> <y> <width> <height>"  the other's place on the RECEIVER's zone
+     *       map, 0 to 1 as GetPlayerMapPosition gives it, and that zone's size
+     *       in yards. The addon reads its own map position every frame, so its
+     *       own movement is smooth and only the other's comes at this rate.
+     *       The way gathering addons place nodes.
+     *   "P <north> <west>"  yards from the receiver, where the zone has no map
+     *       (WorldMapArea.dbc). The world's +x is north and +y is west.
+     *   "H"  hide it.
+     */
+    /*
+     * THE ARRIVAL, the owner's choices of 2026-10-10. ARRIVE_FX_DELAY_MS after
+     * the far teleport lands, ARRIVE_KIT plays on the invader and MARK_KIT on
+     * the defender. An invader who lands in stealth (a rogue) gets no puff that
+     * would give them away. A stealth of our own on arrival was tried the same
+     * day and taken out as one thing too many.
+     *
+     * Leaving: ESCAPE_KIT when the invader withdraws with the sigil or the
+     * defender gets away, LEAVE_KIT for every other ending.
+     *
+     * SpellVisualKit ids, played with SendPlaySpellVisual, which everyone in
+     * range sees (the same packet as .effect). A kit id and not a SpellVisual
+     * id: the wrong table draws nothing, with no error
+     * (docs/ai/content/dialogs.md, "Playing an effect").
+     */
+    uint32 const ARRIVE_KIT = 6151;             // Vanish Cast Base: a puff at the feet
+    uint32 const MARK_KIT = 225;                // Shadow ImpactBuff Base, on the defender
+    uint32 const LEAVE_KIT = 117;               // Shadow ImpactDD: a burst on the chest
+    uint32 const ESCAPE_KIT = 6379;             // Banish, red
+    uint32 const DEATH_KIT = 6448;              // Moonbeam, on a defender who dies in the fight
+    uint32 const NO_KIT = 0xFFFFFFFF;           // leaveKit: already played, play nothing
+    // The sigil used to withdraw: the effect at once, and the pull this long after.
+    uint32 const WITHDRAW_PULL_MS = 1000;
+    uint32 const ARRIVE_FX_DELAY_MS = 1500;
+
+    uint32 const RADAR_MS = 250;   // ComfyUI glides between these
+
+    void SendRadar(Player* to, Player* other)
+    {
+        if (!to || !to->GetSession())
+            return;
+        if (!other || other->GetMapId() != to->GetMapId())
+        {
+            to->SendAddonMessage("CINV", "H");
+            return;
+        }
+        // x1/x2 run north to south and y1/y2 west to east; Map2ZoneCoordinates
+        // does the swap the client map wants and returns 0 to 100.
+        uint32 const zone = to->GetZoneId();
+        WorldMapAreaEntry const* area = sWorldMapAreaStore.LookupEntry(zone);
+        float mx = other->GetPositionX();
+        float my = other->GetPositionY();
+        if (area && Map2ZoneCoordinates(mx, my, zone))
+        {
+            char buf[96];
+            snprintf(buf, sizeof(buf), "Z %.5f %.5f %.1f %.1f", mx / 100.0f, my / 100.0f,
+                     std::fabs(area->y2 - area->y1), std::fabs(area->x2 - area->x1));
+            to->SendAddonMessage("CINV", buf);
+            return;
+        }
+
+        int const north = int(other->GetPositionX() - to->GetPositionX());
+        int const west = int(other->GetPositionY() - to->GetPositionY());
+        to->SendAddonMessage("CINV", "P " + std::to_string(north) + " " + std::to_string(west));
+    }
+
+    void HideRadar(Player* to)
+    {
+        if (to && to->GetSession())
+            to->SendAddonMessage("CINV", "H");
+    }
+
     float const ARENA_OUT_YARDS = 100.0f;
     float const ARENA_BACK_YARDS = 95.0f;
     uint32 const ARENA_FORFEIT_MS = 10 * IN_MILLISECONDS;
@@ -111,6 +195,42 @@ namespace
         // symmetric.
         return true;
     }
+}
+
+bool InvasionManager::Withdraw(Player* invader)
+{
+    if (!invader)
+        return false;
+
+    for (auto itr = m_invasions.begin(); itr != m_invasions.end(); ++itr)
+    {
+        if (itr->invader != invader->GetObjectGuid())
+            continue;
+
+        Player* defender = sObjectAccessor.FindPlayer(itr->defender);
+        switch (itr->phase)
+        {
+            case PHASE_STALKING:
+                // Nothing landed, so nothing is recorded and no respite is
+                // stamped: the same as a trail gone cold in Update.
+                Tell(invader, "You let them go.");
+                Tell(defender, "The cold passes.");
+                m_invasions.erase(itr);
+                return true;
+            case PHASE_FIGHTING:
+                // The banish at the click, and the pull a second later, not
+                // the ordinary Invasion.ReturnSeconds.
+                invader->SendPlaySpellVisual(ESCAPE_KIT);
+                itr->leaveKit = NO_KIT;
+                Conclude(*itr, "You abandon the rite. You forfeit.", "Your forgiver withdrew. You remain.",
+                         WITHDRAW_PULL_MS, itr->defender);
+                return true;
+            default:
+                Tell(invader, "You are already being drawn back.");
+                return true;
+        }
+    }
+    return false;
 }
 
 bool InvasionManager::IsInvolved(ObjectGuid guid) const
@@ -296,7 +416,7 @@ bool InvasionManager::BeginInvasion(Player* invader)
     Player* defender = PickDefender(invader);
     if (!defender)
     {
-        Tell(invader, "You find no one worth hunting.");
+        Tell(invader, "No soul here is ready to be forgiven.");
         return false;
     }
 
@@ -308,6 +428,19 @@ bool InvasionManager::BeginInvasion(Player* invader)
     {
         invader->UpdatePvP(true);
         Tell(invader, "You are flagged for war.");
+    }
+
+    // THE FLAG HOLDS FOR THE WHOLE HUNT. A defender is flagged to be chosen,
+    // but one who typed /pvp off a minute ago is on the off-timer and would
+    // drop it mid-fight. Wanting it back on stops that timer; afterwards /pvp
+    // turns it off as usual. HandleTogglePvP refuses /pvp off meanwhile.
+    for (Player* side : { invader, defender })
+    {
+        if (!side->HasFlag(PLAYER_FLAGS, PLAYER_FLAGS_PVP_DESIRED))
+        {
+            side->SetFlag(PLAYER_FLAGS, PLAYER_FLAGS_PVP_DESIRED);
+            side->UpdatePvP(true);
+        }
     }
 
     Invasion inv;
@@ -332,8 +465,8 @@ bool InvasionManager::BeginInvasion(Player* invader)
     // The defender is told a hunter is coming and not who, which is the whole
     // value of the warning: it buys them the seconds to get somewhere they
     // would rather be fought, without handing them a name to log out from.
-    Tell(defender, "You are being hunted. Something is coming for you.");
-    TellFmt(invader, "You take the trail of %s...", defender->GetName());
+    Tell(defender, "Something has come to forgive you.");
+    TellFmt(invader, "You go to forgive %s.", defender->GetName());
 
     sLog.outBasic("Invasion: %s (level %u) is hunting %s (level %u).",
         invader->GetName(), invader->GetLevel(), defender->GetName(), defender->GetLevel());
@@ -367,8 +500,8 @@ bool InvasionManager::ArenaForfeit(Invasion& inv, Player* invader, Player* defen
             if (dist > ARENA_OUT_YARDS)
             {
                 left = ARENA_FORFEIT_MS;
-                p->GetSession()->SendAreaTriggerMessage("Go back within 10 seconds or forfeit.");
-                Tell(p, "You are leaving the fight. Go back within 10 seconds or forfeit.");
+                p->GetSession()->SendAreaTriggerMessage("Return within 10 seconds or forfeit.");
+                Tell(p, "You stray from the rite. Return within 10 seconds or forfeit.");
             }
             continue;
         }
@@ -376,7 +509,7 @@ bool InvasionManager::ArenaForfeit(Invasion& inv, Player* invader, Player* defen
         if (dist < ARENA_BACK_YARDS)
         {
             left = 0;
-            Tell(p, "You are back in the fight.");
+            Tell(p, "You return to the rite.");
             continue;
         }
 
@@ -388,9 +521,12 @@ bool InvasionManager::ArenaForfeit(Invasion& inv, Player* invader, Player* defen
 
         // The one who left loses, as in a duel.
         if (i == 0)
-            Conclude(inv, "You left the fight. You forfeit.", "Your invader fled. You win.", 0, inv.defender);
+            Conclude(inv, "You abandoned the rite. You forfeit.", "Your forgiver fled. You remain.", 0, inv.defender);
         else
-            Conclude(inv, "Your quarry fled. You win.", "You left the fight. You forfeit.", 0, inv.invader);
+        {
+            inv.leaveKit = ESCAPE_KIT;
+            Conclude(inv, "They fled their forgiveness.", "You turned away. You forfeit.", 0, inv.invader);
+        }
         return true;
     }
     return false;
@@ -413,6 +549,9 @@ void InvasionManager::Arrive(Invasion& inv, Player* invader, Player* defender)
     invader->TeleportTo(defender->GetMapId(), x, y, z, defender->GetOrientation());
 
     inv.arena = WorldLocation(defender->GetMapId(), x, y, z, defender->GetOrientation());
+    inv.arrivalFx = true;
+    inv.arrivalLanded = false;
+    inv.arrivalFxMs = ARRIVE_FX_DELAY_MS;
     inv.outInvader = 0;
     inv.outDefender = 0;
     inv.phase = PHASE_FIGHTING;
@@ -426,8 +565,8 @@ void InvasionManager::Arrive(Invasion& inv, Player* invader, Player* defender)
     // leaves the defender covered.
     GrantRespite(inv.defender);
 
-    TellFmt(invader, "You have invaded %s.", defender->GetName());
-    TellFmt(defender, "%s has invaded you!", invader->GetName());
+    TellFmt(invader, "You stand behind %s. Forgive them.", defender->GetName());
+    TellFmt(defender, "%s has come to forgive you.", invader->GetName());
 
     // ComfyUI/Invasion.lua puts "You've been invaded!" in the middle of the
     // screen from this. Prefix CINV, "I <invader>". An addon never reads the
@@ -443,6 +582,9 @@ void InvasionManager::SendHome(Invasion const& inv, Player* invader)
     // NO MESSAGE HERE. Walking home a winner and being carried home a corpse are
     // different enough to deserve different words, and the callers know which
     // one this is.
+    // Before the teleport, so the defender sees them go.
+    if (inv.leaveKit != NO_KIT)
+        invader->SendPlaySpellVisual(inv.leaveKit ? inv.leaveKit : LEAVE_KIT);
     invader->TeleportTo(inv.origin.mapId, inv.origin.x, inv.origin.y, inv.origin.z, inv.origin.o);
 }
 
@@ -475,6 +617,10 @@ void InvasionManager::Conclude(Invasion& inv, char const* invaderLine, char cons
     inv.phase = PHASE_LEAVING;
     inv.timer = delayMs ? delayMs : SecondsConfig(CONFIG_UINT32_INVASION_RETURN_SECONDS);
 
+    // The fight is over: the minimap dots go.
+    HideRadar(sObjectAccessor.FindPlayer(inv.invader));
+    HideRadar(sObjectAccessor.FindPlayer(inv.defender));
+
     if (invaderLine)
         Tell(sObjectAccessor.FindPlayer(inv.invader), invaderLine);
     if (defenderLine)
@@ -498,7 +644,7 @@ void InvasionManager::OnPlayerDeath(Player* victim, Unit* killer)
         if (inv.phase != PHASE_FIGHTING)
         {
             if (inv.phase == PHASE_STALKING)
-                Conclude(inv, "Your quarry fell to something else.", nullptr);
+                Conclude(inv, "Something else forgave them first.", nullptr);
             return;
         }
 
@@ -550,13 +696,22 @@ void InvasionManager::OnPlayerDeath(Player* victim, Unit* killer)
             // to a graveyard; they are collected from there and woken all the
             // same. The message says to sit still, which is cheaper than taking
             // the choice away.
-            Conclude(inv, "You have fallen. Lie still -- you will be carried back.",
-                          "You have driven off your attacker!",
+            Conclude(inv, "You have fallen. Lie still. You will be carried back.",
+                          "You refused forgiveness. You remain.",
                      SecondsConfig(CONFIG_UINT32_INVASION_DEATH_LINGER_SECONDS), winner);
         }
         else
         {
-            Conclude(inv, "Your quarry has fallen.", "You have been slain by your invader.", 0, winner);
+            Conclude(inv, "They are forgiven.", "You have been forgiven.", 0, winner);
+
+            // Moonlight on the body, whoever struck the blow.
+            victim->SendPlaySpellVisual(DEATH_KIT);
+
+            PendingRevive r;
+            r.guid = victim->GetObjectGuid();
+            r.where = WorldLocation(victim->GetMapId(), victim->GetPositionX(), victim->GetPositionY(),
+                                    victim->GetPositionZ(), victim->GetOrientation());
+            m_revives.push_back(r);
         }
 
         return;
@@ -588,7 +743,8 @@ bool InvasionManager::OnPlayerLogout(Player* player)
             player->TeleportTo(itr->origin.mapId, itr->origin.x, itr->origin.y,
                                itr->origin.z, itr->origin.o);
 
-            Tell(sObjectAccessor.FindPlayer(itr->defender), "Your invader has fled the world.");
+            Tell(sObjectAccessor.FindPlayer(itr->defender), "Your forgiver has left this world.");
+            HideRadar(sObjectAccessor.FindPlayer(itr->defender));
 
             // Erased below without going through Conclude, so written down
             // here. Nobody won: fleeing is not losing to anybody.
@@ -606,7 +762,10 @@ bool InvasionManager::OnPlayerLogout(Player* player)
             // Unless it is already leaving, in which case the ride is booked and
             // there is nothing to do but let it run.
             if (itr->phase != PHASE_LEAVING)
-                Conclude(*itr, "Your quarry has fled the world. The hunt is over.", nullptr);
+            {
+                itr->leaveKit = ESCAPE_KIT;
+                Conclude(*itr, "They left this world before you could forgive them.", nullptr);
+            }
 
             return false;
         }
@@ -618,8 +777,44 @@ bool InvasionManager::OnPlayerLogout(Player* player)
     return false;
 }
 
+void InvasionManager::UpdateRevives(uint32 /*diff*/)
+{
+    // Only forgets: a defender who logged out, or was brought back some other
+    // way, no longer needs the graveyard skipped.
+    for (size_t i = 0; i < m_revives.size();)
+    {
+        Player* p = sObjectAccessor.FindPlayer(m_revives[i].guid);
+        if (!p || !p->IsInWorld() || p->IsAlive())
+            m_revives.erase(m_revives.begin() + i);
+        else
+            ++i;
+    }
+}
+
+bool InvasionManager::OnReleaseSpirit(Player* player)
+{
+    if (!player)
+        return false;
+
+    for (size_t i = 0; i < m_revives.size(); ++i)
+    {
+        if (m_revives[i].guid != player->GetObjectGuid())
+            continue;
+
+        // BuildPlayerRepop has made the ghost and the corpse where they fell;
+        // the caller skips the graveyard, so the ghost stays on the corpse and
+        // the client offers Resurrect.
+        m_revives.erase(m_revives.begin() + i);
+        Tell(player, "Your spirit lingers over your body.");
+        return true;
+    }
+    return false;
+}
+
 void InvasionManager::Update(uint32 diff)
 {
+    UpdateRevives(diff);
+
     for (size_t i = 0; i < m_invasions.size();)
     {
         Invasion& inv = m_invasions[i];
@@ -633,6 +828,7 @@ void InvasionManager::Update(uint32 diff)
         // less orderly happened.
         if (!invader || !invader->IsInWorld())
         {
+            HideRadar(defender);
             m_invasions.erase(m_invasions.begin() + i);
             continue;
         }
@@ -651,8 +847,8 @@ void InvasionManager::Update(uint32 diff)
                 if (!defender || !IsValidDefender(invader, defender) ||
                     !IsAvailableForInvasion(invader))
                 {
-                    Tell(invader, "The trail goes cold.");
-                    Tell(defender, "The feeling passes.");
+                    Tell(invader, "Their soul slips from your sight.");
+                    Tell(defender, "The cold passes.");
 
                     // NOTHING IS CHARGED TO EITHER SIDE. The invader may go
                     // straight back out -- they never got a fight. The defender
@@ -676,15 +872,45 @@ void InvasionManager::Update(uint32 diff)
                     defender->HasFlag(PLAYER_FLAGS, PLAYER_FLAGS_SANCTUARY) ||
                     (defender->GetMap() && defender->GetMap()->Instanceable()))
                 {
-                    Conclude(inv, "Your quarry is beyond reach.", nullptr);
+                    inv.leaveKit = ESCAPE_KIT;
+                    Conclude(inv, "They are beyond forgiveness, for now.", nullptr);
                     break;
+                }
+
+                // The arrival (see ARRIVE_KIT). Waits for the far teleport to
+                // land: sent at once, it would play where the invader left from.
+                if (inv.arrivalFx && !invader->IsBeingTeleported())
+                {
+                    if (!inv.arrivalLanded)
+                    {
+                        inv.arrivalLanded = true;
+                        inv.keepStealth = invader->HasAuraType(SPELL_AURA_MOD_STEALTH);
+                    }
+
+                    inv.arrivalFxMs = (inv.arrivalFxMs > diff) ? inv.arrivalFxMs - diff : 0;
+                    if (!inv.arrivalFxMs)
+                    {
+                        if (!inv.keepStealth)
+                            invader->SendPlaySpellVisual(ARRIVE_KIT);
+                        if (defender)
+                            defender->SendPlaySpellVisual(MARK_KIT);
+                        inv.arrivalFx = false;
+                    }
                 }
 
                 if (ArenaForfeit(inv, invader, defender, diff))
                     break;
 
+                inv.radarMs = (inv.radarMs > diff) ? inv.radarMs - diff : 0;
+                if (!inv.radarMs)
+                {
+                    inv.radarMs = RADAR_MS;
+                    SendRadar(invader, defender);
+                    SendRadar(defender, invader);
+                }
+
                 if (!inv.timer)
-                    Conclude(inv, "Time is up. The hunt is over.", "Your invader's time is up.");
+                    Conclude(inv, "The rite fades. They remain unforgiven.", "The presence behind you fades.");
 
                 break;
             }
@@ -697,7 +923,7 @@ void InvasionManager::Update(uint32 diff)
 
                 if (invader->IsAlive())
                 {
-                    Tell(invader, "The hunt is over. You return.");
+                    Tell(invader, "The rite is over. You are drawn back.");
                     m_invasions.erase(m_invasions.begin() + i);
                     continue;
                 }
@@ -728,7 +954,7 @@ void InvasionManager::Update(uint32 diff)
                 // when they never released.
                 invader->SpawnCorpseBones();
 
-                Tell(invader, "You wake where you set out.");
+                Tell(invader, "You wake where you began.");
                 m_invasions.erase(m_invasions.begin() + i);
                 continue;
             }

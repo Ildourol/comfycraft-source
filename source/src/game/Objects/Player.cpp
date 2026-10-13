@@ -120,6 +120,7 @@ namespace ai { namespace botdiag {
 #include "PerfStats.h"
 #include "PlayerDump.h"
 #include "Shop/ShopMgr.h"
+#include "ComfyTitles.h"
 
 #include <sstream>
 
@@ -3756,6 +3757,16 @@ void Player::GiveXP(uint32 xp, Unit* victim)
     // if (level >= sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL))
     if ((level >= sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL)) || !HasXPGainEnabled())
         return;
+
+    // THE PVP FLAG PAYS 10% MORE XP, from every source that comes through here:
+    // kills, quests and exploration. Being flagged is what makes a player
+    // invadable, and until 2026-10-10 it was all risk and no reward. Turtle's
+    // War Mode challenge keeps the flag on for good and already pays 20% at
+    // each source, so it does not stack with this. A constant and not a conf
+    // key: a key means World.h, which rebuilds most of the core.
+    uint32 const FLAGGED_XP_BONUS_PERCENT = 10;
+    if (IsPvP() && !HasChallenge(CHALLENGE_WAR_MODE))
+        xp += xp * FLAGGED_XP_BONUS_PERCENT / 100;
 
     // XP resting bonus for kill
     uint32 rested_bonus_xp = victim ? GetXPRestBonus(xp) : 0;
@@ -18008,7 +18019,10 @@ bool Player::LoadFromDB(ObjectGuid guid, SqlQueryHolder *holder)
                     SetAcceptWhispers(true);
                 break;
         }
-        SetInvincibilityHpThreshold(1);
+        // God mode follows GM mode, as `.gm on` and `.gm off` now set it. It
+        // used to be on for every GM login, GM mode or not.
+        if (IsGameMaster())
+            SetInvincibilityHpThreshold(1);
     }
 
     if (extraflags & PLAYER_EXTRA_WHISP_RESTRICTION)
@@ -18054,7 +18068,7 @@ bool Player::LoadFromDB(ObjectGuid guid, SqlQueryHolder *holder)
     }
     // Temporary weekly titles:
     AwardTitle(fields[59].GetBool() ? GetRace() : -GetRace());
-    SetByteValue(PLAYER_BYTES_3, 2, GetActiveTitle()); // set active title on logon   
+    SetByteValue(PLAYER_BYTES_3, 2, ComfyTitleUnderName(GetActiveTitle())); // set active title on logon
 
     /*
      * BOT NPCs -- a character that acts as an NPC, bound in tw_char.bot_npc.
@@ -27144,7 +27158,8 @@ void Player::SendEarnedTitles()
 
     std::string titlesText = "TW_AVAILABLE_TITLES:0:";
 
-    if (GetByteValue(PLAYER_BYTES_3, 2) == 0)
+    // Not the title byte: Unpaid Intern sets it to 0 and would mark "None" active too.
+    if (m_activeTitle == 0)
         titlesText += "1;"; // "None" title, but active
     else
         titlesText += "0;"; // "None" title
@@ -27166,7 +27181,9 @@ void Player::ChangeTitle(uint8 title)
         ChatHandler(this).PSendSysMessage("You have not earned that title.");
     else 
     {
-        SetByteValue(PLAYER_BYTES_3, 2, title);
+        SetByteValue(PLAYER_BYTES_3, 2, ComfyTitleUnderName(title));
+        if (!IsIgnoringTitles())
+            SetByteValue(PLAYER_BYTES_3, 3, ComfyRankBeforeName(title, m_honorMgr.GetRank().rank));
         m_activeTitle = title;
 
         CharacterDatabase.PExecute("UPDATE character_titles SET active = 0 WHERE guid = '%u'", GetGUIDLow());

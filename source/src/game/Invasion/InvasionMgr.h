@@ -91,6 +91,18 @@ class InvasionManager
 
         bool IsInvolved(ObjectGuid guid) const;
 
+        // RELEASE SPIRIT, for a defender who fell in the fight: the ghost stays
+        // over the body instead of going to a graveyard, and the client offers
+        // its own Resurrect there. True when this is such a defender, so
+        // WorldSession::HandleRepopRequestOpcode skips the graveyard.
+        bool OnReleaseSpirit(Player* player);
+
+        // THE SIGIL USED AGAIN BY AN INVADER ENDS THEIR INVASION. Before they
+        // arrive it is called off like a trail gone cold; in the fight it is a
+        // forfeit, the same as leaving the arena. False when `invader` is not
+        // invading anybody, so the item script carries on as a fresh use.
+        bool Withdraw(Player* invader);
+
     private:
         enum InvasionPhase
         {
@@ -110,6 +122,12 @@ class InvasionManager
             WorldLocation arena;        // where the invader landed: the duel flag's job
             uint32 outInvader = 0;      // ms before the invader forfeits; 0 is in bounds
             uint32 outDefender = 0;     // the same for the defender
+            uint32 radarMs = 0;         // ms until the next minimap position
+            bool arrivalFx = false;     // the arrival effect waits for the teleport to land
+            bool arrivalLanded = false; // the teleport has landed
+            bool keepStealth = false;   // they landed in stealth (a rogue): no puff to give them away
+            uint32 arrivalFxMs = 0;     // the effects wait this long after landing
+            uint32 leaveKit = 0;        // the departure effect; 0 is LEAVE_KIT
         };
 
         // Both message the player on refusal. CanInvadeFrom is about the person
@@ -145,6 +163,18 @@ class InvasionManager
         void RecordMatch(Invasion const& inv, ObjectGuid winner) const;
 
         std::vector<Invasion> m_invasions;
+
+        // A DEFENDER WHO FALLS IN THE FIGHT RELEASES OVER THEIR BODY, not at a
+        // graveyard (OnReleaseSpirit), and revives with the client's Resurrect
+        // button. A list of its own because the invasion row is gone
+        // ReturnSeconds after the death. Nothing revives them by itself.
+        struct PendingRevive
+        {
+            ObjectGuid guid;
+            WorldLocation where;        // where they fell
+        };
+        std::vector<PendingRevive> m_revives;
+        void UpdateRevives(uint32 diff);
 
         // WHO HAS RECENTLY BEEN INVADED, and until when. The limit is on being
         // hunted, not on hunting: an invader who wants to go straight back out

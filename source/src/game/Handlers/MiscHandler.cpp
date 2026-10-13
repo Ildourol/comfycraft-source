@@ -27,6 +27,7 @@
 #include "Opcodes.h"
 #include "Log.h"
 #include "Player.h"
+#include "Invasion/InvasionMgr.h"
 #include "World.h"
 #include "GuildMgr.h"
 #include "ObjectMgr.h"
@@ -87,7 +88,11 @@ void WorldSession::HandleRepopRequestOpcode(WorldPacket & /*recv_data*/)
     }
 
     player->BuildPlayerRepop();
-    player->ScheduleRepopAtGraveyard();
+
+    // A defender who fell in an invasion stays over their body as a ghost,
+    // and revives from there with the client's own Resurrect button.
+    if (!sInvasionMgr.OnReleaseSpirit(player))
+        player->ScheduleRepopAtGraveyard();
 }
 
 class WhoListClientQueryTask
@@ -455,6 +460,15 @@ void WorldSession::HandleTogglePvP(WorldPacket & recv_data)
     else
     {
         GetPlayer()->ToggleFlag(PLAYER_FLAGS, PLAYER_FLAGS_PVP_DESIRED);
+    }
+
+    // NOT DURING AN INVASION, on either side: the flag is what the fight
+    // stands on. Put back, and said why.
+    if (!GetPlayer()->HasFlag(PLAYER_FLAGS, PLAYER_FLAGS_PVP_DESIRED) &&
+        sInvasionMgr.IsInvolved(GetPlayer()->GetObjectGuid()))
+    {
+        GetPlayer()->SetFlag(PLAYER_FLAGS, PLAYER_FLAGS_PVP_DESIRED);
+        ChatHandler(GetPlayer()).SendSysMessage("You cannot lay down your arms while the rite goes on.");
     }
 
     if (GetPlayer()->HasFlag(PLAYER_FLAGS, PLAYER_FLAGS_PVP_DESIRED))
