@@ -1811,21 +1811,23 @@ enum DressingBoxes
 // == rented mounts ==========================================================
 //
 // The stables. Every NPC with script_name 'rented_mount' hires you the mount it
-// is standing there being, for the cost, speed and duration in its tw_world.
-// rented_mount row. sql/custom/079_rented_mounts.sql is the whole story; the two
-// things worth knowing while reading this file:
+// is standing there being, for the cost and duration in its tw_world.
+// rented_mount row. The speed goes by level and is set in
+// Aura::HandleAuraModIncreaseMountedSpeed; the row's `speed` is not read.
+// sql/custom/079_rented_mounts.sql is the whole story; the two things worth
+// knowing while reading this file:
 //
 //   THE SPELL IS THE MOUNT'S OWN, NOT A RENTAL SPELL. Spell.dbc has twelve
 //   Rented-something spells and the client ships the same twelve, so a
 //   thirteenth would mean a patched Spell.dbc on every client. Casting the real
 //   mount spell gets the right model, name and icon for free; the clamp below
 //   then makes it a rental. The twelve originals still point at their own 40700-
-//   40711 rows, where the clamp is a no-op because they are already 40% / 5 min.
+//   40711 spells, which already last 5 minutes.
 //
-//   THE CLAMP HAS TO SURVIVE A LOGOUT, and it does, because character_aura saves
-//   the modifier's CURRENT amount (Player::SaveAura) and restores it
-//   (Player::LoadAura). Writing m_amount is therefore the whole fix -- without
-//   it, relogging on a rented epic mount would hand back its real speed.
+//   THE CLAMP HAS TO SURVIVE A LOGOUT. character_aura saves the timer, and at
+//   login the speed handler sees a mount with a timer and sets the rental
+//   speed again. The saved speed amount is not enough: the handler writes over
+//   it on load.
 //
 // This was a switch statement over twelve hardcoded creature entries until
 // 2026-09-10, which meant a core rebuild per mount. One of those twelve, the
@@ -1911,7 +1913,16 @@ bool GossipSelect_rented_mount(Player* pPlayer, Creature* pCreature, uint32 /*ui
             if (uint32 forThisModel = sObjectMgr.GetRentedMountSpellForDisplay(pCreature->GetDisplayId()))
                 spellId = forThisModel;
 
+    // INSTANT, or the clamp below never runs. 82 of the rows use a real mount
+    // spell with a 3 s cast time, and a triggered spell with a cast time waits
+    // for a later tick (Spell::prepare). GetSpellAuraHolder then found nothing,
+    // so the player got the mount 3 s late, free, permanent and at the skill
+    // speed. The no-cast-time flag makes Spell::prepare cast it now.
+    bool const hadNoCastTime = pPlayer->HasOption(PLAYER_CHEAT_NO_CAST_TIME);
+    pPlayer->EnableOption(PLAYER_CHEAT_NO_CAST_TIME);
     pPlayer->CastSpell(pPlayer, spellId, true);
+    if (!hadNoCastTime)
+        pPlayer->RemoveOption(PLAYER_CHEAT_NO_CAST_TIME);
 
     // THE MONEY COMES OUT AFTER THE CAST LANDS, not before. A mount spell has
     // conditions of its own -- indoors, in combat, shapeshifted -- and the old
@@ -1935,19 +1946,15 @@ bool GossipSelect_rented_mount(Player* pPlayer, Creature* pCreature, uint32 /*ui
         holder->UpdateAuraDuration();
     }
 
-    if (rented->speed)
-    {
-        // Which effect index carries the speed is not fixed across mount spells,
-        // so look rather than assume.
-        for (uint32 i = 0; i < MAX_EFFECT_INDEX; ++i)
-            if (Aura* aura = holder->GetAuraByEffectIndex(SpellEffectIndex(i)))
-                if (aura->GetModifier()->m_auraname == SPELL_AURA_MOD_INCREASE_MOUNTED_SPEED)
-                    aura->GetModifier()->m_amount = int32(rented->speed);
-
-        // UpdateSpeed recomputes from GetMaxPositiveAuraModifier, so rewriting
-        // the amount and asking for a recompute is enough -- no reapply needed.
-        pPlayer->UpdateSpeed(MOVE_RUN, true);
-    }
+    // The speed aura's handler gives a mount with a timer the rental speed by
+    // level. It ran during the cast, while a real mount spell was still
+    // permanent, so run it again now that the holder has a timer. The handler
+    // also calls UpdateSpeed. Which effect index carries the speed is not fixed
+    // across mount spells, so look rather than assume.
+    for (uint32 i = 0; i < MAX_EFFECT_INDEX; ++i)
+        if (Aura* aura = holder->GetAuraByEffectIndex(SpellEffectIndex(i)))
+            if (aura->GetModifier()->m_auraname == SPELL_AURA_MOD_INCREASE_MOUNTED_SPEED)
+                aura->HandleAuraModIncreaseMountedSpeed(true, true);
 
     pPlayer->ModifyMoney(-int32(rented->cost));
     pPlayer->CLOSE_GOSSIP_MENU();

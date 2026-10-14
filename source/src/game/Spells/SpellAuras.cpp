@@ -3947,7 +3947,15 @@ void Aura::HandleAuraModIncreaseMountedSpeed(bool /*apply*/, bool Real)
     {
         bool mountAura = GetSpellProto()->EffectApplyAuraName[0] == SPELL_AURA_MOUNTED;
 
-        if (mountAura)
+        // A RENTED MOUNT is a mount aura with a timer: the 40700-40711 Rented
+        // spells, and a real mount spell that GossipSelect_rented_mount clamped
+        // to five minutes. It ignores riding skill and goes by level: 20% at
+        // level 1, 1% more each level, 60% from level 41. This also runs when
+        // the aura loads at login, so a rental keeps this speed across a relog.
+        // The racing cars have a timer too and keep their own speed.
+        if (mountAura && !GetHolder()->IsPermanent() && !(GetSpellProto()->Custom & SPELL_CUSTOM_IGNORE_RIDING_SKILL_MOUNT_SPEED))
+            m_modifier.m_amount = std::min<int32>(60, 19 + int32(player->GetLevel()));
+        else if (mountAura)
         {
             switch (GetId())
             {
