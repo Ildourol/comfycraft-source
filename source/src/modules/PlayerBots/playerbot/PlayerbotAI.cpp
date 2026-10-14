@@ -1604,20 +1604,43 @@ void PlayerbotAI::HandleCommand(uint32 type, const std::string& text, Player& fr
     std::string filtered = text;
 
     // COMFYCRAFT: A COMPANION TAKES ORDERS, NOT ERRANDS. From anybody below GM
-    // rank it answers only the four orders the companion bar sends: attack,
-    // pull, follow, stay (the bar's CC is a raid mark and sends no line).
-    // Trade, give, sell, quests, strategy toggles and the module's other
-    // commands are dropped in silence. A GM keeps all of them, for debugging
-    // (`nc +debug`). The bot's own internal commands come from itself and pass.
-    if (&fromPlayer != bot && CompanionOwnership::IsCompanion(bot->GetGUIDLow()) &&
-        (!fromPlayer.GetSession() || fromPlayer.GetSession()->GetSecurity() < SEC_DEVELOPER))
+    // rank it answers only the four orders the companion bar sends (attack,
+    // pull, follow, stay; the bar's CC is a raid mark and sends no line), and
+    // flee, which the join whisper offers. Trade, give, sell, quests, strategy
+    // toggles and the module's other commands are dropped in silence. A GM
+    // keeps all of them, for debugging (`nc +debug`). The bot's own internal
+    // commands come from itself and pass.
+    //
+    // `help` is answered here with one line per order, to EVERYONE, a GM too:
+    // the owner plays as a GM, and the module's own help (every command and
+    // strategy, ~1.4KB) arrived as nothing at all on 2026-10-14. Only a
+    // whispered `help` is answered: in party chat every companion would
+    // answer, five lines each.
+    if (&fromPlayer != bot && CompanionOwnership::IsCompanion(bot->GetGUIDLow()))
     {
-        static const std::set<std::string> orders = { "attack", "pull", "follow", "stay" };
         std::string order = text;
         order.erase(0, order.find_first_not_of(" \t\r\n"));
         order.erase(order.find_last_not_of(" \t\r\n") + 1);
         std::transform(order.begin(), order.end(), order.begin(), ::tolower);
-        if (!orders.count(order))
+        if (order == "help")
+        {
+            if (type != CHAT_MSG_WHISPER)
+                return;
+            static const char* const lines[] = {
+                "attack: fight your target.",
+                "pull: bring your target back to us.",
+                "follow: come back to you. I stop fighting for 5 seconds.",
+                "flee: run back to you and hold fire until your next order.",
+                "stay: hold this spot and fight what comes to me.",
+            };
+            for (char const* line : lines)
+                Whisper(line, fromPlayer.GetName());
+            return;
+        }
+
+        static const std::set<std::string> orders = { "attack", "pull", "follow", "stay", "flee" };
+        if ((!fromPlayer.GetSession() || fromPlayer.GetSession()->GetSecurity() < SEC_DEVELOPER) &&
+            !orders.count(order))
             return;
     }
 

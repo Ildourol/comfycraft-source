@@ -89,6 +89,13 @@ namespace CompanionOwnership
     bool     IsParked(uint32 companionGuid);
     void     Unpark(uint32 companionGuid);
 
+    // A companion the restore has sent back to its owner. Its join runs the
+    // hire path (AcceptInvitationAction), and the hire's "Whisper me: ..."
+    // hint is for a new hire only. TakeReturning answers once and forgets.
+    // In memory only: a restart parks the owner's companions again.
+    void     MarkReturning(uint32 companionGuid);
+    bool     TakeReturning(uint32 companionGuid);
+
     // Everything parked for this owner, oldest first. The caller decides who
     // comes back and who has waited too long; Unregister (via delete) and
     // Unpark both clear an entry.

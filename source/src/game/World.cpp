@@ -101,6 +101,7 @@
 #include "ChannelBroadcaster.h"
 #include <ace/OS_NS_dirent.h>
 #include "PerformanceMonitor.h"
+#include "LevelCap.h"
 
 #include <filesystem>
 
@@ -2323,6 +2324,9 @@ void LoadPlayerEggLoot();
     sObjectMgr.LoadTrainers();                              // must be after load CreatureTemplate, TrainerTemplate
     sLog.outString("Loading rented mounts...");
     sObjectMgr.LoadRentedMounts();                          // must be after load CreatureTemplate, NPCText and Spell.dbc
+    sLog.outString("Loading the level cap...");
+    if (uint32 cap = LevelCap::Load())
+        sLog.outString(">> Level cap: %u.", cap);
     sLog.outString("Loading creature movement scripts...");
     sScriptMgr.LoadCreatureMovementScripts();
     sLog.outString("Loading waypoints...");

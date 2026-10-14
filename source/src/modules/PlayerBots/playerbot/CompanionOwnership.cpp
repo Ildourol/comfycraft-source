@@ -43,6 +43,9 @@ namespace CompanionOwnership
 
         // companion guid -> when its owner logged out. Absent = out with them.
         std::map<uint32, time_t> s_parked;
+
+        // Companions on their way back from a park. See MarkReturning.
+        std::set<uint32> s_returning;
     }
 
     bool IsCompanionAccount(uint32 accountId)
@@ -265,6 +268,7 @@ namespace CompanionOwnership
         s_account.erase(companionGuid);
         s_parked.erase(companionGuid);
         s_pendingDismiss.erase(companionGuid);
+        s_returning.erase(companionGuid);
         CharacterDatabase.DirectPExecute(
             "DELETE FROM companion_owner WHERE companion_guid = '%u'", companionGuid);
     }
@@ -329,6 +333,17 @@ namespace CompanionOwnership
 
         CharacterDatabase.DirectPExecute(
             "UPDATE companion_owner SET parked_time = 0 WHERE companion_guid = '%u'", companionGuid);
+    }
+
+    void MarkReturning(uint32 companionGuid)
+    {
+        if (companionGuid)
+            s_returning.insert(companionGuid);
+    }
+
+    bool TakeReturning(uint32 companionGuid)
+    {
+        return s_returning.erase(companionGuid) > 0;
     }
 
     std::vector<Parked> ParkedOf(uint32 ownerGuid)

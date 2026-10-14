@@ -121,6 +121,7 @@ namespace ai { namespace botdiag {
 #include "PlayerDump.h"
 #include "Shop/ShopMgr.h"
 #include "ComfyTitles.h"
+#include "LevelCap.h"
 
 #include <sstream>
 
@@ -3700,6 +3701,65 @@ void Player::SendLogXPGain(uint32 GivenXP, Unit* victim, uint32 RestXP) const
     GetSession()->SendPacket(&data);
 }
 
+// The level cap (LevelCap.h). Atomic because every map thread reads it in
+// GiveXP while the world thread can write it from the console.
+namespace
+{
+    std::atomic<uint32> s_levelCap{ 0 };
+}
+
+uint32 LevelCap::Get()
+{
+    uint32 const max = sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL);
+    uint32 const cap = s_levelCap.load(std::memory_order_relaxed);
+    return (cap && cap < max) ? cap : max;
+}
+
+// The table is probed first, as rented_mount is (ObjectMgr::LoadRentedMounts):
+// a SELECT on a missing table is ASSERT(false) in HandleMySQLError. A missing
+// table or row is no cap.
+static bool LevelCapTablePresent()
+{
+    bool present = false;
+    if (QueryResult* probe = CharacterDatabase.Query(
+            "SELECT COUNT(*) FROM information_schema.tables "
+            "WHERE table_schema = DATABASE() AND table_name = 'level_cap'"))
+    {
+        present = probe->Fetch()[0].GetUInt32() > 0;
+        delete probe;
+    }
+    return present;
+}
+
+uint32 LevelCap::Load()
+{
+    uint32 cap = 0;
+    if (!LevelCapTablePresent())
+        sLog.outString(">> Level cap: none (`level_cap` is missing; apply sql/custom/134_level_cap.sql).");
+    else if (QueryResult* result = CharacterDatabase.Query("SELECT `level` FROM `level_cap` WHERE `id` = 1"))
+    {
+        cap = result->Fetch()[0].GetUInt32();
+        delete result;
+    }
+    s_levelCap.store(cap, std::memory_order_relaxed);
+    return cap;
+}
+
+bool LevelCap::Set(uint32 level, char const* changedBy)
+{
+    if (!LevelCapTablePresent())
+        return false;
+
+    std::string by = changedBy ? changedBy : "";
+    CharacterDatabase.escape_string(by);
+    // Direct, so two changes a second apart cannot land in the wrong order.
+    CharacterDatabase.DirectPExecute(
+        "REPLACE INTO `level_cap` (`id`, `level`, `changed_at`, `changed_by`) VALUES (1, %u, NOW(), '%s')",
+        level, by.c_str());
+    s_levelCap.store(level, std::memory_order_relaxed);
+    return true;
+}
+
 void Player::GiveXP(uint32 xp, Unit* victim)
 {
     if (xp < 1)
@@ -3754,8 +3814,8 @@ void Player::GiveXP(uint32 xp, Unit* victim)
     }
 
     // XP to money conversion processed in Player::RewardQuest
-    // if (level >= sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL))
-    if ((level >= sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL)) || !HasXPGainEnabled())
+    // The level cap and not MaxPlayerLevel: no XP at all at the cap.
+    if ((level >= LevelCap::Get()) || !HasXPGainEnabled())
         return;
 
     // THE PVP FLAG PAYS 10% MORE XP, from every source that comes through here:
@@ -3778,7 +3838,10 @@ void Player::GiveXP(uint32 xp, Unit* victim)
     uint32 newXP = curXP + xp + rested_bonus_xp;
 
     uint32 maxLevel = HasChallenge(CHALLENGE_HEROIC) ? 58 : sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL);
-    while (newXP >= nextLvlXP && level < maxLevel)
+    // The heroic test below reads maxLevel as it was set above, so the cap
+    // goes into its own name. XP left over at the cap stays in the bar.
+    uint32 const xpMaxLevel = std::min(maxLevel, LevelCap::Get());
+    while (newXP >= nextLvlXP && level < xpMaxLevel)
     {
         newXP -= nextLvlXP;
 
@@ -3791,6 +3854,11 @@ void Player::GiveXP(uint32 xp, Unit* victim)
 
     if (maxLevel == 58 && level >= 58)
         newXP = 0;
+
+    // Stopped by the cap with more than a level's XP: keep the bar one point
+    // short of full, so raising the cap does not level on the next kill.
+    if (level >= xpMaxLevel && nextLvlXP && newXP >= nextLvlXP)
+        newXP = nextLvlXP - 1;
 
     SetUInt32Value(PLAYER_XP, newXP);
 }
@@ -8188,7 +8256,7 @@ void Player::CheckAreaExploreAndOutdoor()
             //GetCheatData()->OnExplore(p);
             uint32 area = p->Id;
             uint32 xp = 0;
-            if ((p->AreaLevel > 0) && !((GetLevel() >= sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL)) || !HasXPGainEnabled()) || HasChallenge(CHALLENGE_BOARING_MODE))
+            if ((p->AreaLevel > 0) && !((GetLevel() >= LevelCap::Get()) || !HasXPGainEnabled()) || HasChallenge(CHALLENGE_BOARING_MODE))
             {
                 // Additional check for Turtle WoW Twink Token, which prevents the wielder of getting experience.
                 int32 diff = int32(GetLevel()) - p->AreaLevel;
@@ -15950,7 +16018,8 @@ void Player::RewardQuest(Quest const *pQuest, uint32 reward, WorldObject* questE
         XP *= sWorld.getConfig(CONFIG_FLOAT_RATE_XP_QUEST);
 
 
-    if (GetLevel() < sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL))
+    // The level cap: a quest at the cap pays the max-level gold, as at 60.
+    if (GetLevel() < LevelCap::Get())
         GiveXP(HasChallenge(CHALLENGE_WAR_MODE) ? XP * 1.2F : XP, nullptr);
     else if (int32 money = pQuest->GetRewMoneyMaxLevelAtComplete())
         LogModifyMoney(money, "QuestMaxLevel", questEnder->GetObjectGuid(), quest_id);
@@ -17167,7 +17236,8 @@ void Player::SendQuestReward(Quest const *pQuest, uint32 XP, Object * questGiver
     data << questid;
     data << uint32(0x03);
 
-    if (GetLevel() < sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL))
+    // The level cap, so the window shows the gold that RewardQuest pays.
+    if (GetLevel() < LevelCap::Get())
     {
         data << XP;
         data << uint32(pQuest->GetRewOrReqMoney());

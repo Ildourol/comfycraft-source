@@ -4690,6 +4690,16 @@ void PlayerbotFactory::ClearInventory()
 {
     DestroyItemsVisitor visitor(bot);
     IterateItemsMask mask = IterateItemsMask((uint8)IterateItemsMask::ITERATE_ITEMS_IN_BAGS | (uint8)IterateItemsMask::ITERATE_ITEMS_IN_EQUIP);
+
+    // BELOW LEVEL 5 THE EQUIPPED ITEMS STAY. InitEquipment does nothing below
+    // level 5 ("Bots below level 5 stay in their starting outfit"), but
+    // Randomize calls this first, so the starting outfit was destroyed and
+    // nothing replaced it. Every companion hired below level 5 came out naked
+    // (Sadren, a level 4 shaman, 2026-10-14). The bags are still cleared and
+    // refilled as before.
+    if (bot->GetLevel() < 5)
+        mask = IterateItemsMask::ITERATE_ITEMS_IN_BAGS;
+
     ai->InventoryIterateItems(&visitor, mask);
 }
 

@@ -1617,6 +1617,7 @@ void PlayerbotMgr::RestoreParkedCompanions()
         }
 
         CompanionOwnership::Unpark(p.companionGuid);
+        CompanionOwnership::MarkReturning(p.companionGuid);
 
         // Never queue the same guid twice: LoginFreeBots would start two
         // logins for it, and the second is the "already ingame" kick.

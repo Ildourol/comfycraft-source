@@ -1061,6 +1061,7 @@ ChatCommand * ChatHandler::getCommandTable()
         { "hover",          SEC_ADMINISTRATOR,   false, &ChatHandler::HandleHoverCommand,               "", nullptr },
         { "levelup",        SEC_DEVELOPER,       false, &ChatHandler::HandleLevelUpCommand,             "", nullptr },
         { "setlevel",       SEC_DEVELOPER,       false, &ComfyCommands::HandleSetLevelCommand,          "", nullptr },
+        { "levelcap",       SEC_DEVELOPER,       true, &ComfyCommands::HandleLevelCapCommand,          "Syntax: .levelcap [level]\r\nShows the level cap, or sets it. 0 is no cap.", nullptr },
         { "flightmode",     SEC_DEVELOPER,       false, &ComfyCommands::HandleFlightModeCommand,        "", nullptr },
         { "showarea",       SEC_ADMINISTRATOR,   false, &ChatHandler::HandleShowAreaCommand,            "", nullptr },
         { "hidearea",       SEC_ADMINISTRATOR,   false, &ChatHandler::HandleHideAreaCommand,            "", nullptr },

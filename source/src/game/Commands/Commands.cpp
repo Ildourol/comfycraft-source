@@ -11,6 +11,7 @@
 #include "Chat.h"
 #include "ComfyCommands.h"
 #include "CustomMerchantMgr.h"
+#include "LevelCap.h"
 #include "BotNpc.h"
 #include "Common.h"
 #include "Config/Config.h"
@@ -3679,6 +3680,40 @@ bool ComfyCommands::HandleSetLevelCommand(ChatHandler* handler, char* args)
     else
         handler->PSendSysMessage("%s is level %i. Spellbook and weapon skills to match.", handler->GetNameLink(target).c_str(), newLevel);
 
+    return true;
+}
+
+// The level cap (Objects/LevelCap.h). With no argument it re-reads
+// tw_char.level_cap, which is what the website sends after it writes the row.
+// With a level it writes the row. 0, or MaxPlayerLevel and above, is no cap.
+bool ComfyCommands::HandleLevelCapCommand(ChatHandler* handler, char* args)
+{
+    if (*args)
+    {
+        uint32 level;
+        if (!handler->ExtractUInt32(&args, level))
+            return false;
+
+        uint32 const max = sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL);
+        if (level >= max)
+            level = 0;
+
+        char const* by = handler->m_session ? handler->m_session->GetPlayerName() : "console";
+        if (!LevelCap::Set(level, by))
+        {
+            handler->SendSysMessage("No `level_cap` table. Apply sql/custom/134_level_cap.sql to tw_char.");
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+    }
+    else
+        LevelCap::Load();
+
+    uint32 const cap = LevelCap::Get();
+    if (cap < sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL))
+        handler->PSendSysMessage("Level cap: %u.", cap);
+    else
+        handler->PSendSysMessage("Level cap: none (%u).", cap);
     return true;
 }
 
@@ -14813,6 +14848,7 @@ namespace
         { "house template",    ".house template | entrance | furniture ...   house building tools" },
         { "add_dressing_room", ".add_dressing_room <id>   a saved dressing room look, into your bags" },
         { "setlevel",          ".setlevel <level> [name]   set a level, up or down" },
+        { "levelcap",          ".levelcap [level]   the level XP stops at, or set it (0 is none)" },
         { "flightmode",        ".flightmode [on | off]   whether GM flight is on, or set it" },
         { "companions",        ".companions   name your companions" },
         { "npcbot",            ".npcbot place | move | dress | menu | idle | emote | unplace | info <name>, .npcbot list" },

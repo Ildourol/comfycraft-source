@@ -135,7 +135,12 @@ namespace ai
             // common case -- could have had this announced out loud to the
             // whole zone instead of told to its owner. Naming the channel costs
             // nothing and cannot drift.
-            if (sPlayerbotAIConfig.groupJoinHelpHint && ai->IsRealPlayer(inviter))
+            //
+            // NOT FOR A COMPANION COMING BACK after its owner logged out or the
+            // server restarted: the owner was told on the first hire, and the
+            // restore already says "X is on the way back."
+            const bool returning = CompanionOwnership::TakeReturning(bot->GetGUIDLow());
+            if (sPlayerbotAIConfig.groupJoinHelpHint && ai->IsRealPlayer(inviter) && !returning)
             {
                 ai->Whisper("Whisper me: follow, stay, attack, pull, flee"
                             " - or \"help\" for the full list.", inviter->GetName());
