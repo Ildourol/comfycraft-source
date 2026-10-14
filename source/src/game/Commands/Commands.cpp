@@ -14861,7 +14861,7 @@ namespace
         { "emote",             ".emote <id> [name]   play an emote" },
         { "modify npcflag",    ".modify npcflag [value]   read or set a unit's NPC flags" },
         { "reload bot_npc",    "reload bot_npc | broadcast_text | custom_merchant | dialog_scenes | "
-                               "gameobject_template | rented_mount   (console)" },
+                               "gameobject_template | rented_mount | start_zones   (console)" },
     };
 }
 
@@ -19292,6 +19292,62 @@ bool ComfyCommands::HandleReloadRentedMountCommand(ChatHandler* handler, char* /
 {
     sObjectMgr.LoadRentedMounts();
     handler->SendSysMessage("DB table `rented_mount` reloaded.");
+    return true;
+}
+
+// The website's Start zones page writes the place columns of `playercreateinfo`
+// and sends this. It re-reads only map, zone, position and orientation. The
+// items, spells, actions and level stats in PlayerInfo stay as loaded, and a
+// row the startup loader refused is still refused. The rows live in an
+// ObjectMgr array that only LoadPlayerInfo writes; the const_cast keeps
+// ObjectMgr.h, which reaches most of the core, out of the rebuild.
+bool ComfyCommands::HandleReloadStartZonesCommand(ChatHandler* handler, char* /*args*/)
+{
+    std::unique_ptr<QueryResult> result(WorldDatabase.Query("SELECT `race`, `class`, `map`, `zone`, `position_x`, `position_y`, `position_z`, `orientation` FROM `playercreateinfo`"));
+    if (!result)
+    {
+        handler->SendSysMessage("No rows in `playercreateinfo`. Start zones not changed.");
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+
+    uint32 count = 0, refused = 0;
+    do
+    {
+        Field* fields = result->Fetch();
+        uint32 const race = fields[0].GetUInt32();
+        uint32 const class_ = fields[1].GetUInt32();
+        uint32 const mapId = fields[2].GetUInt32();
+        float const x = fields[4].GetFloat();
+        float const y = fields[5].GetFloat();
+        float const z = fields[6].GetFloat();
+        float const o = fields[7].GetFloat();
+
+        PlayerInfo* info = const_cast<PlayerInfo*>(sObjectMgr.GetPlayerInfo(race, class_));
+        if (!info)
+            continue;
+
+        MapEntry const* map = sMapStorage.LookupEntry<MapEntry>(mapId);
+        if (!MapManager::IsValidMapCoord(mapId, x, y, z, o) || !map || map->Instanceable())
+        {
+            ++refused;
+            continue;
+        }
+
+        info->mapId = mapId;
+        info->areaId = fields[3].GetUInt32();
+        info->positionX = x;
+        info->positionY = y;
+        info->positionZ = z;
+        info->orientation = o;
+        ++count;
+    }
+    while (result->NextRow());
+
+    if (refused)
+        handler->PSendSysMessage("Start zones reloaded: %u race and class pairs, %u refused for a bad place.", count, refused);
+    else
+        handler->PSendSysMessage("Start zones reloaded: %u race and class pairs.", count);
     return true;
 }
 
