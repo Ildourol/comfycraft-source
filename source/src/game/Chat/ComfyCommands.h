@@ -13,6 +13,7 @@
 #include "Common.h"
 
 class ChatHandler;
+class Player;
 struct House;
 
 struct ComfyCommands
@@ -102,6 +103,9 @@ struct ComfyCommands
     // The PlayerBots module (playerbot/PlayerbotAI.cpp), stubbed in
     // PlayerbotStubs.cpp for a build without it.
     static bool HandleNpcBotCommand(ChatHandler* handler, char* args);
+    // Its Creature half. A member, not a free function, for the friend access.
+    // Only HandleNpcBotCommand calls it, so it needs no stub.
+    static int NpcBotCreatureCommand(ChatHandler* handler, Player* me, std::string const& action, char const* nameArg);
     static bool HandleAddDressingRoomCommand(ChatHandler* handler, char* args);
 
     // playerbot/CompanionOwnership.cpp, also stubbed in PlayerbotStubs.cpp.

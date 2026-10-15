@@ -7928,6 +7928,370 @@ static void BotNpc_RenameCharacter(uint32 guidLow, Player* bot, std::string cons
 }
 
 /*
+ * THE CREATURES MADE ON /admin/npcbots, under `.npcbot` too.
+ *
+ * The page makes two kinds: a bot NPC (a player body, the rest of this file)
+ * and a Creature, which is a plain creature_template row. Before 2026-10-14 a
+ * Creature was placed with `.npc add 101001`, so the page's two kinds had two
+ * sets of commands and one of them needed the full entry.
+ *
+ * THE SHORT NAME IS `c` AND THE LAST THREE DIGITS: c1 is 101001. A bare number
+ * is already a bot design's #id, so the letter keeps the two apart. The entry
+ * itself never changes, because the client caches names by entry and quests
+ * link to it.
+ *
+ * WHICH ENTRIES ARE OURS is the block in website/lib/npccreatures.js (LO, HI),
+ * read from the template cache. Not the custom_creature table: a table the
+ * binary reads and the DB lacks is a hard crash, and the cache is enough here.
+ */
+static uint32 const NPC_CREATURE_FIRST = 101000;
+static uint32 const NPC_CREATURE_LAST  = 101999;
+
+static bool NpcCreature_IsOurs(uint32 entry)
+{
+    return entry >= NPC_CREATURE_FIRST && entry <= NPC_CREATURE_LAST && sObjectMgr.GetCreatureTemplate(entry);
+}
+
+static std::string NpcCreature_Short(uint32 entry)
+{
+    return "c" + std::to_string(entry - NPC_CREATURE_FIRST);
+}
+
+static std::string NpcCreature_Lower(std::string s)
+{
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    return s;
+}
+
+// Every copy placed in the world, by spawn guid, lowest first.
+static std::vector<std::pair<uint32, CreatureData const*>> NpcCreature_Copies(uint32 entry)
+{
+    std::vector<std::pair<uint32, CreatureData const*>> out;
+    for (auto const& itr : sObjectMgr.GetAllCreatureData())
+        if (itr.second.creature_id[0] == entry)
+            out.emplace_back(itr.first, &itr.second);
+    std::sort(out.begin(), out.end(), [](auto const& a, auto const& b) { return a.first < b.first; });
+    return out;
+}
+
+// For `.npcbot list`: one line per Creature after the bot NPCs.
+static uint32 NpcCreature_List(ChatHandler* handler)
+{
+    std::map<uint32, uint32> placed;
+    for (auto const& itr : sObjectMgr.GetAllCreatureData())
+    {
+        uint32 const id = itr.second.creature_id[0];
+        if (id >= NPC_CREATURE_FIRST && id <= NPC_CREATURE_LAST)
+            ++placed[id];
+    }
+
+    uint32 shown = 0;
+    for (uint32 e = NPC_CREATURE_FIRST; e <= NPC_CREATURE_LAST; ++e)
+    {
+        CreatureInfo const* info = sObjectMgr.GetCreatureTemplate(e);
+        if (!info)
+            continue;
+        if (!shown)
+            handler->SendSysMessage("Creatures:");
+        handler->PSendSysMessage("%s (%s) %u placed", info->name.c_str(), NpcCreature_Short(e).c_str(), placed[e]);
+        ++shown;
+    }
+    return shown;
+}
+
+/*
+ * `.npcbot <verb>` for a Creature. Returns -1 when the argument is not one of
+ * ours, and the caller goes on to the bot NPCs; otherwise 1 or 0 for the
+ * command's own result.
+ *
+ * THE BOT VERBS, MEANING THE SAME THING:
+ *   place    a new copy here, saved (`.npc add`); on a selected copy, re-post it here
+ *   move     the copy here for now; its saved spot does not change (`.npc move`)
+ *   reset    the copy back to its saved spot
+ *   save     where the copy stands now becomes its saved spot
+ *   unplace  delete the copy (`.npc delete`); the template stays
+ *   info     the entry, menu, shop, quests and every copy
+ * dress, menu, idle and emote are a player body's, and refuse.
+ */
+int ComfyCommands::NpcBotCreatureCommand(ChatHandler* handler, Player* me, std::string const& action, char const* nameArg)
+{
+    uint32 entry = 0;
+    Creature* selected = handler->GetSelectedCreature();
+
+    if (!nameArg || !*nameArg)
+    {
+        // No name: the selection, when it is one of ours. Anything else is the
+        // bot code's to answer.
+        if (!selected || !NpcCreature_IsOurs(selected->GetEntry()))
+            return -1;
+        entry = selected->GetEntry();
+    }
+    else if ((nameArg[0] == 'c' || nameArg[0] == 'C') && nameArg[1])
+    {
+        bool digits = true;
+        for (char const* c = nameArg + 1; *c; ++c)
+            if (!isdigit((unsigned char)*c))
+                digits = false;
+        if (!digits)
+            return -1;
+
+        uint32 const n = uint32(atoi(nameArg + 1));
+        if (n > NPC_CREATURE_LAST - NPC_CREATURE_FIRST || !NpcCreature_IsOurs(NPC_CREATURE_FIRST + n))
+        {
+            handler->PSendSysMessage("No creature %s. .npcbot list shows them.", nameArg);
+            handler->SetSentErrorMessage(true);
+            return 0;
+        }
+        entry = NPC_CREATURE_FIRST + n;
+    }
+    else
+    {
+        // A name. Bot designs keep it first: a name both kinds share goes to
+        // the bot, as it did before Creatures were here. `c<n>` reaches the other.
+        if (!sBotNpcMgr.FindByName(nameArg).empty())
+            return -1;
+
+        std::string const wanted = NpcCreature_Lower(nameArg);
+        std::vector<uint32> matches;
+        for (uint32 e = NPC_CREATURE_FIRST; e <= NPC_CREATURE_LAST; ++e)
+            if (CreatureInfo const* info = sObjectMgr.GetCreatureTemplate(e))
+                if (NpcCreature_Lower(info->name) == wanted)
+                    matches.push_back(e);
+
+        if (matches.empty())
+            return -1;
+
+        if (matches.size() > 1)
+        {
+            std::string list;
+            for (uint32 e : matches)
+                list += (list.empty() ? "" : ", ") + NpcCreature_Short(e);
+            handler->PSendSysMessage("%u creatures are called %s. Say which: %s", uint32(matches.size()), nameArg,
+                                     list.c_str());
+            handler->SetSentErrorMessage(true);
+            return 0;
+        }
+        entry = matches.front();
+    }
+
+    CreatureInfo const* info = sObjectMgr.GetCreatureTemplate(entry);
+    std::string const name = info->name;
+    std::string const handle = NpcCreature_Short(entry);
+
+    if (action == "dress" || action == "menu" || action == "idle" || action == "emote")
+    {
+        handler->PSendSysMessage("%s (%s) is a creature. %s works on a bot NPC only. Edit it at /admin/npcbots/creature/%u.",
+                                 name.c_str(), handle.c_str(), action.c_str(), entry);
+        handler->SetSentErrorMessage(true);
+        return 0;
+    }
+
+    std::vector<std::pair<uint32, CreatureData const*>> const copies = NpcCreature_Copies(entry);
+
+    // WHICH COPY, the same rule as the bots: the selection when it is one of
+    // these, else the only one.
+    uint32 chosenGuid = 0;
+    CreatureData const* chosen = nullptr;
+    bool chosenBySelection = false;
+
+    if (selected && selected->GetEntry() == entry)
+    {
+        for (auto const& c : copies)
+            if (c.first == selected->GetGUIDLow())
+            {
+                chosenGuid = c.first;
+                chosen = c.second;
+                chosenBySelection = true;
+            }
+    }
+    if (!chosen && copies.size() == 1)
+    {
+        chosenGuid = copies.front().first;
+        chosen = copies.front().second;
+    }
+
+    auto needOneCopy = [&]() -> bool
+    {
+        if (copies.empty())
+        {
+            handler->PSendSysMessage("%s is not placed. .npcbot place %s stands it here.", name.c_str(), handle.c_str());
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+        if (chosen)
+            return true;
+
+        handler->PSendSysMessage("%s stands in %u places. Select the one you mean:", name.c_str(), uint32(copies.size()));
+        for (auto const& c : copies)
+            handler->PSendSysMessage("  map %u at %.0f %.0f %.0f", c.second->position.mapId, c.second->position.x,
+                                     c.second->position.y, c.second->position.z);
+        handler->SetSentErrorMessage(true);
+        return false;
+    };
+
+    // The chosen copy as a unit, when it is loaded on your map.
+    auto unitOf = [&]() -> Creature*
+    {
+        if (chosenBySelection)
+            return selected;
+        if (!me || !chosen || chosen->position.mapId != me->GetMapId())
+            return nullptr;
+        return me->GetMap()->GetCreature(chosen->GetObjectGuid(chosenGuid));
+    };
+
+    auto setAuthor = [&]()
+    {
+        if (handler->GetSession())
+            sWorld.GetMigration().SetAuthor(handler->GetSession()->GetUsername());
+    };
+
+    // Make x, y, z, o the chosen copy's post: the spawn row, the cached copy of
+    // it, and the unit's home. What `.npc spawn move` writes.
+    auto writePost = [&](Creature* unit, float x, float y, float z, float o)
+    {
+        if (CreatureData* data = const_cast<CreatureData*>(sObjectMgr.GetCreatureData(chosenGuid)))
+        {
+            data->position.x = x;
+            data->position.y = y;
+            data->position.z = z;
+            data->position.o = o;
+        }
+        unit->SetHomePosition(x, y, z, o);
+        setAuthor();
+        sWorld.ExecuteUpdate("UPDATE `creature` SET `position_x` = %f, `position_y` = %f, `position_z` = %f, "
+                             "`orientation` = %f WHERE `guid` = %u", x, y, z, o, chosenGuid);
+    };
+
+    // A respawn stands it on its home, which is how `.npc move` moves one.
+    auto standOnHome = [](Creature* unit)
+    {
+        if (unit->IsAlive())
+        {
+            unit->SetDeathState(JUST_DIED);
+            unit->Respawn();
+        }
+    };
+
+    // ------------------------------------------------------------- info
+    if (action == "info")
+    {
+        auto idOrNone = [](uint32 v) { return v ? std::to_string(v) : std::string("none"); };
+
+        uint32 gives = 0;
+        uint32 takes = 0;
+        auto g = sObjectMgr.GetCreatureQuestRelationsMapBounds(entry);
+        for (auto i = g.first; i != g.second; ++i)
+            ++gives;
+        auto t = sObjectMgr.GetCreatureQuestInvolvedRelationsMapBounds(entry);
+        for (auto i = t.first; i != t.second; ++i)
+            ++takes;
+
+        handler->PSendSysMessage("%s (%s): creature, entry %u", name.c_str(), handle.c_str(), entry);
+
+        if (copies.empty())
+            handler->SendSysMessage("  not placed");
+        for (auto const& c : copies)
+        {
+            if (chosenBySelection && c.first != chosenGuid)
+                continue;
+            handler->PSendSysMessage("  guid %u, map %u at %.0f %.0f %.0f", c.first, c.second->position.mapId,
+                                     c.second->position.x, c.second->position.y, c.second->position.z);
+        }
+
+        handler->PSendSysMessage("  menu %s, shop %s, gives %u quests, takes %u", idOrNone(info->gossip_menu_id).c_str(),
+                                 idOrNone(info->vendor_id).c_str(), gives, takes);
+        handler->PSendSysMessage("  edit at /admin/npcbots/creature/%u", entry);
+        return 1;
+    }
+
+    // ---------------------------------------------------------- unplace
+    if (action == "unplace")
+    {
+        if (!needOneCopy())
+            return 0;
+
+        // The static pair works with the copy loaded or not, on any map.
+        // DeleteFromDB frees `chosen`, so it goes last.
+        uint32 const left = uint32(copies.size() - 1);
+        Creature::AddToRemoveListInMaps(chosenGuid, chosen);
+        setAuthor();
+        Creature::DeleteFromDB(chosenGuid, chosen);
+
+        if (left)
+            handler->PSendSysMessage("This %s is removed. %u more still standing.", name.c_str(), left);
+        else
+            handler->PSendSysMessage("%s is removed. .npcbot place %s brings it back.", name.c_str(), handle.c_str());
+        return 1;
+    }
+
+    // ------------------------------------------------- move, reset, save
+    if (action == "move" || action == "reset" || action == "save")
+    {
+        if (!needOneCopy())
+            return 0;
+
+        Creature* unit = unitOf();
+        if (!unit)
+        {
+            handler->PSendSysMessage("%s is not near you. Select it, or go to it.", name.c_str());
+            handler->SetSentErrorMessage(true);
+            return 0;
+        }
+
+        if (action == "save")
+        {
+            writePost(unit, unit->GetPositionX(), unit->GetPositionY(), unit->GetPositionZ(), unit->GetOrientation());
+            handler->PSendSysMessage("%s: this is its post now.", name.c_str());
+            return 1;
+        }
+
+        if (action == "move" && !me)
+        {
+            handler->SendSysMessage(".npcbot move brings it to you, so run it in game.");
+            handler->SetSentErrorMessage(true);
+            return 0;
+        }
+
+        if (action == "reset")
+            unit->SetHomePosition(chosen->position.x, chosen->position.y, chosen->position.z, chosen->position.o);
+        else
+            unit->SetHomePosition(me->GetPositionX(), me->GetPositionY(), me->GetPositionZ(), me->GetOrientation());
+        standOnHome(unit);
+
+        if (action == "reset")
+            handler->PSendSysMessage("%s is back on its post.", name.c_str());
+        else
+            handler->PSendSysMessage("%s is here for now. .npcbot save keeps it, .npcbot reset sends it home.", name.c_str());
+        return 1;
+    }
+
+    // ------------------------------------------------------------ place
+    if (!me)
+    {
+        handler->SendSysMessage(".npcbot place needs somewhere to stand it, so run it in game.");
+        handler->SetSentErrorMessage(true);
+        return 0;
+    }
+
+    // On a selected copy, re-post it here and save, as place does for a bot.
+    if (chosenBySelection)
+    {
+        writePost(selected, me->GetPositionX(), me->GetPositionY(), me->GetPositionZ(), me->GetOrientation());
+        standOnHome(selected);
+        handler->PSendSysMessage("%s: this is its post now.", name.c_str());
+        return 1;
+    }
+
+    char text[16];
+    snprintf(text, sizeof(text), "%u", entry);
+    if (!handler->HandleNpcAddCommand(text))
+        return 0;
+
+    handler->PSendSysMessage("Placed %s (%s). %u standing.", name.c_str(), handle.c_str(), uint32(copies.size() + 1));
+    return 1;
+}
+
+/*
  * .npcbot -- turn one of your characters into a standing NPC.
  *
  * `.bot add` already logs a character in as a bot, and it is the wrong verb for
@@ -7976,11 +8340,6 @@ bool ComfyCommands::HandleNpcBotCommand(ChatHandler* handler, char* args)
     if (action == "list")
     {
         std::map<uint32, BotNpcEntry> const& all = sBotNpcMgr.All();
-        if (all.empty())
-        {
-            handler->SendSysMessage("No bot NPCs. Design one on the website, then .npcbot place <name>.");
-            return true;
-        }
 
         for (const auto& itr : all)
         {
@@ -7991,6 +8350,9 @@ bool ComfyCommands::HandleNpcBotCommand(ChatHandler* handler, char* args)
             handler->PSendSysMessage("%s (#%u) %u placed", e.name.c_str(), e.id,
                             uint32(sBotNpcMgr.SpawnsOf(e.id).size()));
         }
+
+        if (!NpcCreature_List(handler) && all.empty())
+            handler->SendSysMessage("No bot NPCs. Design one on the website, then .npcbot place <name>.");
         return true;
     }
 
@@ -8006,7 +8368,7 @@ bool ComfyCommands::HandleNpcBotCommand(ChatHandler* handler, char* args)
         action != "unplace" && action != "menu" && action != "dress" && action != "idle" &&
         action != "emote" && action != "info")
     {
-        handler->SendSysMessage("Usage: .npcbot place|move|reset|save|dress|menu|idle|emote|unplace|info <name or #id>, or .npcbot list");
+        handler->SendSysMessage("Usage: .npcbot place|move|reset|save|dress|menu|idle|emote|unplace|info <name, #id or c#>, or .npcbot list");
         handler->SendSysMessage("  .npcbot info [name]       its id, guid, menu, shop, quests and post");
         handler->SendSysMessage("  .npcbot place <name>      stand the design called <name> here, for good; also .npcbot add");
         handler->SendSysMessage("  .npcbot move <name>       bring it here for now; its post does not change");
@@ -8018,6 +8380,7 @@ bool ComfyCommands::HandleNpcBotCommand(ChatHandler* handler, char* args)
         handler->SendSysMessage("  .npcbot emote <name>      what it answers emotes with; add an emote id to run one now");
         handler->SendSysMessage("  .npcbot unplace [name]    put the body away, the design stays; also .npcbot del");
         handler->SendSysMessage("Leave out the name on place, move, reset, save, dress, unplace and info to use the bot NPC you have selected.");
+        handler->SendSysMessage("A creature from /admin/npcbots is c1, c2 and so on: place, move, reset, save, unplace and info work on it.");
         // Not .npcbot subcommands, but they are the other half of giving an NPC
         // somewhere to walk, and this is where somebody looks for that.
         handler->SendSysMessage("With the NPC selected:");
@@ -8035,6 +8398,11 @@ bool ComfyCommands::HandleNpcBotCommand(ChatHandler* handler, char* args)
     // like the name never reached the lookup.
     char* nameArg = handler->ExtractQuotedOrLiteralArg(&args);
     BotNpcEntry const* found = nullptr;
+
+    // A Creature from the same page: by c<n>, by its name, or selected.
+    int const creatureResult = NpcBotCreatureCommand(handler, me, action, nameArg);
+    if (creatureResult >= 0)
+        return creatureResult != 0;
 
     if (!nameArg || !*nameArg)
     {
@@ -8124,7 +8492,7 @@ bool ComfyCommands::HandleNpcBotCommand(ChatHandler* handler, char* args)
             std::vector<BotNpcEntry const*> matches = sBotNpcMgr.FindByName(nameArg);
             if (matches.empty())
             {
-                handler->PSendSysMessage("No bot NPC called %s. Design one on the website first.", nameArg);
+                handler->PSendSysMessage("No bot NPC or creature called %s. .npcbot list shows them.", nameArg);
                 handler->SetSentErrorMessage(true);
                 return false;
             }
