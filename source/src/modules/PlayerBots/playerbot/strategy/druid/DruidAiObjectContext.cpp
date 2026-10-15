@@ -210,6 +210,7 @@ namespace ai
                 creators["moonfire"] = [](PlayerbotAI* ai) { return new MoonfireTrigger(ai); };
                 creators["leveling moonfire"] = [](PlayerbotAI* ai) { return new LevelingMoonfireTrigger(ai); };
                 creators["leveling rejuvenation"] = [](PlayerbotAI* ai) { return new LevelingRejuvenationTrigger(ai); };
+                creators["leveling wrath"] = [](PlayerbotAI* ai) { return new LevelingWrathTrigger(ai); };
                 creators["nature's grasp"] = [](PlayerbotAI* ai) { return new NaturesGraspTrigger(ai); };
                 creators["tiger's fury"] = [](PlayerbotAI* ai) { return new TigersFuryTrigger(ai); };
                 creators["rake"] = [](PlayerbotAI* ai) { return new RakeTrigger(ai); };

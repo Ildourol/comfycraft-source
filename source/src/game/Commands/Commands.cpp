@@ -83,6 +83,8 @@
 #include "Auth/base32.h"
 #include <cctype>
 #include <cstring>
+#include <cwchar>
+#include <cwctype>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -6361,6 +6363,98 @@ bool ChatHandler::HandleGMTicketCloseByIdCommand(char* args)
         data << uint32(GMTICKET_RESPONSE_TICKET_DELETED);
         submitter->GetSession()->SendPacket(&data);
     }
+    return true;
+}
+
+// .ticket respond <id> <text>: answer a ticket. The player sees the answer
+// under their own text in the help window ("GM answer"), at once if online,
+// else when they next open it. The ticket stays until the player deletes it
+// or opens a new one; a second respond replaces the answer.
+//
+// The console reads one line of at most 4096 bytes, and on Windows it reads
+// it as the OEM code page, so the website (routes/tickets.js) sends a reply
+// as ASCII: \n is a new line, \\ a backslash, \uXXXX any other character.
+// Typed in game, the text is UTF-8 already and needs none of it.
+bool ComfyCommands::HandleGMTicketRespondCommand(ChatHandler* handler, char* args)
+{
+    uint32 ticketId;
+    if (!handler->ExtractUInt32(&args, ticketId) || !args || !*args)
+    {
+        handler->SendSysMessage("Usage: .ticket respond <id> <text>");
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+
+    GmTicket* ticket = sTicketMgr.GetTicket(ticketId);
+    if (!ticket)
+    {
+        handler->SendSysMessage(LANG_COMMAND_TICKETNOTEXIST);
+        return true;
+    }
+    if (ticket->IsClosed())
+    {
+        handler->SendSysMessage(LANG_COMMAND_TICKETARCHIVED);
+        return true;
+    }
+
+    std::wstring wtext;
+    if (!Utf8toWStr(args, wtext))
+    {
+        handler->SendSysMessage("The text is not valid UTF-8.");
+        return true;
+    }
+    std::wstring decoded;
+    for (size_t i = 0; i < wtext.size(); ++i)
+    {
+        if (wtext[i] != L'\\' || i + 1 == wtext.size())
+        {
+            decoded += wtext[i];
+            continue;
+        }
+        wchar_t next = wtext[i + 1];
+        if (next == L'n')
+        {
+            decoded += L'\n';
+            ++i;
+        }
+        else if (next == L'\\')
+        {
+            decoded += L'\\';
+            ++i;
+        }
+        else if (next == L'u' && i + 5 < wtext.size() && std::iswxdigit(wtext[i + 2]) && std::iswxdigit(wtext[i + 3])
+                 && std::iswxdigit(wtext[i + 4]) && std::iswxdigit(wtext[i + 5]))
+        {
+            std::wstring hex = wtext.substr(i + 2, 4);
+            decoded += wchar_t(std::wcstoul(hex.c_str(), nullptr, 16));
+            i += 5;
+        }
+        else
+            decoded += wtext[i];
+    }
+    std::string response;
+    if (!WStrToUtf8(decoded, response))
+    {
+        handler->SendSysMessage("The text is not valid UTF-8.");
+        return true;
+    }
+
+    ticket->ResetResponse();
+    ticket->AppendResponse(response);
+    ticket->SetCompleted();
+    ticket->SaveToDB();
+    sTicketMgr.UpdateLastChange();
+
+    Player* player = handler->GetSession() ? handler->GetSession()->GetPlayer() : nullptr;
+    Player* submitter = ticket->GetPlayer();
+    if (submitter)
+        ticket->SendResponse(submitter->GetSession());
+
+    handler->PSendSysMessage("Ticket %u answered. %s %s.", ticket->GetId(), ticket->GetPlayerName().c_str(),
+                             submitter ? "has it now" : "sees it on next login");
+    std::string msg = std::string("|cff00ff00Ticket ") + std::to_string(ticket->GetId()) + " answered by "
+                      + (player ? player->GetName() : "Console") + ".|r";
+    sWorld.SendGMTicketText(msg.c_str());
     return true;
 }
 
@@ -14860,6 +14954,7 @@ namespace
         { "effect",            ".effect <visual kit> [name]   play a spell visual" },
         { "emote",             ".emote <id> [name]   play an emote" },
         { "modify npcflag",    ".modify npcflag [value]   read or set a unit's NPC flags" },
+        { "ticket respond",    ".ticket respond <id> <text>   answer a GM ticket (\\n is a new line)" },
         { "reload bot_npc",    "reload bot_npc | broadcast_text | custom_merchant | dialog_scenes | "
                                "gameobject_template | rented_mount | start_zones   (console)" },
     };

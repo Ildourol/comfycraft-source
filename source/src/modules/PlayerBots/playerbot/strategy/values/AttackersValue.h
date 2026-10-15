@@ -37,6 +37,10 @@ namespace ai
     public:
         // mod-playerbots spelling; the range argument there is folded into the
         // validity checks here, so it is accepted and dropped.
+        // A real player swinging at the target, or casting a harmful spell at it that is not
+        // crowd control. Counts before the first hit lands, so the group joins on the swing.
+        static bool IsRealPlayerAttacking(Unit* target, Player* player);
+
         static bool IsPossibleTarget(Unit* target, Player* player, float /*range*/ = 0.0f, bool checkInCombat = true)
         { return IsValid(target, player, nullptr, checkInCombat); }
         static bool IgnoreTarget(Unit* target, Player* playerToCheckAgainst);

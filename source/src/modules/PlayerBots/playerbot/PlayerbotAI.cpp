@@ -9224,9 +9224,18 @@ bool ComfyCommands::HandleNpcBotCommand(ChatHandler* handler, char* args)
          * only a character that is nobody's spawn is up for adoption, which is
          * what an unplaced former body is.
          */
-        auto adoptable = [](uint32 guidLow)
+        /*
+         * AND NEVER A BODY OF ANOTHER RACE OR SEX. The look cannot be dressed
+         * on it, so adopting one is a naked NPC of the wrong race. A goblin
+         * design got a troll body while the race list lacked Goblin, and that
+         * body would be adopted by every later place.
+         */
+        auto adoptable = [&entry](uint32 guidLow)
         {
-            return sBotNpcMgr.GetSpawn(guidLow) == nullptr;
+            if (sBotNpcMgr.GetSpawn(guidLow) != nullptr)
+                return false;
+            PlayerCacheData const* data = sObjectMgr.GetPlayerDataByGUID(guidLow);
+            return !data || (data->uiRace == entry.race && data->uiGender == entry.gender);
         };
 
         ObjectGuid existing = sObjectMgr.GetPlayerGuidByName(name);

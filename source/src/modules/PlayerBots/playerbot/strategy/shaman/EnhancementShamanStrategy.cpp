@@ -61,6 +61,13 @@ void EnhancementShamanStrategy::InitCombatTriggers(std::list<TriggerNode*>& trig
     triggers.push_back(new TriggerNode(
         "shock",
         NextAction::array(0, new NextAction("earth shock", ACTION_NORMAL), NULL)));
+
+    // Something to do at range. Reaching melee (ACTION_MOVE) outranks this, so
+    // it only fires when the bot cannot close: a `stay` order, a rooted bot, a
+    // target with no path to it.
+    triggers.push_back(new TriggerNode(
+        "enemy out of melee",
+        NextAction::array(0, new NextAction("lightning bolt", ACTION_NORMAL - 1), NULL)));
 }
 
 void EnhancementShamanStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
@@ -497,6 +504,13 @@ void EnhancementShamanStrategy::InitCombatTriggers(std::list<TriggerNode*>& trig
     triggers.push_back(new TriggerNode(
         "shock",
         NextAction::array(0, new NextAction("earth shock", ACTION_NORMAL), NULL)));
+
+    // Something to do at range. Reaching melee (ACTION_MOVE) outranks this, so
+    // it only fires when the bot cannot close: a `stay` order, a rooted bot, a
+    // target with no path to it.
+    triggers.push_back(new TriggerNode(
+        "enemy out of melee",
+        NextAction::array(0, new NextAction("lightning bolt", ACTION_NORMAL - 1), NULL)));
 }
 
 void EnhancementShamanStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
@@ -933,6 +947,13 @@ void EnhancementShamanStrategy::InitCombatTriggers(std::list<TriggerNode*>& trig
     triggers.push_back(new TriggerNode(
         "shock",
         NextAction::array(0, new NextAction("earth shock", ACTION_NORMAL), NULL)));
+
+    // Something to do at range. Reaching melee (ACTION_MOVE) outranks this, so
+    // it only fires when the bot cannot close: a `stay` order, a rooted bot, a
+    // target with no path to it.
+    triggers.push_back(new TriggerNode(
+        "enemy out of melee",
+        NextAction::array(0, new NextAction("lightning bolt", ACTION_NORMAL - 1), NULL)));
 }
 
 void EnhancementShamanStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)

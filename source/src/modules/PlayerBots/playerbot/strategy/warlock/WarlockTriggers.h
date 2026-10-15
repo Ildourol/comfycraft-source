@@ -130,6 +130,13 @@ namespace ai
 
     DEBUFF_TRIGGER(ImmolateTrigger, "immolate");
 
+    class LowLevelImmolateTrigger : public ImmolateTrigger
+    {
+    public:
+        LowLevelImmolateTrigger(PlayerbotAI* ai) : ImmolateTrigger(ai) {}
+        bool IsActive() override { return bot->GetLevel() < 20 && ImmolateTrigger::IsActive(); }
+    };
+
     class ShadowTranceTrigger : public HasAuraTrigger
     {
     public:

@@ -379,7 +379,16 @@ void AiFactory::AddDefaultCombatStrategies(Player* player, PlayerbotAI* const fa
 
         case CLASS_WARRIOR:
         {
-            if (tab == 2)
+            // Below level 10 there are no talents, so GetPlayerSpecTab says
+            // protection for every warrior, and Defensive Stance and Taunt are
+            // learned at 10. So a low warrior is arms whatever it was hired as.
+            // No "pull": the order goes to every bot that has the strategy, so
+            // a dps warrior with it would pull beside the real tank.
+            if (player->GetLevel() < 10)
+            {
+                combatEngine->addStrategies("arms", "dps assist", "behind", NULL);
+            }
+            else if (tab == 2)
             {
                 combatEngine->addStrategies("protection", "tank assist", "pull", "close", NULL);
             }
@@ -657,6 +666,20 @@ void AiFactory::AddDefaultCombatStrategies(Player* player, PlayerbotAI* const fa
     // companions are made quiet without silencing the owner's real alts.
     if (CompanionOwnership::IsCompanion(player->GetGUIDLow()))
         combatEngine->ChangeStrategy(sPlayerbotAIConfig.companionCombatStrategies);
+
+    // A HEALING PRIEST IN A GROUP STAYS A HEALER.
+    //
+    // `+dps` in the conf strings is the shadow placeholder for a priest, and
+    // shadow is a sibling of holy and discipline, so adding it removed them.
+    // A priest hired as a healer then nuked in combat and did not heal the
+    // party (bug report, 2026-10-15). A solo priest keeps the swap: shadow is
+    // the better way to fight alone. Below level 10 a priest is holy whatever
+    // it was hired as, and `offdps` gives it Smite between heals.
+    if (player->getClass() == CLASS_PRIEST && tab != 2 && !player->InBattleGround() &&
+        (player->GetGroup() || CompanionOwnership::IsCompanion(player->GetGUIDLow())))
+    {
+        combatEngine->addStrategy(tab == 0 ? "discipline" : "holy");
+    }
 
     // Battleground switch
     if (player->InBattleGround())
@@ -938,7 +961,12 @@ void AiFactory::AddDefaultNonCombatStrategies(Player* player, PlayerbotAI* const
 
         case CLASS_WARRIOR:
         {
-            if (tab == 2)
+            // Same rule as the combat engine: arms below level 10.
+            if (player->GetLevel() < 10)
+            {
+                nonCombatEngine->addStrategies("arms", "dps assist", NULL);
+            }
+            else if (tab == 2)
             {
                 nonCombatEngine->addStrategies("protection", "tank assist", NULL);
             }

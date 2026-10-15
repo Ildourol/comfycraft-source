@@ -39,6 +39,7 @@ struct ComfyCommands
     static bool HandleReloadGameObjectTemplateCommand(ChatHandler* handler, char* args);
     static bool HandleReloadRentedMountCommand(ChatHandler* handler, char* args);
     static bool HandleReloadStartZonesCommand(ChatHandler* handler, char* args);
+    static bool HandleGMTicketRespondCommand(ChatHandler* handler, char* args);
 
     // Commands/ObjCommands.cpp
     static bool HandleObjCommand(ChatHandler* handler, char* args);

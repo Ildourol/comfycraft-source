@@ -303,6 +303,10 @@ bool PossibleAttackTargetsValue::IsValid(Unit* target, Player* player, float ran
     if (GetBotAI(player) && (target->GetObjectGuid() == PAI_VALUE(ObjectGuid, "attack target")))
         return true;
 
+    // The master has started on it and nothing has hit back yet.
+    if (GetBotAI(player) && AttackersValue::IsRealPlayerAttacking(target, GetBotAI(player)->GetMaster()))
+        return true;
+
     if(!HasIgnoreCCRti(target, player) && (HasBreakableCC(target, player) || HasUnBreakableCC(target, player)))
         return true;
 

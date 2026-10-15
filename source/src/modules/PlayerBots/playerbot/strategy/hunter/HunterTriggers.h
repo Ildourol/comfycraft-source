@@ -249,14 +249,6 @@ private:
 
         bool IsActive() override
         {
-            // Below level 10, Hunter has no viable kiting toolkit (8yd ranged minimum, no
-            // traps yet) - once melee starts, stay in it rather than repeatedly trying to
-            // reopen ranged distance (which the "target->GetVictim() != bot" case below would
-            // otherwise attempt even against a target just as fast as the bot, e.g. whenever
-            // the pet currently has aggro, regardless of what happens if aggro flips back).
-            if (bot->getClass() == CLASS_HUNTER && bot->GetLevel() < 10)
-                return false;
-
 #ifdef MANGOSBOT_ZERO
             bool hasAmmo = ai->HasCheat(BotCheatMask::item) || AI_VALUE2(uint32, "item count", "ammo");
 #else
@@ -266,6 +258,19 @@ private:
                 return false;
 
             Unit* target = AI_VALUE(Unit*, "current target");
+
+            // Below level 10, Hunter has no viable kiting toolkit (8yd ranged minimum, no
+            // traps, no pet) - while the mob is on the hunter, stay in melee rather than
+            // repeatedly trying to reopen ranged distance. But it must come back to ranged
+            // once the mob is on someone else: this used to return false outright, the
+            // switch to melee never undid itself, and after the first mob turned on it a
+            // low hunter meleed every fight from then on.
+            if (bot->getClass() == CLASS_HUNTER && bot->GetLevel() < 10)
+            {
+                return target && ai->HasStrategy("close", BotState::BOT_STATE_COMBAT) &&
+                    target->GetVictim() && target->GetVictim() != bot;
+            }
+
             float distance = AI_VALUE2(float, "distance", "current target");
             return target && ai->HasStrategy("close", BotState::BOT_STATE_COMBAT) &&
                 (target->GetVictim() != bot ||
@@ -321,6 +326,29 @@ private:
         virtual bool IsActive() override
         {
             return DebuffTrigger::IsActive() && AI_VALUE2(uint8, "mana", "current target") >= 10;
+        }
+    };
+
+    // Arcane Shot was only the alternative of Aimed Shot, a talent, so a hunter
+    // without it never cast Arcane Shot. Fires at range while mana is at 30% or
+    // more; a hunter with Aimed Shot still reaches it through that node.
+    class ArcaneShotTrigger : public Trigger
+    {
+    public:
+        ArcaneShotTrigger(PlayerbotAI* ai) : Trigger(ai, "arcane shot", 2) {}
+        std::string GetTargetName() override { return "current target"; }
+
+        bool IsActive() override
+        {
+            if (bot->HasSpell(19434))
+                return false;
+
+            Unit* target = GetTarget();
+            if (!target || !ai->HasStrategy("ranged", BotState::BOT_STATE_COMBAT))
+                return false;
+
+            return AI_VALUE2(uint8, "mana", "self target") >= 30 &&
+                sServerFacade.IsDistanceGreaterOrEqualThan(AI_VALUE2(float, "distance", GetTargetName()), 8.0f);
         }
     };
 

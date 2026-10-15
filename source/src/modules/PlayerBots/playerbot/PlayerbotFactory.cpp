@@ -3750,6 +3750,34 @@ void PlayerbotFactory::InitEquipment(bool incremental, bool syncWithMaster, bool
                 }
             }
 
+            // THE SAME FOR A CASTER'S WAND, FROM LEVEL 5.
+            //
+            // A priest, mage or warlock at 0 mana has nothing left but Shoot,
+            // and with an empty slot it stood still. Level 5 is the lowest
+            // required level of a real wand. Lesser Magic Wand (11287, required
+            // level 5) and Greater Magic Wand (11288, required level 13) are
+            // crafted, bind on equip, with no class restriction. Below level 5
+            // the Shoot node falls back to melee.
+            if (slot == EQUIPMENT_SLOT_RANGED &&
+                (bot->getClass() == CLASS_PRIEST || bot->getClass() == CLASS_MAGE || bot->getClass() == CLASS_WARLOCK) &&
+                bot->GetLevel() >= 5 &&
+                !bot->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_RANGED))
+            {
+                const uint32 fallbackWand = bot->GetLevel() >= 13 ? 11288 : 11287;
+
+                uint16 eDest;
+                if (RandomPlayerbotMgr::CanEquipUnseenItem(bot, slot, eDest, fallbackWand) == EQUIP_ERR_OK)
+                {
+                    if (Item* pItem = bot->EquipNewItem(eDest, fallbackWand, true))
+                    {
+                        pItem->SetOwnerGuid(bot->GetObjectGuid());
+                        sLog.outDetail("Bot #%d %s:%d <%s>: nothing found for slot %d, fell back to wand %u",
+                            bot->GetGUIDLow(), bot->GetTeam() == ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName(), slot, fallbackWand);
+                        continue;
+                    }
+                }
+            }
+
             if (slot != EQUIPMENT_SLOT_TRINKET1 && slot != EQUIPMENT_SLOT_TRINKET2)
                 sLog.outDetail("Bot #%d %s:%d <%s>: no items for slot %d, quality >= %u", bot->GetGUIDLow(), bot->GetTeam() == ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName(), slot, quality);
             continue;

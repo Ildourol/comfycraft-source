@@ -19,9 +19,14 @@ public:
         creators["renew"] = &renew;
         creators["renew on party"] = &renew_on_party;
         creators["resurrection"] = &resurrection;
+        creators["shoot"] = &shoot;
     }
 
 private:
+    // No wand: melee rather than stand still at 0 mana. A caster has a wand
+    // from level 5 (PlayerbotFactory::InitEquipment), so this is levels 1-4.
+    ACTION_NODE_A(shoot, "shoot", "melee");
+
     ACTION_NODE_A(abolish_disease, "abolish disease", "cure disease");
 
     ACTION_NODE_A(abolish_disease_on_party, "abolish disease on party", "cure disease on party");

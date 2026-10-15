@@ -201,10 +201,10 @@ bool Playerbot_RecruitBotForPlayer(Player* player, uint32 role, uint32 classId)
 
     // Out of the starter kit before its first save, so it arrives in the gear
     // it rolls and never changes clothes in front of anyone
-    // (PlayerbotHolder::CreateBot). ONLY ABOVE LEVEL 1: the gear roll is
-    // queued only when level > 1, so a level 1 hire's starter kit IS its gear
-    // and taking it would send it into a fight with its fists.
-    if (player->GetLevel() > 1)
+    // (PlayerbotHolder::CreateBot). ONLY FROM LEVEL 5: InitEquipment does
+    // nothing below level 5, so below it the starter kit IS the gear. Passing
+    // this from level 2 sent every level 2 to 4 hire out naked (2026-10-15).
+    if (player->GetLevel() >= 5)
         param << " naked=1";
 
     // CreateBot on the PLAYER'S holder, never sRandomPlayerbotMgr: that is what

@@ -24,6 +24,13 @@ void AfflictionWarlockStrategy::InitCombatTriggers(std::list<TriggerNode*>& trig
     triggers.push_back(new TriggerNode(
         "siphon life",
         NextAction::array(0, new NextAction("siphon life", ACTION_NORMAL), NULL)));
+
+    // Immolate is a level 1 spell and affliction had no trigger for it, so a
+    // low warlock opened with Shadow Bolt alone. Below level 20 only; past
+    // that the curses and Corruption carry the damage.
+    triggers.push_back(new TriggerNode(
+        "low level immolate",
+        NextAction::array(0, new NextAction("immolate", ACTION_NORMAL + 1), NULL)));
 }
 
 void AfflictionWarlockStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
@@ -397,6 +404,13 @@ void AfflictionWarlockStrategy::InitCombatTriggers(std::list<TriggerNode*>& trig
     triggers.push_back(new TriggerNode(
         "siphon life",
         NextAction::array(0, new NextAction("siphon life", ACTION_NORMAL), NULL)));
+
+    // Immolate is a level 1 spell and affliction had no trigger for it, so a
+    // low warlock opened with Shadow Bolt alone. Below level 20 only; past
+    // that the curses and Corruption carry the damage.
+    triggers.push_back(new TriggerNode(
+        "low level immolate",
+        NextAction::array(0, new NextAction("immolate", ACTION_NORMAL + 1), NULL)));
 }
 
 void AfflictionWarlockStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
@@ -774,6 +788,13 @@ void AfflictionWarlockStrategy::InitCombatTriggers(std::list<TriggerNode*>& trig
     triggers.push_back(new TriggerNode(
         "siphon life",
         NextAction::array(0, new NextAction("siphon life", ACTION_NORMAL), NULL)));
+
+    // Immolate is a level 1 spell and affliction had no trigger for it, so a
+    // low warlock opened with Shadow Bolt alone. Below level 20 only; past
+    // that the curses and Corruption carry the damage.
+    triggers.push_back(new TriggerNode(
+        "low level immolate",
+        NextAction::array(0, new NextAction("immolate", ACTION_NORMAL + 1), NULL)));
 }
 
 void AfflictionWarlockStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)

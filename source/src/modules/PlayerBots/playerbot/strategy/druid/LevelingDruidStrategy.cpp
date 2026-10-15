@@ -27,9 +27,10 @@ void LevelingDruidStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers
         "leveling rejuvenation",
         NextAction::array(0, new NextAction("rejuvenation", ACTION_MEDIUM_HEAL), NULL)));
 
-    // Cast Wrath if initiating combat or the enemy is still at range
+    // Cast Wrath at any range while mana is at 30% or more. Only a range check here made
+    // the bot walk into melee and auto-attack for the rest of the fight.
     triggers.push_back(new TriggerNode(
-        "enemy out of melee range",
+        "leveling wrath",
         NextAction::array(0, new NextAction("wrath", ACTION_NORMAL), NULL)));
 
     // Cast Moonfire if not applied and mana is over 50%
@@ -37,7 +38,7 @@ void LevelingDruidStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers
         "leveling moonfire",
         NextAction::array(0, new NextAction("moonfire", ACTION_NORMAL + 1), NULL)));
 
-    // Melee attack is the fallback via GetDefaultCombatActions()
+    // Melee attack is the fallback via GetDefaultCombatActions(), used below 30% mana
 }
 
 void LevelingDruidStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)

@@ -911,6 +911,7 @@ ChatCommand * ChatHandler::getCommandTable()
         { "assign",        SEC_MODERATOR,  true,  &ChatHandler::HandleGMTicketAssignToCommand,         "", nullptr },
         { "unassign",      SEC_MODERATOR,  true,  &ChatHandler::HandleGMTicketUnAssignCommand,         "", nullptr },
         { "close",         SEC_MODERATOR,  true,  &ChatHandler::HandleGMTicketCloseByIdCommand,        "", nullptr },
+        { "respond",       SEC_MODERATOR,  true,  &ComfyCommands::HandleGMTicketRespondCommand,        "", nullptr },
         { "list",          SEC_MODERATOR,  true,  &ChatHandler::HandleGMTicketListCommand,             "", nullptr },
         { "onlinelist",    SEC_MODERATOR,  true,  &ChatHandler::HandleGMTicketsOnlineListCommand,      "", nullptr},
         { "",              SEC_MODERATOR,  true,  &ChatHandler::HandleGMTicketGetByIdOrNameCommand,    "", nullptr },

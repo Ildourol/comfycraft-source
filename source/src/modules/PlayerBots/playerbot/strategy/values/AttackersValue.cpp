@@ -329,6 +329,27 @@ void AttackersValue::AddTargetsOf(Player* player, std::set<Unit*>& targets, std:
             units.insert(attacker);
         }
 
+        // WHAT A REAL PLAYER HAS STARTED ON, BEFORE IT HITS BACK.
+        //
+        // Without this the group joined only once the mob was fighting someone:
+        // threat from a landed hit, or the mob swinging. A caster's opener is
+        // two or three seconds of cast and travel before that, and the
+        // companions stood watching. InCombat accepts these targets through
+        // IsRealPlayerAttacking. The pull hold above returns before this point,
+        // so a running pull still holds.
+        if (!playerBot)
+        {
+            if (Unit* victim = player->GetVictim())
+                units.insert(victim);
+
+            for (uint32 i = CURRENT_FIRST_NON_MELEE_SPELL; i < CURRENT_MAX_SPELL; ++i)
+            {
+                Spell* spell = player->GetCurrentSpell(CurrentSpellTypes(i));
+                if (spell && spell->m_targets.getUnitTarget())
+                    units.insert(spell->m_targets.getUnitTarget());
+            }
+        }
+
         // Add the duel opponent (Only consider the owner bot)
         if (bot == player && bot->m_duel && bot->m_duel->opponent)
         {
@@ -434,7 +455,39 @@ bool AttackersValue::InCombat(Unit* target, Player* player, bool checkPullTarget
                    (PAI_VALUE(Unit*, "pull target") == target);
     }
 
+    if (!inCombat)
+    {
+        inCombat = IsRealPlayerAttacking(target, player);
+    }
+
     return inCombat;
+}
+
+bool AttackersValue::IsRealPlayerAttacking(Unit* target, Player* player)
+{
+    if (!target || !player || GetBotAI(player))
+        return false;
+
+    if (player->GetVictim() == target)
+        return true;
+
+    for (uint32 i = CURRENT_FIRST_NON_MELEE_SPELL; i < CURRENT_MAX_SPELL; ++i)
+    {
+        Spell* spell = player->GetCurrentSpell(CurrentSpellTypes(i));
+        if (!spell || spell->m_targets.getUnitTarget() != target)
+            continue;
+
+        // A sheep or a sap is a decision NOT to fight that mob yet. IsCCSpell
+        // leaves sap out on purpose (its cast must not be delayed), so it is
+        // named here.
+        const SpellEntry* spellInfo = spell->m_spellInfo;
+        if (spellInfo && (spellInfo->IsCCSpell() || spellInfo->IsFitToFamily<SPELLFAMILY_ROGUE, CF_ROGUE_SAP>()))
+            continue;
+
+        return true;
+    }
+
+    return false;
 }
 
 bool AttackersValue::IsValid(Unit* target, Player* player, Player* owner, bool checkInCombat, bool validatePossibleTarget, bool ignoreLos)

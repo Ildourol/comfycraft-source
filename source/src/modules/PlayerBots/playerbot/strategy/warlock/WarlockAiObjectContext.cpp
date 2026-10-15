@@ -220,6 +220,7 @@ namespace ai
                 creators["fear"] = [](PlayerbotAI* ai) { return new FearTrigger(ai); };
                 creators["fear pvp"] = [](PlayerbotAI* ai) { return new FearPvpTrigger(ai); };
                 creators["immolate"] = [](PlayerbotAI* ai) { return new ImmolateTrigger(ai); };
+                creators["low level immolate"] = [](PlayerbotAI* ai) { return new LowLevelImmolateTrigger(ai); };
                 creators["amplify curse"] = [](PlayerbotAI* ai) { return new AmplifyCurseTrigger(ai); };
                 creators["siphon life"] = [](PlayerbotAI* ai) { return new SiphonLifeTrigger(ai); };
                 creators["siphon life on attacker"] = [](PlayerbotAI* ai) { return new SiphonLifeOnAttackerTrigger(ai); };

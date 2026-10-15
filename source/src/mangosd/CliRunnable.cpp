@@ -515,7 +515,9 @@ void CliRunnable::operator()()
     ///- Init new SQL thread for the world database (one connection call enough)
     WorldDatabase.ThreadStart();                                // let thread do safe mySQL requests
 
-    char commandbuf[256];
+    // 4096 bytes, one PIPE_BUF: a ticket answer sent from the website
+    // (.ticket respond) is one line of up to that, and 256 cut it short.
+    char commandbuf[4096];
 
 #ifndef WIN32
     /*

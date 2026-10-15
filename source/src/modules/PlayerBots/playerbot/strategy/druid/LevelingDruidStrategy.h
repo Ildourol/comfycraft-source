@@ -38,10 +38,22 @@ namespace ai
         }
     };
 
+    // A target exists AND mana is above the heal reserve. Wrath is the main damage at any
+    // range; below the reserve the bot melees and keeps its mana for a heal.
+    class LevelingWrathTrigger : public Trigger
+    {
+    public:
+        LevelingWrathTrigger(PlayerbotAI* ai) : Trigger(ai, "leveling wrath") {}
+        bool IsActive() override
+        {
+            return AI_VALUE(Unit*, "current target") && AI_VALUE2(uint8, "mana", "self target") >= 30;
+        }
+    };
+
     // Pre-level-10 Druid: no shapeshift forms exist yet (Bear at 10, Cat at 20), so this is
-    // not a Feral strategy - it's a dedicated leveling kit: burst Wrath/Moonfire at range,
-    // melee once the mob closes, self-heal (Healing Touch/Rejuvenation) as needed, with
-    // Moonfire mana-gated so a heal is always affordable when health gets low.
+    // not a Feral strategy. It casts Wrath at any range while mana is above the heal reserve,
+    // keeps Moonfire up above 50% mana, self-heals (Healing Touch/Rejuvenation) as needed,
+    // and melees only when mana is below the reserve.
     class LevelingDruidStrategy : public DruidStrategy
     {
     public:
