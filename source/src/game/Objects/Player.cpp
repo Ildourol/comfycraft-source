@@ -1656,6 +1656,10 @@ void Player::Update(uint32 update_diff, uint32 p_time)
 
     time_t now = time(nullptr);
 
+    // The jump board: written at most every 30 s while the player jumps.
+    if (m_jumpsUnsaved && now - m_jumpsSavedAt >= 30)
+        SaveJumps();
+
     UpdatePvPFlagTimer(update_diff);
 
     UpdatePvPContestedFlagTimer(update_diff);
@@ -5933,6 +5937,9 @@ void Player::DeleteFromDB(ObjectGuid playerguid, uint32 accountId, bool updateRe
             // sql/custom/109, the same reuse. Left behind, a new character
             // would start on the critter chart with somebody else's score.
             CharacterDatabase.PExecute("DELETE FROM character_critter_pet WHERE guid = '%u'", lowguid);
+            // sql/custom/138 and 140, the same reuse, on the fish and jump boards.
+            CharacterDatabase.PExecute("DELETE FROM character_fish_catch WHERE guid = '%u'", lowguid);
+            CharacterDatabase.PExecute("DELETE FROM character_jumps WHERE guid = '%u'", lowguid);
             // sql/custom/110. ZEROED, NOT DELETED: a match has two people in
             // it, and deleting the row would take a win away from the one who
             // is still here. One statement, so the three columns cannot land
@@ -19010,6 +19017,25 @@ void Player::PetCritter(Unit* target, uint32 textEmote)
     }
 }
 
+void Player::CountJump()
+{
+    ++m_jumpsUnsaved;
+}
+
+// One statement that adds, so two writes in flight cannot lose a jump between
+// them. PExecute is unordered, and an addition does not care.
+void Player::SaveJumps()
+{
+    m_jumpsSavedAt = time(nullptr);
+    if (!m_jumpsUnsaved)
+        return;
+
+    CharacterDatabase.PExecute("INSERT INTO character_jumps (guid, jumps) VALUES ('%u', '%u') "
+                               "ON DUPLICATE KEY UPDATE jumps = jumps + VALUES(jumps)",
+                               GetGUIDLow(), m_jumpsUnsaved);
+    m_jumpsUnsaved = 0;
+}
+
 void Player::_LoadSpells(QueryResult *result)
 {
     //QueryResult *result = CharacterDatabase.PQuery("SELECT spell,active,disabled FROM character_spell WHERE guid = '%u'",GetGUIDLow());
@@ -19431,6 +19457,8 @@ bool Player::SaveToDB(bool online, bool force, bool direct)
     // factory persists bot characters as normal Player rows; no save skip needed.
     if (m_DbSaveDisabled)
         return false;
+
+    SaveJumps();                                            // the jump board; a logout comes through here
 
     //lets allow only players in world to be saved
     if (!force && IsBeingTeleportedFar())

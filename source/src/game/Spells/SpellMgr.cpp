@@ -3464,6 +3464,22 @@ void ParseTooltip(SpellEntry* entry)
     entry->ParsedTooltip = parsedTooltip;
 }
 
+// ComfyCraft: spells that may be cast indoors. Spell.dbc marks them outdoors
+// only. patches/build-patch-v.js clears the same bit in the client's copy, or
+// the client refuses the cast before the server sees it. Keep the two lists
+// the same.
+static void ClearComfyOutdoorsOnly(SpellEntryMap& spells)
+{
+    static uint32 const ids[] =
+    {
+        339, 1062, 5195, 5196, 9852, 9853,              // Entangling Roots 1-6
+        16689, 16810, 16811, 16812, 16813, 17329,       // Nature's Grasp 1-6
+    };
+    for (uint32 id : ids)
+        if (id < spells.size() && spells[id])
+            spells[id]->Attributes &= ~SPELL_ATTR_OUTDOORS_ONLY;
+}
+
 void SpellMgr::LoadSpells()
 {
     mSpellEntryMap.clear();
@@ -3568,6 +3584,7 @@ void SpellMgr::LoadSpells()
         mSpellEntryMap[spellId] = std::move(spell);
     }
 
+    ClearComfyOutdoorsOnly(mSpellEntryMap);
     LoadSpellExtra();
 }
 
@@ -3882,4 +3899,6 @@ void SpellMgr::LoadSpellsFromSpellTemplate()
             } while (result->NextRow());
         }
     }
+
+    ClearComfyOutdoorsOnly(mSpellEntryMap);
 }

@@ -565,7 +565,14 @@ void PlayerbotHolder::LogoutPlayerBot(uint32 guid, bool allowInstant, bool forDe
             else if (bot)
             {
                 SC_LOG("LogoutPlayerBot bot=%s — queueing CMSG_LOGOUT_REQUEST", bot->GetName());
-                ai->TellPlayer(ai->GetMaster(), BOT_TEXT("logout_start"));
+                // A farewell needs somebody to hear it. Without a REAL master,
+                // RandomBotSayWithoutMaster makes TellPlayer a PUBLIC say in the
+                // bot's racial language. A bot NPC being unplaced hits this
+                // after its binding is gone, so MaySpeak() no longer stops it.
+                // Not GetMaster(): an alt bot's master is not null, and is not
+                // a real player either.
+                if (ai->HasRealPlayerMaster())
+                    ai->TellPlayer(ai->GetMaster(), BOT_TEXT("logout_start"));
 
                 WorldPacket p(CMSG_LOGOUT_REQUEST);
                 std::unique_ptr<WorldPacket> packet(new WorldPacket(p));
@@ -593,7 +600,9 @@ void PlayerbotHolder::LogoutPlayerBot(uint32 guid, bool allowInstant, bool forDe
         // if instant logout possible, do it
         else if (bot && (logout || !botWorldSessionPtr->isLogingOut()))
         {
-            ai->TellPlayer(ai->GetMaster(), BOT_TEXT("goodbye"));
+            // No real master, no goodbye: see the logout_start line above.
+            if (ai->HasRealPlayerMaster())
+                ai->TellPlayer(ai->GetMaster(), BOT_TEXT("goodbye"));
             playerBots[guid] = nullptr;    // deletes bot player ptr inside this WorldSession PlayerBotMap
             // LogoutPlayer(false) when we are about to delete the character.
             //
@@ -622,7 +631,9 @@ void PlayerbotHolder::DisablePlayerBot(uint32 guid, bool logOutPlayer)
     {
         if (logOutPlayer && GetBotAI(bot)->IsRealPlayer() && bot->GetGroup() && sPlayerbotAIConfig.IsFreeAltBot(guid))
             bot->GetSession()->SetOffline(); //Prevent groupkick
-        GetBotAI(bot)->TellPlayer(GetBotAI(bot)->GetMaster(), BOT_TEXT("goodbye"));
+        // No real master, no goodbye: see LogoutPlayerBot.
+        if (GetBotAI(bot)->HasRealPlayerMaster())
+            GetBotAI(bot)->TellPlayer(GetBotAI(bot)->GetMaster(), BOT_TEXT("goodbye"));
         GetBotAI(bot)->StopMoving();
         MotionMaster& mm = *bot->GetMotionMaster();
         mm.Clear();

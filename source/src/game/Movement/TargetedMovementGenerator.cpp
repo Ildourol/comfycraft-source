@@ -391,18 +391,11 @@ bool ChaseMovementGenerator<T>::Update(T &owner, const uint32 & time_diff)
                 }
             }
         }
-        // Mobs should chase you infinitely if you stop and wait every few seconds.
-        m_leashExtensionTimer.Update(time_diff);
-        if (m_leashExtensionTimer.Passed())
-        {
-            m_leashExtensionTimer.Reset(5000);
-            if (Creature* creature = owner.ToCreature())
-                creature->UpdateLeashExtensionTime();
-        }
+        // ComfyCraft: standing in melee range does not extend the leash. Only hits on the
+        // mob do, so a daze cannot keep a mob on a fleeing player.
     }
     else if (m_bRecalculateTravel)
     {
-        m_leashExtensionTimer.Reset(5000);
         owner.GetMotionMaster()->SetNeedAsyncUpdate();
     }
 

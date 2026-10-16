@@ -1561,6 +1561,10 @@ class Player final: public Unit
         std::set<uint32> m_critterSpawnsPetted;
         std::set<std::string> m_critterNamesPetted;
         time_t m_critterHeartsAt = 0;                       // wild critters only; see PetCritter
+        // sql/custom/140, the jump board. Jumps not yet written, and when the
+        // last write was. SaveJumps adds them to the row and zeroes the count.
+        uint32 m_jumpsUnsaved = 0;
+        time_t m_jumpsSavedAt = 0;
         void AdjustQuestReqItemCount(Quest const* pQuest, QuestStatusData& questStatusData);
         bool CanGiveQuestSourceItemIfNeed(Quest const* pQuest, ItemPosCountVec* dest = nullptr) const;
         void GiveQuestSourceItemIfNeed(Quest const* pQuest);
@@ -1683,6 +1687,15 @@ class Player final: public Unit
          * it decides for itself whether this one counts.
          */
         void PetCritter(Unit* target, uint32 textEmote);
+
+        /**
+         * THE JUMP BOARD. sql/custom/140. CountJump is called for every
+         * MSG_MOVE_JUMP a real client sends for itself. Player::Update writes
+         * the count every 30 s, and SaveToDB writes the rest, so a logout
+         * loses nothing.
+         */
+        void CountJump();
+        void SaveJumps();
 
         void SendQuestCompleteEvent(uint32 quest_id) const;
         void SendQuestReward(Quest const* pQuest, uint32 XP, Object* questGiver) const;

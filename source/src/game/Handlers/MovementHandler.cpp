@@ -414,7 +414,13 @@ void WorldSession::HandleMovementOpcodes(WorldPacket& recvData)
 
     // This is required for proper movement extrapolation
     if (opcode == MSG_MOVE_JUMP)
+    {
         pMover->SetJumpInitialSpeed(7.95797334f);
+        // The jump board. Only a real client jumping itself: a bot's session
+        // has no socket, and a mind-controlled mover is somebody else.
+        if (pPlayerMover == _player && GetSocket())
+            _player->CountJump();
+    }
     else if (opcode == MSG_MOVE_FALL_LAND)
         pMover->SetJumpInitialSpeed(-9.645f);
 

@@ -47,6 +47,7 @@ void WorldSession::HandleAutostoreLootItemOpcode(WorldPacket & recv_data)
     uint8    lootSlot;
     Item* pItem = nullptr;
     Creature* lootCreature = nullptr;
+    bool fished = false;                                    // from a bobber or a fishing school
 
     recv_data >> lootSlot;
 
@@ -64,6 +65,7 @@ void WorldSession::HandleAutostoreLootItemOpcode(WorldPacket & recv_data)
             }
 
             loot = &go->loot;
+            fished = go->GetGoType() == GAMEOBJECT_TYPE_FISHINGNODE || go->GetGoType() == GAMEOBJECT_TYPE_FISHINGHOLE;
             break;
         }
         case HIGHGUID_ITEM:
@@ -277,6 +279,12 @@ void WorldSession::HandleAutostoreLootItemOpcode(WorldPacket & recv_data)
                 lootType
             });
 
+        // sql/custom/138, the fish board. Every item counts here, junk too:
+        // the website decides at read time which items are fish.
+        if (fished)
+            CharacterDatabase.PExecute("INSERT INTO character_fish_catch (guid, item, caught) VALUES ('%u', '%u', '%u') "
+                                       "ON DUPLICATE KEY UPDATE caught = caught + VALUES(caught)",
+                                       player->GetGUIDLow(), item->itemid, uint32(item->count));
 
         player->SendNewItem(newitem, uint32(item->count), false, false, true);
         player->OnReceivedItem(newitem);
