@@ -38,6 +38,7 @@
 #include "LootMgr.h"
 #include "Chat.h"
 #include "ComfyCommands.h"
+#include "Config.hpp"           // Website.Url, for the link a filed report answers with
 #include "ScriptMgr.h"
 #include "ObjectAccessor.h"
 #include "Object.h"
@@ -977,7 +978,9 @@ static void FileBugReport(WorldSession* session, std::string body, bool suggesti
     LogsDatabase.escape_string(charName);
     LogsDatabase.escape_string(zoneName);
 
-    LogsDatabase.PExecute(
+    // DIRECT, not PExecute: the player is sent the report's link, so the row
+    // must exist before the id is read back below.
+    if (!LogsDatabase.DirectPExecute(
         "INSERT INTO `%s`.`web_bug` "
         "(title, body, tags, status, kind, source, account_id, author_name, "
         " char_name, map_id, zone_name, pos_x, pos_y, pos_z, created_at, updated_at) "
@@ -987,14 +990,45 @@ static void FileBugReport(WorldSession* session, std::string body, bool suggesti
         suggestion ? "suggestion" : "bug",
         session->GetAccountId(), author.c_str(), charName.c_str(),
         player->GetMapId(), zoneName.c_str(),
-        player->GetPositionX(), player->GetPositionY(), player->GetPositionZ());
+        player->GetPositionX(), player->GetPositionY(), player->GetPositionZ()))
+    {
+        chat.SendSysMessage("The report could not be saved. Try again later.");
+        return;
+    }
 
     // Only a report that actually went in starts the clock. A body somebody
     // typed too short should not cost them twenty seconds.
     StartBugReportCooldown(session->GetAccountId());
 
-    chat.SendSysMessage(suggestion ? "Suggestion filed. Thank you."
-                                   : "Bug report filed. Thank you.");
+    // LAST_INSERT_ID() belongs to whichever pooled connection ran the insert,
+    // so read the account's newest game row instead. The cooldown above means
+    // that is this one.
+    uint32 id = 0;
+    if (QueryResult* result = LogsDatabase.PQuery(
+            "SELECT MAX(id) FROM `%s`.`web_bug` WHERE account_id = %u AND source = 'game'",
+            BUG_REPORT_DB, session->GetAccountId()))
+    {
+        id = result->Fetch()[0].GetUInt32();
+        delete result;
+    }
+
+    char const* filed = suggestion ? "Suggestion" : "Bug report";
+    if (!id)
+    {
+        chat.PSendSysMessage("%s filed. Thank you.", filed);
+        return;
+    }
+
+    // The public site. server/mangosd.conf is copied to the VPS on deploy, so
+    // a local address set there would reach production too.
+    std::string url = sConfig.GetStringDefault("Website.Url", "https://comfycraft.dedyn.io");
+    while (!url.empty() && url.back() == '/')
+        url.erase(url.size() - 1);
+    url += "/bugs/" + std::to_string(id);
+
+    chat.PSendSysMessage("%s #%u filed: %s", filed, id, url.c_str());
+    // ComfyUI's Report.lua shows the link in a box, selected for Ctrl+C.
+    player->SendAddonMessage("CBUG", url);
 }
 
 void WorldSession::HandleBugOpcode(WorldPacket & recv_data)
@@ -1037,6 +1071,21 @@ bool ComfyCommands::HandleBugCommand(ChatHandler* handler, char* args)
     }
 
     FileBugReport(handler->m_session, args ? args : "", false);
+    return true;
+}
+
+// `.suggest <idea>` - the same filing path, with kind 'suggestion'. ComfyUI's
+// /suggest window sends it.
+bool ComfyCommands::HandleSuggestCommand(ChatHandler* handler, char* args)
+{
+    if (!handler->m_session)
+    {
+        handler->SendSysMessage("This one only works in game - the console has no character to attach.");
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+
+    FileBugReport(handler->m_session, args ? args : "", true);
     return true;
 }
 

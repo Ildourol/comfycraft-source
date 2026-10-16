@@ -1074,6 +1074,7 @@ ChatCommand * ChatHandler::getCommandTable()
         // SEC_PLAYER: reporting a bug is not a GM action, and the client's own
         // report window submits this as a chat command.
         { "bug",            SEC_PLAYER,          false, &ComfyCommands::HandleBugCommand,               "Syntax: .bug <what went wrong>\r\nFiles a bug report. It shows up on the website with your character and where you were standing.", nullptr },
+        { "suggest",        SEC_PLAYER,          false, &ComfyCommands::HandleSuggestCommand,           "Syntax: .suggest <your idea>\r\nFiles a suggestion. It shows up on the website with your character and where you were standing.", nullptr },
         { "wchange",        SEC_DEVELOPER,       false, &ChatHandler::HandleChangeWeatherCommand,       "", nullptr },
         { "ticket",         SEC_MODERATOR,       true,  nullptr,                                        "",ticketCommandTable },
         { "maxskill",       SEC_DEVELOPER,       false, &ChatHandler::HandleMaxSkillCommand,            "", nullptr },

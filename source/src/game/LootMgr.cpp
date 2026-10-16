@@ -29,6 +29,7 @@
 #include "Player.h"
 #include "SpellAuraDefines.h"
 #include "SpellAuras.h"
+#include "Config/Config.h" // Rate.Drop.Item.UncommonGear
 
 static eConfigFloatValues const qualityToRate[MAX_ITEM_QUALITY] =
 {
@@ -59,7 +60,7 @@ public:
     bool HasQuestDrop() const;                          // True if group includes at least 1 quest drop entry
     bool HasQuestDropForPlayer(Player const * player) const;
     // The same for active quests of the player
-    void Process(Loot& loot, Player const* lootOwner) const; // Rolls an item from the group (if any) and adds the item to the loot
+    void Process(Loot& loot, bool rate, Player const* lootOwner) const; // Rolls an item from the group (if any) and adds the item to the loot
     float RawTotalChance() const;                       // Overall chance for the group (without equal chanced items)
     float TotalChance() const;                          // Overall chance for the group
 
@@ -70,7 +71,7 @@ private:
     LootStoreItemList ExplicitlyChanced;                // Entries with chances defined in DB
     LootStoreItemList EqualChanced;                     // Zero chances - every entry takes the same chance
 
-    LootStoreItem const * Roll(Loot const& loot, Player const* lootOwner) const; // Rolls an item from the group, returns nullptr if all miss their chances
+    LootStoreItem const * Roll(Loot const& loot, bool rate, Player const* lootOwner) const; // Rolls an item from the group, returns nullptr if all miss their chances
     bool hasConditionalEqualChancedItem;
 };
 
@@ -283,6 +284,21 @@ static float GetGatheringItemChanceMod(Player const* lootOwner, uint32 itemId)
     return chanceMod;
 }
 
+// Green weapons and armour drop at Rate.Drop.Item.UncommonGear, in grouped
+// rows too, where the quality rates do not reach. Almost all green gear is in
+// groups. The key is read at the roll, so "reload config" changes it.
+static bool IsGreenGear(uint32 itemId)
+{
+    ItemPrototype const* pProto = sObjectMgr.GetItemPrototype(itemId);
+    return pProto && pProto->Quality == ITEM_QUALITY_UNCOMMON &&
+        (pProto->Class == ITEM_CLASS_WEAPON || pProto->Class == ITEM_CLASS_ARMOR);
+}
+
+static float GetGreenGearRate()
+{
+    return std::max(sConfig.GetFloatDefault("Rate.Drop.Item.UncommonGear", 1.0f), 0.0f);
+}
+
 //
 // --------- LootStoreItem ---------
 //
@@ -299,7 +315,9 @@ bool LootStoreItem::Roll(bool rate, Player const* lootOwner) const
 
     ItemPrototype const *pProto = sObjectMgr.GetItemPrototype(itemid);
 
-    float qualityModifier = pProto && rate ? sWorld.getConfig(qualityToRate[pProto->Quality]) : 1.0f;
+    float qualityModifier = 1.0f;
+    if (pProto && rate)
+        qualityModifier = IsGreenGear(itemid) ? GetGreenGearRate() : sWorld.getConfig(qualityToRate[pProto->Quality]);
 
     return roll_chance_f(chance * qualityModifier * (100.0f + GetGatheringItemChanceMod(lootOwner, itemid)) / 100.0f);
 }
@@ -1148,11 +1166,12 @@ void LootTemplate::LootGroup::AddEntry(LootStoreItem& item)
 }
 
 // Rolls an item from the group, returns nullptr if all miss their chances
-LootStoreItem const * LootTemplate::LootGroup::Roll(Loot const& loot, Player const* lootOwner) const
+LootStoreItem const * LootTemplate::LootGroup::Roll(Loot const& loot, bool rate, Player const* lootOwner) const
 {
     if (!ExplicitlyChanced.empty())                         // First explicitly chanced entries are checked
     {
         float Roll = rand_chance_f();
+        float gearRate = -1.0f;                             // read once, at the first green gear entry
 
         for (const auto& i : ExplicitlyChanced) //check each explicitly chanced entry in the template and modify its chance based on quality.
         {
@@ -1162,7 +1181,15 @@ LootStoreItem const * LootTemplate::LootGroup::Roll(Loot const& loot, Player con
             if (i.chance >= 100.0f)
                 return &i;
 
-            Roll -= i.chance * (100.0f + GetGatheringItemChanceMod(lootOwner, i.itemid)) / 100.0f;
+            float chance = i.chance;
+            if (rate && IsGreenGear(i.itemid))
+            {
+                if (gearRate < 0.0f)
+                    gearRate = GetGreenGearRate();
+                chance *= gearRate;
+            }
+
+            Roll -= chance * (100.0f + GetGatheringItemChanceMod(lootOwner, i.itemid)) / 100.0f;
             if (Roll < 0)
                 return &i;
         }
@@ -1235,9 +1262,9 @@ bool LootTemplate::LootGroup::HasQuestDropForPlayer(Player const* player) const
 }
 
 // Rolls an item from the group (if any takes its chance) and adds the item to the loot
-void LootTemplate::LootGroup::Process(Loot& loot, Player const* lootOwner) const
+void LootTemplate::LootGroup::Process(Loot& loot, bool rate, Player const* lootOwner) const
 {
-    LootStoreItem const * item = Roll(loot, lootOwner);
+    LootStoreItem const * item = Roll(loot, rate, lootOwner);
     if (item != nullptr)
         loot.AddItem(*item);
 }
@@ -1328,7 +1355,7 @@ void LootTemplate::Process(Loot& loot, LootStore const& store, bool rate, Player
         if (groupId > Groups.size())
             return;                                         // Error message already printed at loading stage
 
-        Groups[groupId - 1].Process(loot, lootOwner);
+        Groups[groupId - 1].Process(loot, rate, lootOwner);
         return;
     }
 
@@ -1354,7 +1381,7 @@ void LootTemplate::Process(Loot& loot, LootStore const& store, bool rate, Player
 
     // Now processing groups
     for (const auto& group : Groups)
-        group.Process(loot, lootOwner);
+        group.Process(loot, rate, lootOwner);
 }
 
 // True if template includes at least 1 quest drop entry

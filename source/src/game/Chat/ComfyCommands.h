@@ -47,6 +47,7 @@ struct ComfyCommands
     // Handlers/MiscHandler.cpp, beside the bug-report code it shares with
     // CMSG_BUG rather than beside the other chat commands.
     static bool HandleBugCommand(ChatHandler* handler, char* args);
+    static bool HandleSuggestCommand(ChatHandler* handler, char* args);
 
     // Housing/HouseCommands.cpp
     static bool HandleHouseGoCommand(ChatHandler* handler, char* args);

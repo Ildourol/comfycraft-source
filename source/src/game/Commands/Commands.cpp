@@ -14934,6 +14934,7 @@ namespace
         { "comfyhelp",         ".comfyhelp   this list" },
         { "comfynpcs",         ".comfynpcs   send ComfyUI the bot NPC names (the addon sends this)" },
         { "bug",               ".bug <text>   file a bug report to the website" },
+        { "suggest",           ".suggest <text>   file a suggestion to the website" },
         { "house go",          ".house go | visit <name> | reset   your house, or somebody else's" },
         { "house edit",        ".house edit | storage | settings   decorating, the shelf, your options" },
         { "house admit",       ".house admit | refuse <name>   answer a knock on your locked door" },
