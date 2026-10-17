@@ -26,6 +26,21 @@
  * on the nearest of ours within 20 yards, and otherwise refuse. The 1.12 client
  * cannot target a gameobject, so the selection is the server's.
  *
+ * ANY WORLD SPAWN, FOR THE /house PANEL'S WORLD MODE. A typed id names one of
+ * ours; the selection can be any spawn in `gameobject`, reached by its guid:
+ *
+ *   .obj near all [yards] [addon]   every spawn around you, nearest first, 30 yd
+ *   .obj select g<guid>             a spawn by its guid; unselect lets go
+ *   .obj place e<entry>             any gameobject entry here, not only ours
+ *   .obj nudge <away|towards|left|right|up|down> [yards]   or <x> <y> <z>
+ *   .obj rotate [degrees|away]      bare faces your way, a number turns by it
+ *   .obj scale <factor> | = <size> | reset
+ *   .obj drag                       the same as move
+ *
+ * The words are `.house object`'s, so the panel swaps only the prefix. House
+ * furniture is not a world spawn here: tw_char.house_object owns it.
+ * The selected object carries housing's glow (HOUSE_SELECT_MARK_ENTRY).
+ *
  * THE RESPAWN TIME IS PER COPY in this core (`gameobject.spawntimesecsmin`) and
  * only matters when the object disappears when used. `place` therefore takes no
  * number: a copy that stays is placed with 0 (GameObject::Update returns early
@@ -48,6 +63,8 @@
 #include "GameObject.h"
 #include "GridNotifiers.h"
 #include "GridNotifiersImpl.h"
+#include "GuidObjectScaling.h"
+#include "Housing/HouseMgr.h"
 #include "Language.h"
 #include "MapManager.h"
 #include "ObjectMgr.h"
@@ -60,6 +77,8 @@
 #include <cstdlib>
 #include <list>
 #include <map>
+#include <mutex>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -70,9 +89,21 @@ namespace
     float const OBJ_REACH = 20.0f;      // "nearest" for select, move, turn, remove
     int32 const OBJ_DEFAULT_BACK = 300; // the first copy of an object that disappears
     uint32 const OBJ_NEAR_LINES = 15;
+    float const OBJ_WORLD_REACH = 30.0f; // `near all`, the panel's world list
+    uint32 const OBJ_SYNC_CHUNK = 180;   // as HOUSE_SYNC_CHUNK
 
     bool IsOurs(uint32 entry) { return entry >= OBJ_FIRST && entry <= OBJ_LAST; }
     uint32 ShortId(uint32 entry) { return entry - OBJ_FIRST + 1; }
+
+    // A spawn from `gameobject`. Summons have no spawn row, and house furniture
+    // has one but belongs to tw_char.house_object and the .house commands.
+    bool IsWorldSpawn(GameObject* go)
+    {
+        uint32 const guid = go->GetDBTableGUIDLow();
+        if (!guid || (guid >= HOUSE_GO_GUID_MIN && guid < HOUSE_GO_GUID_MAX))
+            return false;
+        return go->GetGoType() != GAMEOBJECT_TYPE_MO_TRANSPORT;
+    }
 
     std::string Lower(std::string s)
     {
@@ -88,6 +119,19 @@ namespace
             return "";
         size_t b = s.find_last_not_of(" \t");
         return s.substr(a, b - a + 1);
+    }
+
+    // `g12345` is a spawn guid, `e2413` a template entry. The letter keeps both
+    // apart from the short ids, which take every number from 1 to 500.
+    bool ParsePrefixed(std::string const& text, char letter, uint32& out)
+    {
+        std::string t = Trim(text);
+        if (t.size() < 2 || std::tolower((unsigned char)t[0]) != letter)
+            return false;
+        if (!std::all_of(t.begin() + 1, t.end(), [](char c) { return std::isdigit((unsigned char)c); }))
+            return false;
+        out = uint32(std::strtoul(t.c_str() + 1, nullptr, 10));
+        return out != 0;
     }
 
     bool Consumable(GameObjectInfo const* info)
@@ -141,6 +185,10 @@ namespace
 
     std::string Label(uint32 entry, uint32 copy = 0)
     {
+        // Not ours: no short id to give, so the name the catalogue card uses.
+        if (!IsOurs(entry))
+            return HouseMgr::ObjectDisplayName(entry) + " (entry " + std::to_string(entry) + ")";
+
         GameObjectInfo const* info = sObjectMgr.GetGameObjectInfo(entry);
         char buf[48];
         if (copy)
@@ -152,6 +200,9 @@ namespace
 
     std::string Label(GameObject* go)
     {
+        // CopyNumber walks every spawn in the world, and only ours have copy numbers.
+        if (!IsOurs(go->GetEntry()))
+            return Label(go->GetEntry());
         return Label(go->GetEntry(), CopyNumber(go->GetEntry(), go->GetDBTableGUIDLow()));
     }
 
@@ -233,7 +284,8 @@ namespace
     }
 
     // Ours within `range` of the player, nearest first. `entry` 0 is any of ours.
-    std::vector<GameObject*> OursNear(Player* me, float range, uint32 entry)
+    // With `anySpawn`, every world spawn instead of ours.
+    std::vector<GameObject*> OursNear(Player* me, float range, uint32 entry, bool anySpawn = false)
     {
         std::list<GameObject*> all;
         MaNGOS::AllGameObjectsInRange check(me, range);
@@ -243,7 +295,7 @@ namespace
         std::vector<GameObject*> out;
         for (GameObject* go : all)
         {
-            if (!IsOurs(go->GetEntry()) || !go->GetDBTableGUIDLow())
+            if (!IsWorldSpawn(go) || (!anySpawn && !IsOurs(go->GetEntry())))
                 continue;
             if (entry && go->GetEntry() != entry)
                 continue;
@@ -258,13 +310,68 @@ namespace
         return me->GetMap()->GetGameObject(ObjectGuid(HIGHGUID_GAMEOBJECT, entry, guid));
     }
 
+    // The glow on each player's selection, housing's marker on the world.
+    // Commands run on map threads, so the map of glows has a lock.
+    std::mutex s_marksLock;
+    std::map<uint32, ObjectGuid> s_marks;    // player guid -> the glow
+
+    void Unmark(Player* me)
+    {
+        ObjectGuid glow;
+        {
+            std::lock_guard<std::mutex> lock(s_marksLock);
+            auto itr = s_marks.find(me->GetGUIDLow());
+            if (itr == s_marks.end())
+                return;
+            glow = itr->second;
+            s_marks.erase(itr);
+        }
+        if (GameObject* go = me->GetMap()->GetGameObject(glow))
+            go->Delete();
+    }
+
+    // Unmark, then a new glow where the object is now. A summon cannot be moved
+    // without the client keeping the old place, so every change re-makes it.
+    void Select(Player* me, GameObject* go)
+    {
+        me->SetSelectedGobj(go->GetObjectGuid());
+        Unmark(me);
+
+        GameObject* glow = me->GetMap()->SummonGameObject(HOUSE_SELECT_MARK_ENTRY,
+            go->GetPositionX(), go->GetPositionY(), go->GetPositionZ() + HOUSE_SELECT_MARK_LIFT, go->GetOrientation(),
+            0.0f, 0.0f, 0.0f, 0.0f, HOUSE_SELECT_MARK_LIFETIME_SEC, 0);
+        if (!glow)
+            return;
+        // Collision off: the glow stands inside the object.
+        glow->SetGoState(GO_STATE_ACTIVE);
+
+        std::lock_guard<std::mutex> lock(s_marksLock);
+        s_marks[me->GetGUIDLow()] = glow->GetObjectGuid();
+    }
+
+    void Unselect(Player* me)
+    {
+        me->SetSelectedGobj(ObjectGuid());
+        Unmark(me);
+    }
+
+    // A spawn by its guid, on the player's map and loaded.
+    GameObject* SpawnByGuid(Player* me, uint32 guid)
+    {
+        GameObjectData const* data = sObjectMgr.GetGOData(guid);
+        if (!data || data->position.mapId != me->GetMapId())
+            return nullptr;
+        GameObject* go = LoadedCopy(me, data->id, guid);
+        return go && IsWorldSpawn(go) ? go : nullptr;
+    }
+
     // The copy move, turn, remove and select act on. See the file comment.
     GameObject* PickCopy(ChatHandler* handler, Player* me, std::string const& arg)
     {
         if (Trim(arg).empty())
         {
             GameObject* sel = me->GetMap()->GetGameObject(me->GetSelectedGobj());
-            if (sel && IsOurs(sel->GetEntry()) && sel->GetDBTableGUIDLow())
+            if (sel && IsWorldSpawn(sel))
                 return sel;
 
             std::vector<GameObject*> around = OursNear(me, OBJ_REACH, 0);
@@ -273,6 +380,15 @@ namespace
 
             handler->PSendSysMessage("No object of ours within %.0f yd. Name one, or .obj near 100.", OBJ_REACH);
             return nullptr;
+        }
+
+        uint32 guid = 0;
+        if (ParsePrefixed(arg, 'g', guid))
+        {
+            GameObject* go = SpawnByGuid(me, guid);
+            if (!go)
+                handler->PSendSysMessage("No spawn g%u near you.", guid);
+            return go;
         }
 
         Ref ref;
@@ -332,6 +448,98 @@ namespace
         }
     }
 
+    // Out of the map and back in, then saved: the client only redraws a
+    // gameobject's place, facing or size on a fresh create (see .gobject nudge).
+    // `scale` 0 leaves the size alone. The rotation quaternion is rebuilt only
+    // on a turn, because the rebuild flattens a tilted spawn.
+    // `author` is the session's account name, for the world migration log.
+    void Replace(std::string const& author, GameObject* go, float x, float y, float z, float o, float scale)
+    {
+        uint32 const guid = go->GetDBTableGUIDLow();
+        bool const turned = o != go->GetOrientation();
+        Map* map = go->GetMap();
+
+        // The grid lists say which cell loads the spawn. Out of the old cell
+        // now, while the spawn data still holds the old place; into the new
+        // one after SaveToDB has written it.
+        GameObjectData const* data = sObjectMgr.GetGOData(guid);
+        if (data)
+        {
+            sObjectMgr.RemoveGameobjectFromGrid(guid, data);
+            map->GetPersistentState()->RemoveGameobjectFromGrid(guid, data);
+        }
+
+        map->Remove(go, false);
+        go->Relocate(x, y, z, o);
+        go->SetFloatValue(GAMEOBJECT_POS_X, x);
+        go->SetFloatValue(GAMEOBJECT_POS_Y, y);
+        go->SetFloatValue(GAMEOBJECT_POS_Z, z);
+        go->SetFloatValue(GAMEOBJECT_FACING, o);
+        if (turned)
+            go->UpdateRotationFields();
+        if (scale > 0.0f)
+        {
+            // The registry GameObject::Create reads, so the size survives a
+            // grid reload and a restart (tw_world.object_scaling).
+            go->SetObjectScale(scale);
+            sGuidObjectScaling.AddOrEdit(go->GetObjectGuid().GetRawValue(), scale);
+        }
+        map->Add(go);
+
+        sWorld.GetMigration().SetAuthor(author);
+        go->SaveToDB();
+        go->Refresh();
+
+        if (data)
+        {
+            sObjectMgr.AddGameobjectToGrid(guid, data);
+            map->GetPersistentState()->AddGameobjectToGrid(guid, data);
+        }
+    }
+
+    // The panel's world list, over the addon channel in housing's shape:
+    // H <selected guid>, O rows of guid:yards:flags:entry:name, E <count>.
+    // flags: 1 one of ours, 2 a building (MAP_OBJECT), which cannot resize.
+    void SendWorldSync(Player* me, float range)
+    {
+        uint32 selected = 0;
+        if (GameObject* sel = me->GetMap()->GetGameObject(me->GetSelectedGobj()))
+            if (IsWorldSpawn(sel))
+                selected = sel->GetDBTableGUIDLow();
+        me->SendAddonMessage("COBJ", "H " + std::to_string(selected));
+
+        uint32 sent = 0;
+        std::string chunk;
+        for (GameObject* go : OursNear(me, range, 0, true))
+        {
+            // The separators cannot appear inside a field.
+            std::string name = HouseMgr::ObjectDisplayName(go->GetEntry());
+            for (char& c : name)
+                if (c == ';' || c == ':' || c == '\t' || c == '\n' || c == '\r')
+                    c = ' ';
+
+            std::ostringstream rec;
+            rec << go->GetDBTableGUIDLow() << ':'
+                << uint32(me->GetDistance(go) + 0.5f) << ':'
+                << ((IsOurs(go->GetEntry()) ? 1 : 0) | (go->GetGoType() == GAMEOBJECT_TYPE_MAP_OBJECT ? 2 : 0)) << ':'
+                << go->GetEntry() << ':'
+                << name;
+
+            if (!chunk.empty() && chunk.size() + rec.str().size() > OBJ_SYNC_CHUNK)
+            {
+                me->SendAddonMessage("COBJ", "O " + chunk);
+                chunk.clear();
+            }
+            if (!chunk.empty())
+                chunk += ';';
+            chunk += rec.str();
+            ++sent;
+        }
+        if (!chunk.empty())
+            me->SendAddonMessage("COBJ", "O " + chunk);
+        me->SendAddonMessage("COBJ", "E " + std::to_string(sent));
+    }
+
     void Usage(ChatHandler* handler)
     {
         handler->SendSysMessage("Usage: .obj list | info | near | where | go | place | select | move | turn | remove");
@@ -345,7 +553,11 @@ namespace
         handler->SendSysMessage("  .obj move [object or copy]    the copy to where you stand");
         handler->SendSysMessage("  .obj turn [object or copy]    the copy to face your way");
         handler->SendSysMessage("  .obj remove [object or copy]  the copy, for good; also .obj del, .obj unplace");
-        handler->SendSysMessage("An object is 7, #7 or a name. A copy is 7.2. With no copy given, the selected one, then the nearest within 20 yd.");
+        handler->SendSysMessage("  .obj near all [yards]         every spawn around you, not only ours");
+        handler->SendSysMessage("  .obj nudge <away|towards|left|right|up|down> [yards]");
+        handler->SendSysMessage("  .obj rotate [degrees|away]    .obj scale <factor> | = <size> | reset");
+        handler->SendSysMessage("An object is 7, #7 or a name. A copy is 7.2. Any spawn is g<guid>, any entry e<entry>.");
+        handler->SendSysMessage("With no copy given, the selected one, then the nearest of ours within 20 yd.");
     }
 }
 
@@ -360,6 +572,9 @@ bool ComfyCommands::HandleObjCommand(ChatHandler* handler, char* args)
         action = "place";
     if (action == "del" || action == "delete" || action == "unplace")
         action = "remove";
+    // `.house object drag`'s word, so the panel swaps only the prefix.
+    if (action == "drag")
+        action = "move";
 
     // ------------------------------------------------------------- back
     // First, because it is the one the console sends: the website's "Comes back
@@ -517,6 +732,43 @@ bool ComfyCommands::HandleObjCommand(ChatHandler* handler, char* args)
     }
 
     // ------------------------------------------------------------- near
+    if (action == "near" && Lower(rest.substr(0, 3)) == "all")
+    {
+        // `near all [yards] [addon]`: every spawn, not only ours. With addon it
+        // prints nothing and answers the panel instead.
+        std::istringstream words(rest.substr(3));
+        float range = OBJ_WORLD_REACH;
+        bool forAddon = false;
+        std::string w;
+        while (words >> w)
+        {
+            if (Lower(w) == "addon")
+                forAddon = true;
+            else if (std::atof(w.c_str()) > 0.0f)
+                range = std::min(float(std::atof(w.c_str())), 200.0f);
+        }
+
+        if (forAddon)
+        {
+            SendWorldSync(me, range);
+            return true;
+        }
+
+        std::vector<GameObject*> around = OursNear(me, range, 0, true);
+        if (around.empty())
+        {
+            handler->PSendSysMessage("No spawn within %.0f yd.", range);
+            return true;
+        }
+        for (size_t i = 0; i < around.size() && i < OBJ_NEAR_LINES; ++i)
+            handler->PSendSysMessage("g%u %s, %.0f yd", around[i]->GetDBTableGUIDLow(), Label(around[i]).c_str(),
+                me->GetDistance(around[i]));
+        if (around.size() > OBJ_NEAR_LINES)
+            handler->PSendSysMessage("and %u more", uint32(around.size() - OBJ_NEAR_LINES));
+        Select(me, around.front());
+        return true;
+    }
+
     if (action == "near")
     {
         float range = rest.empty() ? OBJ_REACH : float(std::atof(rest.c_str()));
@@ -535,7 +787,7 @@ bool ComfyCommands::HandleObjCommand(ChatHandler* handler, char* args)
             handler->PSendSysMessage("%s, %.0f yd", Label(around[i]).c_str(), me->GetDistance(around[i]));
         if (around.size() > OBJ_NEAR_LINES)
             handler->PSendSysMessage("and %u more", uint32(around.size() - OBJ_NEAR_LINES));
-        me->SetSelectedGobj(around.front()->GetObjectGuid());
+        Select(me, around.front());
         return true;
     }
 
@@ -589,8 +841,20 @@ bool ComfyCommands::HandleObjCommand(ChatHandler* handler, char* args)
     // ------------------------------------------------------------- place
     if (action == "place")
     {
+        // `e<entry>` places any gameobject: the panel's catalogue in world mode.
         Ref ref;
-        if (!ParseRef(handler, rest, ref))
+        uint32 anyEntry = 0;
+        if (ParsePrefixed(rest, 'e', anyEntry))
+        {
+            if (!sObjectMgr.GetGameObjectInfo(anyEntry))
+            {
+                handler->PSendSysMessage("There is no gameobject entry %u.", anyEntry);
+                handler->SetSentErrorMessage(true);
+                return false;
+            }
+            ref.entry = anyEntry;
+        }
+        else if (!ParseRef(handler, rest, ref))
         {
             if (rest.empty())
                 handler->SendSysMessage("Usage: .obj place <object>");
@@ -633,18 +897,145 @@ bool ComfyCommands::HandleObjCommand(ChatHandler* handler, char* args)
         }
         map->Add(go);
         sObjectMgr.AddGameobjectToGrid(guid, sObjectMgr.GetGOData(guid));
-        me->SetSelectedGobj(go->GetObjectGuid());
+        Select(me, go);
 
         handler->PSendSysMessage("Placed %s.", Label(ref.entry, CopyNumber(ref.entry, guid)).c_str());
         return true;
     }
 
+    // ------------------------------------------------------------- unselect
+    if (action == "unselect")
+    {
+        Unselect(me);
+        handler->SendSysMessage("Nothing selected.");
+        return true;
+    }
+
     // ------------------------------------------------------------- the copy verbs
-    if (action != "select" && action != "move" && action != "turn" && action != "remove")
+    if (action != "select" && action != "move" && action != "turn" && action != "remove"
+        && action != "nudge" && action != "rotate" && action != "scale")
     {
         Usage(handler);
         handler->SetSentErrorMessage(true);
         return false;
+    }
+
+    // Nudge, rotate and scale take their amount first and the copy after it, as
+    // `.house object` does. The words go into these, and what is left is the copy.
+    std::vector<std::string> words;
+    {
+        std::istringstream in(rest);
+        std::string w;
+        while (in >> w)
+            words.push_back(w);
+    }
+    size_t used = 0;
+    auto isNumber = [](std::string const& w)
+    {
+        char* end = nullptr;
+        std::strtod(w.c_str(), &end);
+        return !w.empty() && end && *end == '\0';
+    };
+
+    float dx = 0.0f, dy = 0.0f, dz = 0.0f;   // nudge
+    float degrees = 0.0f;                    // rotate
+    bool faceMe = true;
+    float factor = 0.0f;                     // scale
+    bool relative = true;
+
+    if (action == "nudge")
+    {
+        if (words.size() >= 3 && isNumber(words[0]) && isNumber(words[1]) && isNumber(words[2]))
+        {
+            dx = float(std::atof(words[0].c_str()));
+            dy = float(std::atof(words[1].c_str()));
+            dz = float(std::atof(words[2].c_str()));
+            used = 3;
+        }
+        else
+        {
+            std::string dir = words.empty() ? "" : Lower(words[0]);
+            if (dir != "away" && dir != "forward" && dir != "towards" && dir != "toward" && dir != "back"
+                && dir != "left" && dir != "right" && dir != "up" && dir != "down")
+            {
+                handler->SendSysMessage("Usage: .obj nudge <away|towards|left|right|up|down> [yards] [object or copy]");
+                handler->SendSysMessage("  or:  .obj nudge <x> <y> <z>   yards along the world axes, Z is up");
+                handler->SetSentErrorMessage(true);
+                return false;
+            }
+            used = 1;
+            float dist = 1.0f;
+            if (words.size() > 1 && isNumber(words[1]))
+            {
+                dist = float(std::atof(words[1].c_str()));
+                used = 2;
+            }
+
+            // Against the player's facing, which an addon cannot read in 1.12.
+            float const face = me->GetOrientation();
+            if      (dir == "away" || dir == "forward")                    { dx =  cos(face) * dist;              dy =  sin(face) * dist; }
+            else if (dir == "towards" || dir == "toward" || dir == "back") { dx = -cos(face) * dist;              dy = -sin(face) * dist; }
+            else if (dir == "left")  { dx = cos(face + M_PI_F / 2) * dist; dy = sin(face + M_PI_F / 2) * dist; }
+            else if (dir == "right") { dx = cos(face - M_PI_F / 2) * dist; dy = sin(face - M_PI_F / 2) * dist; }
+            else if (dir == "up")    { dz =  dist; }
+            else                     { dz = -dist; }
+        }
+
+        if (std::fabs(dx) > HOUSE_MAX_NUDGE || std::fabs(dy) > HOUSE_MAX_NUDGE || std::fabs(dz) > HOUSE_MAX_NUDGE)
+        {
+            handler->PSendSysMessage("Too far. A nudge is at most %.0f yd.", HOUSE_MAX_NUDGE);
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+    }
+    else if (action == "rotate")
+    {
+        // Bare faces your way, `away` the other way, a number turns by that much.
+        if (!words.empty() && Lower(words[0]) == "away")
+        {
+            degrees = 180.0f;
+            used = 1;
+        }
+        else if (!words.empty() && isNumber(words[0]))
+        {
+            degrees = float(std::atof(words[0].c_str()));
+            faceMe = false;
+            used = 1;
+        }
+    }
+    else if (action == "scale")
+    {
+        if (!words.empty() && Lower(words[0]) == "reset")
+        {
+            relative = false;
+            factor = 1.0f;
+            used = 1;
+        }
+        else
+        {
+            if (!words.empty() && words[0] == "=")
+            {
+                relative = false;
+                used = 1;
+            }
+            if (words.size() > used && isNumber(words[used]))
+                factor = float(std::atof(words[used++].c_str()));
+            if (factor <= 0.0f)
+            {
+                handler->SendSysMessage("Usage: .obj scale <factor>   multiplies the size it has now");
+                handler->SendSysMessage("   or: .obj scale = <size>   against its normal size; .obj scale reset");
+                handler->SetSentErrorMessage(true);
+                return false;
+            }
+        }
+    }
+
+    if (used)
+    {
+        std::string left;
+        for (size_t i = used; i < words.size(); ++i)
+            left += (left.empty() ? "" : " ") + words[i];
+        rest = left;
     }
 
     GameObject* go = PickCopy(handler, me, rest);
@@ -655,38 +1046,79 @@ bool ComfyCommands::HandleObjCommand(ChatHandler* handler, char* args)
     }
     std::string label = Label(go);
 
+    // A building is a WMO, and the client draws a WMO at its own size whatever
+    // the scale field says. The size would be saved and never seen.
+    if (action == "scale" && go->GetGoType() == GAMEOBJECT_TYPE_MAP_OBJECT)
+    {
+        handler->PSendSysMessage("%s is a building. Buildings cannot change size.", label.c_str());
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+
     if (action == "select")
     {
-        me->SetSelectedGobj(go->GetObjectGuid());
+        Select(me, go);
         handler->PSendSysMessage("Selected %s, %.0f yd.", label.c_str(), me->GetDistance(go));
         return true;
     }
 
-    if (action == "move" || action == "turn")
+    if (action == "move" || action == "turn" || action == "nudge" || action == "rotate" || action == "scale")
     {
-        bool move = action == "move";
-        float x = move ? me->GetPositionX() : go->GetPositionX();
-        float y = move ? me->GetPositionY() : go->GetPositionY();
-        float z = move ? me->GetPositionZ() : go->GetPositionZ();
-        float o = move ? go->GetOrientation() : me->GetOrientation();
+        float x = go->GetPositionX();
+        float y = go->GetPositionY();
+        float z = go->GetPositionZ();
+        float o = go->GetOrientation();
+        float scale = 0.0f;
 
-        // Out of the map and back in: the client only redraws a gameobject's
-        // place or facing on a fresh create (see .gobject nudge).
-        Map* map = go->GetMap();
-        map->Remove(go, false);
-        go->Relocate(x, y, z, o);
-        go->SetFloatValue(GAMEOBJECT_POS_X, x);
-        go->SetFloatValue(GAMEOBJECT_POS_Y, y);
-        go->SetFloatValue(GAMEOBJECT_POS_Z, z);
-        go->SetFloatValue(GAMEOBJECT_FACING, o);
-        go->UpdateRotationFields();
-        map->Add(go);
+        if (action == "move")
+        {
+            x = me->GetPositionX();
+            y = me->GetPositionY();
+            z = me->GetPositionZ();
+        }
+        else if (action == "turn")
+            o = me->GetOrientation();
+        else if (action == "nudge")
+        {
+            x += dx;
+            y += dy;
+            z += dz;
+        }
+        else if (action == "rotate")
+            o = MapManager::NormalizeOrientation((faceMe ? me->GetOrientation() : o) + degrees * (M_PI_F / 180.0f));
+        else
+        {
+            // Clamped to .gobject scale's range, and floored rather than refused:
+            // a slip on a x0.5 button should not shrink something to nothing.
+            GameObjectInfo const* info = go->GetGOInfo();
+            float const base = info && info->size > 0.0f ? info->size : 1.0f;
+            scale = relative ? go->GetObjectScale() * factor : base * factor;
+            scale = std::max(0.1f, std::min(scale, 50.0f));
+        }
 
-        sWorld.GetMigration().SetAuthor(handler->m_session->GetUsername());
-        go->SaveToDB();
-        go->Refresh();
+        // An off-map coordinate is a crash at the next grid load, not a typo.
+        if (!MapManager::IsValidMapCoord(go->GetMapId(), x, y, z, o))
+        {
+            handler->SendSysMessage("Too far. That is off the map.");
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
 
-        handler->PSendSysMessage(move ? "Moved %s here." : "Turned %s to face your way.", label.c_str());
+        Replace(handler->m_session->GetUsername(), go, x, y, z, o, scale);
+        Select(me, go);
+
+        if (action == "move")
+            handler->PSendSysMessage("Moved %s here.", label.c_str());
+        else if (action == "turn" || (action == "rotate" && faceMe && degrees == 0.0f))
+            handler->PSendSysMessage("Turned %s to face your way.", label.c_str());
+        else if (action == "rotate" && faceMe)
+            handler->PSendSysMessage("Turned %s to face away from you.", label.c_str());
+        else if (action == "rotate")
+            handler->PSendSysMessage("Spun %s by %.0f degrees.", label.c_str(), degrees);
+        else if (action == "nudge")
+            handler->PSendSysMessage("Moved %s by (%.2f, %.2f, %.2f).", label.c_str(), dx, dy, dz);
+        else
+            handler->PSendSysMessage("%s is now size %g.", label.c_str(), scale);
         return true;
     }
 
@@ -698,7 +1130,7 @@ bool ComfyCommands::HandleObjCommand(ChatHandler* handler, char* args)
         return false;
     }
     if (me->GetSelectedGobj() == go->GetObjectGuid())
-        me->SetSelectedGobj(ObjectGuid());
+        Unselect(me);
     go->SetRespawnTime(0);
     go->Delete();
     sWorld.GetMigration().SetAuthor(handler->m_session->GetUsername());

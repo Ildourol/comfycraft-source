@@ -1815,6 +1815,12 @@ namespace
     }
 }
 
+static bool IsBuilding(uint32 goEntry)
+{
+    GameObjectInfo const* info = sObjectMgr.GetGameObjectInfo(goEntry);
+    return info && info->type == GAMEOBJECT_TYPE_MAP_OBJECT;
+}
+
 static void SendHouseObjectSync(Player* player, House* house)
 {
     // THE SLOT, NOT THE GUID. GetSelectedObject answers in guids, because that
@@ -1834,7 +1840,10 @@ static void SendHouseObjectSync(Player* player, House* house)
     head << "H " << selectedSlot
          << " " << (sHouseMgr.IsEditingAll(player) ? 1 : 0)
          << " " << (house ? sHouseMgr.CountPlayerObjects(*house) : 0)
-         << " " << uint32(HOUSE_MAX_OBJECTS);
+         << " " << uint32(HOUSE_MAX_OBJECTS)
+         // Whether .obj answers this player, so the panel offers its world mode
+         // only to a GM rather than printing "no such command" to everybody.
+         << " " << (player->GetSession()->GetSecurity() >= SEC_DEVELOPER ? 1 : 0);
     player->SendAddonMessage("CHOUSE", head.str());
 
     uint32 sent = 0;
@@ -1848,7 +1857,9 @@ static void SendHouseObjectSync(Player* player, House* house)
             std::ostringstream rec;
             rec << o->slot << ':'
                 << uint32(player->GetDistance(o->x, o->y, o->z) + 0.5f) << ':'
-                << uint32(IsHouseFabric(*o) ? 1 : 0) << ':'
+                // 1 came with the house, 2 a building, which the client will
+                // not draw at another size; the panel greys its size buttons.
+                << ((IsHouseFabric(*o) ? 1u : 0u) | (IsBuilding(o->goEntry) ? 2u : 0u)) << ':'
                 << o->goEntry << ':'
                 << SyncSafe(HouseMgr::PieceName(*o));
 

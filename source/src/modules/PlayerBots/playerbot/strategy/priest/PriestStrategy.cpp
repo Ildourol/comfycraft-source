@@ -592,35 +592,13 @@ void PriestOffdpsStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
 {
     OffdpsStrategy::InitCombatTriggers(triggers);
 
-    if (ai->HasStrategy("aoe", BotState::BOT_STATE_COMBAT))
-    {
-        triggers.push_back(new TriggerNode(
-            "shadow word: pain on attacker",
-            NextAction::array(0, new NextAction("shadow word: pain on attacker", ACTION_HIGH + 1), NULL)));
-
-        triggers.push_back(new TriggerNode(
-            "melee medium aoe",
-            NextAction::array(0, new NextAction("holy nova", ACTION_HIGH), NULL)));
-    }
-
+    // Wand only. Only a healing priest has offdps, and with Smite, Holy Fire,
+    // Shadow Word: Pain and Starshards here it cast them between heals until
+    // it had no mana left for the heals (bug report, 2026-10-17). The wand
+    // costs nothing. "timer" fires once a second, which starts the wand again
+    // after a heal; CastShootAction does not restart a wand that fires.
     triggers.push_back(new TriggerNode(
-        "shadow word: pain",
-        NextAction::array(0, new NextAction("shadow word: pain", ACTION_NORMAL + 3), NULL)));
-
-    triggers.push_back(new TriggerNode(
-        "holy fire",
-        NextAction::array(0, new NextAction("holy fire", ACTION_NORMAL + 2), NULL)));
-
-    triggers.push_back(new TriggerNode(
-        "very often",
-        NextAction::array(0, new NextAction("starshards", ACTION_NORMAL + 1), NULL)));
-
-    triggers.push_back(new TriggerNode(
-        "smite",
-        NextAction::array(0, new NextAction("smite", ACTION_NORMAL + 1), NULL)));
-
-    triggers.push_back(new TriggerNode(
-        "no mana",
+        "timer",
         NextAction::array(0, new NextAction("shoot", ACTION_NORMAL), NULL)));
 }
 

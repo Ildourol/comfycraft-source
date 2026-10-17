@@ -794,7 +794,8 @@ ChatCommand * ChatHandler::getCommandTable()
     static ChatCommand sendCommandTable[] =
     {
         { "items",          SEC_DEVELOPER,  true,  &ChatHandler::HandleSendItemsCommand,           "", nullptr },
-        { "mail",           SEC_MODERATOR,      true,  &ChatHandler::HandleSendMailCommand,            "", nullptr },
+        { "letter",         SEC_CONSOLE,    true,  &ComfyCommands::HandleSendLetterCommand,        "", nullptr },
+        { "mail",          SEC_MODERATOR,      true,  &ChatHandler::HandleSendMailCommand,            "", nullptr },
         { "message",        SEC_DEVELOPER,  true,  &ChatHandler::HandleSendMessageCommand,         "", nullptr },
         { "money",          SEC_DEVELOPER,  true,  &ChatHandler::HandleSendMoneyCommand,           "", nullptr },
         { nullptr,          0,                  false, nullptr,                                        "", nullptr }

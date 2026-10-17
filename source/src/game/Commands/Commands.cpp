@@ -6375,34 +6375,12 @@ bool ChatHandler::HandleGMTicketCloseByIdCommand(char* args)
 // it as the OEM code page, so the website (routes/tickets.js) sends a reply
 // as ASCII: \n is a new line, \\ a backslash, \uXXXX any other character.
 // Typed in game, the text is UTF-8 already and needs none of it.
-bool ComfyCommands::HandleGMTicketRespondCommand(ChatHandler* handler, char* args)
+// .send letter decodes its subject and text the same way.
+static bool DecodeConsoleText(char const* in, std::string& out)
 {
-    uint32 ticketId;
-    if (!handler->ExtractUInt32(&args, ticketId) || !args || !*args)
-    {
-        handler->SendSysMessage("Usage: .ticket respond <id> <text>");
-        handler->SetSentErrorMessage(true);
-        return false;
-    }
-
-    GmTicket* ticket = sTicketMgr.GetTicket(ticketId);
-    if (!ticket)
-    {
-        handler->SendSysMessage(LANG_COMMAND_TICKETNOTEXIST);
-        return true;
-    }
-    if (ticket->IsClosed())
-    {
-        handler->SendSysMessage(LANG_COMMAND_TICKETARCHIVED);
-        return true;
-    }
-
     std::wstring wtext;
-    if (!Utf8toWStr(args, wtext))
-    {
-        handler->SendSysMessage("The text is not valid UTF-8.");
-        return true;
-    }
+    if (!Utf8toWStr(in, wtext))
+        return false;
     std::wstring decoded;
     for (size_t i = 0; i < wtext.size(); ++i)
     {
@@ -6432,8 +6410,33 @@ bool ComfyCommands::HandleGMTicketRespondCommand(ChatHandler* handler, char* arg
         else
             decoded += wtext[i];
     }
+    return WStrToUtf8(decoded, out);
+}
+
+bool ComfyCommands::HandleGMTicketRespondCommand(ChatHandler* handler, char* args)
+{
+    uint32 ticketId;
+    if (!handler->ExtractUInt32(&args, ticketId) || !args || !*args)
+    {
+        handler->SendSysMessage("Usage: .ticket respond <id> <text>");
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+
+    GmTicket* ticket = sTicketMgr.GetTicket(ticketId);
+    if (!ticket)
+    {
+        handler->SendSysMessage(LANG_COMMAND_TICKETNOTEXIST);
+        return true;
+    }
+    if (ticket->IsClosed())
+    {
+        handler->SendSysMessage(LANG_COMMAND_TICKETARCHIVED);
+        return true;
+    }
+
     std::string response;
-    if (!WStrToUtf8(decoded, response))
+    if (!DecodeConsoleText(args, response))
     {
         handler->SendSysMessage("The text is not valid UTF-8.");
         return true;
@@ -6455,6 +6458,102 @@ bool ComfyCommands::HandleGMTicketRespondCommand(ChatHandler* handler, char* arg
     std::string msg = std::string("|cff00ff00Ticket ") + std::to_string(ticket->GetId()) + " answered by "
                       + (player ? player->GetName() : "Console") + ".|r";
     sWorld.SendGMTicketText(msg.c_str());
+    return true;
+}
+
+// .send letter <name> <copper> <item[:count]|-> <subject>|<text>: one GM
+// letter with money and an item together, which the stock send commands
+// cannot do. 1.12 mail carries one item stack (MAX_MAIL_ITEMS), so the count
+// is at most a stack. The subject and text take the escapes above, so they
+// can hold quotes and new lines; the website (lib/gamecommand.js) writes a |
+// in either as |. Console only: the Workshop's Mail page and the bug
+// report reward send it.
+//
+// The sender is a creature that is never spawned (sql/custom/153), so the
+// mailbox says "ComfyCraft Staff". The stationery is the GM one, which
+// patch-V redraws as the ComfyCraft staff letter with the mascot as its
+// inbox icon (patches/mail-art); without patch-V it is Turtle's, with the
+// Blizzard icon.
+static uint32 const MAIL_SENDER_ENTRY = 100041;
+
+bool ComfyCommands::HandleSendLetterCommand(ChatHandler* handler, char* args)
+{
+    char const* usage = "Usage: .send letter <name> <copper> <item[:count]|-> <subject>|<text>";
+
+    Player* receiver;
+    ObjectGuid receiverGuid;
+    std::string receiverName;
+    if (!handler->ExtractPlayerTarget(&args, &receiver, &receiverGuid, &receiverName))
+        return false;
+
+    uint32 money = 0;
+    char* itemArg = nullptr;
+    char* bar = nullptr;
+    if (!handler->ExtractUInt32(&args, money) || !(itemArg = handler->ExtractArg(&args)) ||
+        !args || !(bar = strchr(args, '|')))
+    {
+        handler->SendSysMessage(usage);
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+    *bar = '\0';
+
+    std::string subject;
+    std::string text;
+    if (!DecodeConsoleText(args, subject) || !DecodeConsoleText(bar + 1, text))
+    {
+        handler->SendSysMessage("The subject or the text is not valid UTF-8.");
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+    if (subject.empty())
+    {
+        handler->SendSysMessage(usage);
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+
+    uint32 itemId = 0;
+    uint32 itemCount = 1;
+    ItemPrototype const* proto = nullptr;
+    if (strcmp(itemArg, "-") != 0)
+    {
+        if (sscanf(itemArg, "%u:%u", &itemId, &itemCount) < 1 || !itemId ||
+            !(proto = sObjectMgr.GetItemPrototype(itemId)))
+        {
+            handler->PSendSysMessage(LANG_COMMAND_ITEMIDINVALID, itemId);
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+        if (itemCount < 1 || itemCount > proto->GetMaxStackSize())
+        {
+            handler->PSendSysMessage(LANG_COMMAND_INVALID_ITEM_COUNT, itemCount, itemId);
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+    }
+    if (!money && !proto && text.empty())
+    {
+        handler->SendSysMessage("The letter is empty.");
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+
+    MailDraft draft;
+    draft.SetSubjectAndBody(subject, text).SetMoney(money);
+    if (proto)
+    {
+        if (Item* item = Item::CreateItem(itemId, itemCount, nullptr))
+        {
+            item->SaveToDB();                               // as .send items: a failed send deletes it
+            draft.AddItem(item);
+        }
+    }
+
+    draft.SendMailTo(MailReceiver(receiver, receiverGuid), MailSender(MAIL_CREATURE, MAIL_SENDER_ENTRY, MAIL_STATIONERY_GM));
+
+    std::string nameLink = handler->playerLink(receiverName);
+    handler->PSendSysMessage(LANG_MAIL_SENT, nameLink.c_str());
     return true;
 }
 
@@ -14947,7 +15046,7 @@ namespace
         { "flightmode",        ".flightmode [on | off]   whether GM flight is on, or set it" },
         { "companions",        ".companions   name your companions" },
         { "npcbot",            ".npcbot place | move | dress | menu | idle | emote | unplace | info <name>, .npcbot list" },
-        { "obj",               ".obj list | info | near | where | go | place (add) | select | move | turn | remove (del)   Workshop objects by #id" },
+        { "obj",               ".obj list | info | near [all] | where | go | place (add) | select | unselect | move (drag) | turn | nudge | rotate | scale | remove (del)   Workshop objects by #id, any spawn by g<guid>" },
         { "scene",             ".scene <id>   run a scene, your target as the NPC" },
         { "spot",              ".spot <name>   save where the selected NPC walks to" },
         { "spotfrom",          ".spotfrom   how far you stand from the selected NPC's post" },
@@ -14956,6 +15055,7 @@ namespace
         { "emote",             ".emote <id> [name]   play an emote" },
         { "modify npcflag",    ".modify npcflag [value]   read or set a unit's NPC flags" },
         { "ticket respond",    ".ticket respond <id> <text>   answer a GM ticket (\\n is a new line)" },
+        { "send letter",       ".send letter <name> <copper> <item[:count]|-> <subject>|<text>   a GM letter (console)" },
         { "reload bot_npc",    "reload bot_npc | broadcast_text | custom_merchant | dialog_scenes | "
                                "gameobject_template | rented_mount | start_zones   (console)" },
     };

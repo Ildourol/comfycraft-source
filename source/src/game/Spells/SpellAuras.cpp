@@ -2191,9 +2191,9 @@ static RaceFormDisplay const RACE_FORM_DISPLAYS[] =
     { RACE_HUMAN,    FORM_CAT,      380, 0.90f }, // Gray Forest Wolf, Elwynn
     { RACE_HUMAN,    FORM_BEAR,    1006, 0.90f }, // Young Forest Bear, Elwynn
     { RACE_DWARF,    FORM_CAT,      954, 0.75f }, // Snow Leopard, Dun Morogh
-    { RACE_DWARF,    FORM_BEAR,    8840, 0.90f }, // Ice Claw Bear, Dun Morogh
-    { RACE_GNOME,    FORM_CAT,      954, 0.75f },
-    { RACE_GNOME,    FORM_BEAR,    8840, 0.90f },
+    { RACE_DWARF,    FORM_BEAR,    8840, 0.80f }, // Ice Claw Bear, Dun Morogh
+    { RACE_GNOME,    FORM_CAT,      954, 0.65f },
+    { RACE_GNOME,    FORM_BEAR,    8840, 0.65f },
     { RACE_UNDEAD,   FORM_CAT,     4124, 0.90f }, // Diseased Wolf, Western Plaguelands
     { RACE_UNDEAD,   FORM_BEAR,    1082, 0.95f }, // Tirisfal Plagued Bear
     { RACE_HIGH_ELF, FORM_CAT,    18027, 0.85f }, // Crimson Lynx, Quel'Thalas

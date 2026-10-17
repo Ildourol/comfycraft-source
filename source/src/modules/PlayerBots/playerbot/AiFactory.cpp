@@ -674,7 +674,7 @@ void AiFactory::AddDefaultCombatStrategies(Player* player, PlayerbotAI* const fa
     // A priest hired as a healer then nuked in combat and did not heal the
     // party (bug report, 2026-10-15). A solo priest keeps the swap: shadow is
     // the better way to fight alone. Below level 10 a priest is holy whatever
-    // it was hired as, and `offdps` gives it Smite between heals.
+    // it was hired as, and `offdps` gives it the wand between heals.
     if (player->getClass() == CLASS_PRIEST && tab != 2 && !player->InBattleGround() &&
         (player->GetGroup() || CompanionOwnership::IsCompanion(player->GetGUIDLow())))
     {

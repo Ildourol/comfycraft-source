@@ -1,6 +1,7 @@
 
 #include "playerbot/playerbot.h"
 #include "DruidStrategy.h"
+#include "DruidMultipliers.h"
 
 using namespace ai;
 
@@ -94,6 +95,11 @@ private:
 DruidStrategy::DruidStrategy(PlayerbotAI* ai) : ClassStrategy(ai)
 {
     actionNodeFactories.Add(std::make_unique<DruidStrategyActionNodeFactory>());
+}
+
+void DruidOffdpsStrategy::InitCombatMultipliers(std::list<Multiplier*>& multipliers)
+{
+    multipliers.push_back(new OffdpsManaFloorMultiplier(ai));
 }
 
 #ifdef MANGOSBOT_ZERO // Vanilla
