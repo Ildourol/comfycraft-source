@@ -2,6 +2,7 @@
 #include "playerbot/playerbot.h"
 #include "GenericActions.h"
 #include "UseItemAction.h"
+#include "playerbot/strategy/values/CcTargetValue.h"
 
 using namespace ai;
 
@@ -400,6 +401,11 @@ bool CastCrowdControlSpellAction::Execute(Event& event)
     }
 
     Unit* target = GetTarget();
+
+    // Another group member's cc holds the mark or is being cast at it. The
+    // target came from a value cached for up to a second, so ask again here.
+    if (target && CcMarkIsTaken(ai, target))
+        return false;
 
     // A new target starts the count again - the attempts that matter are the
     // ones spent on THIS mob.

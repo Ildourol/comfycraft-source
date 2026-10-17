@@ -24,6 +24,7 @@
 
 #include "World.h"
 #include "ObjectMgr.h"
+#include "Config/Config.h" // XP.KillActivitySeconds
 
 namespace MaNGOS
 {
@@ -225,6 +226,34 @@ namespace MaNGOS
                 return 1.0f;
 
             return std::max(0.0f, 1.0f - float(gap - 5) * 0.10f);
+        }
+
+        // ------------------------------------------------------------------
+        //  No kill XP for a player who is not playing.
+        //
+        //  A companion, a party or a pet can kill for a player who does nothing.
+        //  A real player is paid for a kill only if they cast or attacked in the
+        //  last XP.KillActivitySeconds (mangosd.conf, 120, 0 is off). It is read
+        //  at each kill, so `reload config` applies a change. The window is a
+        //  time and not "this fight", so that a healer who had nothing to heal
+        //  on an easy pull is still paid.
+        //
+        //  Movement does not count: a player who runs about while companions
+        //  kill was still paid when it did.
+        //
+        //  The spell timer also takes a melee swing, an item use and a pet
+        //  command (CombatHandler, SpellHandler, PetHandler). Bots are exempt
+        //  at the call site with Script_IsAIControlled(): their actions do not
+        //  pass through the session handlers, so their timers never move.
+        // ------------------------------------------------------------------
+        inline bool active_for_kill_xp(Player const* player)
+        {
+            const int32 seconds = sConfig.GetIntDefault("XP.KillActivitySeconds", 120);
+            if (seconds <= 0)
+                return true;
+
+            return WorldTimer::getMSTimeDiff(player->GetLastSpellCastedTime(), WorldTimer::getMSTime())
+                 < uint32(seconds) * IN_MILLISECONDS;
         }
 
     }

@@ -145,6 +145,7 @@ bool SelectNewTargetAction::Execute(Event& event)
     // Save the old target and clear the current target
     if(target)
     {
+        LogTargetSwitch(ai, target, nullptr, getName());
         SET_AI_VALUE(Unit*, "old target", target);
         SET_AI_VALUE(Unit*, "current target", nullptr);
     }

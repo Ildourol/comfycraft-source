@@ -41,6 +41,14 @@ namespace ai
         // crowd control. Counts before the first hit lands, so the group joins on the swing.
         static bool IsRealPlayerAttacking(Unit* target, Player* player);
 
+        // On the list only because a real player has started on it: nothing has hit it yet.
+        // A reason for a bot with no fight to join, not for a bot in a fight to switch.
+        static bool IsOnlyStartedOn(Unit* target, Player* player);
+
+        // The bot's current target while it is still a fight: alive, in combat and on the
+        // possible attack targets list. Null between fights.
+        static Unit* HeldTarget(PlayerbotAI* ai);
+
         static bool IsPossibleTarget(Unit* target, Player* player, float /*range*/ = 0.0f, bool checkInCombat = true)
         { return IsValid(target, player, nullptr, checkInCombat); }
         static bool IgnoreTarget(Unit* target, Player* playerToCheckAgainst);

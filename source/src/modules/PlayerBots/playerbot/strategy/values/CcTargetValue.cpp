@@ -110,6 +110,11 @@ void ai::ReportCcIntent(PlayerbotAI* ai, Player* requester)
     AiObjectContext* context = ai->GetAiObjectContext();
 
     Unit* marked = AI_VALUE(Unit*, "rti cc target");
+
+    // A druid leaving the mark to a mage is not part of this conversation either.
+    if (CcDefersToMage(ai, spell, marked))
+        return;
+
     if (!marked)
     {
         ai->TellPlayerNoFacing(requester, "Nothing marked to " + spell);
@@ -156,6 +161,123 @@ void ai::ReportCcIntent(PlayerbotAI* ai, Player* requester)
         out << " (" << (uint32)reason << ")";
 
     ai->TellPlayerNoFacing(requester, out.str());
+}
+
+// THE FIRST CC TO LAND OWNS THE MARK.
+//
+// Every bot defaults to the same cc icon, so a mage and a balance druid both
+// took the moon as their own. CcTargetValue only asked about THIS bot's aura,
+// so the druid saw a sheep with no roots on it and rooted it - and roots deal
+// nature damage in 1.12, so the first tick broke the sheep.
+//
+// So a mark that already carries somebody else's holding cc is taken. Root is
+// left out on purpose: a frost nova does no damage, so a sheep cast over it
+// holds, and roots that do damage are already refused by the dot check in
+// CcTargetValue. Stun is left out too, being short: sheep after a kidney shot
+// is the chain, not a clash. Knockout is IN, because our Spell.dbc gives sap
+// MECHANIC_KNOCKOUT and not MECHANIC_SAPPED.
+//
+// ...AND SO DOES THE FIRST ONE STARTED.
+//
+// The aura check alone loses the opening race: when the fight starts nothing
+// has landed yet, so the mage and the druid both see a clean mob and both start
+// casting. Group members update one after another, so the second bot to tick
+// can see the first one's cast in flight and hold off. Root counts here
+// although it does not count for auras: roots still being cast will land on
+// the sheep and break it.
+//
+// NOT CACHED, and that is the point of it being a function. CcTargetValue is
+// recomputed at most once per wall-clock second (CalculatedValue compares
+// time(0)), so two bots can both read "free" from that second and both cast.
+// The trigger and the action ask this again at the moment of the cast.
+bool ai::CcMarkIsTaken(PlayerbotAI* ai, Unit* marked)
+{
+    Player* bot = ai ? ai->GetBot() : nullptr;
+    if (!bot || !marked)
+        return false;
+
+    static const uint32 heldMask =
+        (1 << (MECHANIC_POLYMORPH - 1)) | (1 << (MECHANIC_SAPPED - 1)) |
+        (1 << (MECHANIC_KNOCKOUT - 1))  | (1 << (MECHANIC_SHACKLE - 1)) |
+        (1 << (MECHANIC_BANISH - 1))    | (1 << (MECHANIC_SLEEP - 1)) |
+        (1 << (MECHANIC_FREEZE - 1))    | (1 << (MECHANIC_FEAR - 1)) |
+        (1 << (MECHANIC_TURN - 1));
+
+    for (auto const& entry : marked->GetSpellAuraHolderMap())
+    {
+        SpellAuraHolder const* holder = entry.second;
+        if (holder && holder->GetCasterGuid() != bot->GetObjectGuid() && holder->HasMechanicMask(heldMask))
+            return true;
+    }
+
+    Group* group = bot->GetGroup();
+    if (!group)
+        return false;
+
+    static const uint32 castMask = heldMask | (1 << (MECHANIC_ROOT - 1));
+
+    for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+    {
+        Player* member = ref->getSource();
+        if (!member || member == bot || !member->IsInWorld() || member->GetMapId() != bot->GetMapId())
+            continue;
+
+        Spell* casting = member->GetCurrentSpell(CURRENT_GENERIC_SPELL);
+        if (casting && casting->m_targets.getUnitTargetGuid() == marked->GetObjectGuid() &&
+            (casting->m_spellInfo->GetAllSpellMechanicMask() & castMask))
+            return true;
+    }
+
+    return false;
+}
+
+// A DRUID LEAVES CC TO A MAGE.
+//
+// Roots deal damage, and the damage can break the roots themselves, so they
+// are the worst hold in the list. Hibernate goes with them so the druid has
+// one rule, not two. Any living mage in the group who knows polymorph counts,
+// bot or player: a player mage sheeps by hand. A dead mage hands cc back to
+// the druid.
+//
+// Only for a mob the sheep can hold. Polymorph's TargetCreatureType is beast,
+// humanoid and critter, so the druid still takes a dragonkin (hibernate) and
+// everything else (roots). The mask is read from the spell, not written here.
+bool ai::CcDefersToMage(PlayerbotAI* ai, std::string const& spell, Unit* marked)
+{
+    if (spell != "entangling roots" && spell != "hibernate")
+        return false;
+
+    Player* bot = ai ? ai->GetBot() : nullptr;
+    Group* group = bot ? bot->GetGroup() : nullptr;
+    if (!group)
+        return false;
+
+    if (marked)
+    {
+        SpellEntry const* sheep = sSpellMgr.GetSpellEntry(118);
+        if (sheep && sheep->TargetCreatureType && !(marked->GetCreatureTypeMask() & sheep->TargetCreatureType))
+            return false;
+    }
+
+    static const uint32 polymorphs[] = { 118, 12824, 12825, 12826, 28271, 28272 };
+
+    for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+    {
+        Player* member = ref->getSource();
+        if (!member || member == bot || !member->IsInWorld() || member->GetMapId() != bot->GetMapId())
+            continue;
+
+        if (member->getClass() != CLASS_MAGE || !member->IsAlive())
+            continue;
+
+        for (uint32 id : polymorphs)
+        {
+            if (member->HasSpell(id))
+                return true;
+        }
+    }
+
+    return false;
 }
 
 // Crowd control is opt-in: the only valid target is the one the group has put
@@ -216,6 +338,9 @@ Unit* CcTargetValue::Calculate()
     if (!marked)
         return NULL;
 
+    if (CcDefersToMage(ai, qualifier, marked))
+        return NULL;
+
     if (!marked->IsInWorld() || marked->GetMapId() != bot->GetMapId())
         return NULL;
 
@@ -235,6 +360,9 @@ Unit* CcTargetValue::Calculate()
     // value is asked for, so the target becomes eligible again by itself the
     // moment the dot expires.
     if (!marked->GetAurasByType(SPELL_AURA_PERIODIC_DAMAGE).empty())
+        return NULL;
+
+    if (CcMarkIsTaken(ai, marked))
         return NULL;
 
     // Castability, but IGNORING RANGE - which also forgives line of sight.

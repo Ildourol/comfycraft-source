@@ -746,7 +746,8 @@ bool HasCcTargetTrigger::IsActive()
     uint32 spellid = AI_VALUE2(uint32, "spell id", getName());
     if (spellid && sServerFacade.IsSpellReady(bot, spellid))
     {
-        return AI_VALUE2(Unit*, "cc target", getName()) && !AI_VALUE2(Unit*, "current cc target", getName());
+        Unit* ccTarget = AI_VALUE2(Unit*, "cc target", getName());
+        return ccTarget && !CcMarkIsTaken(ai, ccTarget) && !AI_VALUE2(Unit*, "current cc target", getName());
     }
 
     return false;

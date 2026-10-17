@@ -172,6 +172,9 @@ void WorldSession::HandleUseItemOpcode(WorldPacket& recvPacket)
         return;
     }
 
+    // An item use is activity for kill XP (MaNGOS::XP::active_for_kill_xp).
+    _player->UpdateSpellActivityTimer();
+
     if (!sScriptMgr.OnItemUse(pUser, pItem, targets))
         pUser->CastItemUseSpell(pItem, targets);
 }

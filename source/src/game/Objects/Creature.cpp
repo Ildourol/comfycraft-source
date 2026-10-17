@@ -2052,6 +2052,11 @@ void Creature::SetDeathState(DeathState s)
         SetTargetGuid(ObjectGuid());                        // remove target selection in any cases (can be set at aura remove in Unit::SetDeathState)
         SetUInt32Value(UNIT_NPC_FLAGS, UNIT_NPC_FLAG_NONE);
 
+        // Comfy: a respawn keeps the guid, so a mark left on the corpse comes back
+        // on the new mob and companions attack it again.
+        if (IsInWorld() && AI())
+            AI()->ClearTargetIcon();
+
         if (!IsPet() && GetCreatureInfo()->skinning_loot_id)
             if (LootTemplates_Skinning.HaveLootFor(GetCreatureInfo()->skinning_loot_id))
                 if (HasLootRecipient())

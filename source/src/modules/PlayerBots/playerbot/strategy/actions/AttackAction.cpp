@@ -9,8 +9,36 @@
 #include "playerbot/strategy/generic/CombatStrategy.h"
 #include "playerbot/strategy/values/CcTargetValue.h"
 #include "playerbot/strategy/generic/PullStrategy.h"
+#include "playerbot/strategy/values/AttackersValue.h"
 
 using namespace ai;
+
+void ai::LogTargetSwitch(PlayerbotAI* botAi, Unit* oldTarget, Unit* newTarget, const std::string& by)
+{
+    if (!botAi || oldTarget == newTarget || !botAi->HasRealPlayerMaster() || !sPlayerbotAIConfig.hasLog("target_switch.csv"))
+        return;
+
+    Player* master = botAi->GetMaster();
+    auto describe = [&](std::ostringstream& out, Unit* u)
+    {
+        if (!u)
+        {
+            out << ",,,,";
+            return;
+        }
+
+        out << ",\"" << u->GetName() << "\"," << u->GetGUIDLow() << "," << u->GetHealth() << ",";
+        out << (!u->IsAlive() ? "dead" : AttackersValue::IsOnlyStartedOn(u, master) ? "started" : u->IsInCombat() ? "combat" : "idle");
+    };
+
+    // time,ms,bot,by,old name,old guid,old hp,old state,new name,new guid,new hp,new state
+    std::ostringstream out;
+    out << sPlayerbotAIConfig.GetTimestampStr() << "," << WorldTimer::getMSTime() << ",";
+    out << botAi->GetBot()->GetName() << "," << by;
+    describe(out, oldTarget);
+    describe(out, newTarget);
+    sPlayerbotAIConfig.log("target_switch.csv", out.str().c_str());
+}
 
 void ai::EngageOnOrder(PlayerbotAI* botAi)
 {
@@ -216,6 +244,8 @@ bool AttackAction::Attack(Player* requester, Unit* target)
         {
             SET_AI_VALUE(Unit*, "old target", oldTarget);
         }
+
+        LogTargetSwitch(ai, oldTarget, target, getName());
 
         SET_AI_VALUE(Unit*, "current target", target);
         AI_VALUE(LootObjectStack*, "available loot")->Add(guid);

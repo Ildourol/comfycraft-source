@@ -23513,6 +23513,11 @@ void Player::RewardSinglePlayerAtKill(Unit* pVictim)
     if (IsHardcore() && InBattleGround())
         xp = 0;
 
+    // A pet that kills for an owner who stands still earns neither of them XP
+    // (MaNGOS::XP::active_for_kill_xp). Reputation and quest credit are paid.
+    if (xp && !Script_IsAIControlled(this) && !MaNGOS::XP::active_for_kill_xp(this))
+        xp = 0;
+
     // honor can be in PvP and !PvP (racial leader) cases
     RewardHonor(pVictim, 1);
 

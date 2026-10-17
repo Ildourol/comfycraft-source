@@ -28,6 +28,11 @@ namespace ai
     // and pull.
     void EngageOnOrder(PlayerbotAI* botAi);
 
+    // One line in target_switch.csv each time a bot with a real player master
+    // changes or drops its target. `by` is the action that did it. Off unless
+    // the file is in AiPlayerbot.AllowedLogFiles.
+    void LogTargetSwitch(PlayerbotAI* botAi, Unit* oldTarget, Unit* newTarget, const std::string& by);
+
 	class AttackAction : public MovementAction
 	{
 	public:

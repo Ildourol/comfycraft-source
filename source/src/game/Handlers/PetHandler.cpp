@@ -64,6 +64,9 @@ void WorldSession::HandlePetAction(WorldPacket& recv_data)
     if (!pCharmedUnit->IsAlive())
         return;
 
+    // A pet command is activity for kill XP (MaNGOS::XP::active_for_kill_xp).
+    _player->UpdateSpellActivityTimer();
+
     Creature* pCharmedCreature = pCharmedUnit->ToCreature();
 
     if (!pCharmedCreature)

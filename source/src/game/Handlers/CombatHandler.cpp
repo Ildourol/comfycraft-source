@@ -61,6 +61,8 @@ void WorldSession::HandleAttackSwingOpcode(WorldPacket & recv_data)
         return;
     }
 
+    // A melee swing is activity for kill XP (MaNGOS::XP::active_for_kill_xp).
+    _player->UpdateSpellActivityTimer();
     _player->Attack(pEnemy, true);
 }
 

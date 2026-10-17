@@ -320,6 +320,16 @@ bool RandomItemMgr::CanEquipItem(BotEquipKey key, ItemPrototype const* proto)
     if (slots.find((InventoryType)proto->InventoryType) == slots.end())
         return false;
 
+    // A Miscellaneous armor item with a weapon slot is not a weapon for a bot.
+    // Survivalist's Skinning Knife (7009) is one, with weapon damage. The class
+    // and spec weapon rules test only ITEM_CLASS_WEAPON, so every class was
+    // offered it in both hands. Shields and off-hand items have their own slot
+    // types and are not affected.
+    if (proto->Class == ITEM_CLASS_ARMOR && proto->SubClass == ITEM_SUBCLASS_ARMOR_MISC &&
+        (proto->InventoryType == INVTYPE_WEAPON || proto->InventoryType == INVTYPE_2HWEAPON ||
+         proto->InventoryType == INVTYPE_WEAPONMAINHAND || proto->InventoryType == INVTYPE_WEAPONOFFHAND))
+        return false;
+
     uint32 requiredLevel = proto->RequiredLevel;
 
     if (!requiredLevel)

@@ -5651,8 +5651,27 @@ void Unit::SetCharm(Unit* pet)
     SetCharmGuid(pet ? pet->GetObjectGuid() : ObjectGuid());
 }
 
+// Factionless: an escort template of one side (faction 40, Escortee) counts as
+// that side, so the other side's players are hostile to it, and it has no
+// reputation for the peace to lift. Give it the template for any player, with
+// the same flags. Every escort passes here: creature_template, script command
+// 22 and the C++ scripts, which name these ids in their own enums.
+static uint32 FactionlessEscortTemplate(uint32 faction)
+{
+    switch (faction)
+    {
+        case 10:  case 33:  return 113;     // passive
+        case 231: case 232: return 250;     // fights monsters
+        case 774: case 775: return 290;     // holiday revelers
+        default:            return faction;
+    }
+}
+
 void Unit::SetFactionTemplateId(uint32 faction)
 {
+    if (!IsPlayer() && sWorld.getConfig(CONFIG_BOOL_FACTIONLESS_ENABLE))
+        faction = FactionlessEscortTemplate(faction);
+
     SetUInt32Value(UNIT_FIELD_FACTIONTEMPLATE, faction);
 
     if (!HasUnitState(UNIT_STAT_AI_USES_MOVE_IN_LOS))

@@ -339,7 +339,11 @@ void AttackersValue::AddTargetsOf(Player* player, std::set<Unit*>& targets, std:
         // so a running pull still holds.
         if (!playerBot)
         {
-            if (Unit* victim = player->GetVictim())
+            // Auto attack sets the victim at any range, so a target with auto
+            // attack on from thirty yards away is not a fight yet. It counts
+            // once the swing can land.
+            Unit* victim = player->GetVictim();
+            if (victim && player->CanReachWithMeleeAutoAttack(victim))
                 units.insert(victim);
 
             for (uint32 i = CURRENT_FIRST_NON_MELEE_SPELL; i < CURRENT_MAX_SPELL; ++i)
@@ -468,7 +472,7 @@ bool AttackersValue::IsRealPlayerAttacking(Unit* target, Player* player)
     if (!target || !player || GetBotAI(player))
         return false;
 
-    if (player->GetVictim() == target)
+    if (player->GetVictim() == target && player->CanReachWithMeleeAutoAttack(target))
         return true;
 
     for (uint32 i = CURRENT_FIRST_NON_MELEE_SPELL; i < CURRENT_MAX_SPELL; ++i)
@@ -488,6 +492,26 @@ bool AttackersValue::IsRealPlayerAttacking(Unit* target, Player* player)
     }
 
     return false;
+}
+
+bool AttackersValue::IsOnlyStartedOn(Unit* target, Player* player)
+{
+    return target && !target->IsInCombat() && IsRealPlayerAttacking(target, player);
+}
+
+Unit* AttackersValue::HeldTarget(PlayerbotAI* ai)
+{
+    AiObjectContext* context = ai->GetAiObjectContext();
+
+    Unit* current = AI_VALUE(Unit*, "current target");
+    if (!current || !sServerFacade.IsAlive(current) || !current->IsInCombat())
+        return nullptr;
+
+    std::list<ObjectGuid> attackers = AI_VALUE(std::list<ObjectGuid>, "possible attack targets");
+    if (std::find(attackers.begin(), attackers.end(), current->GetObjectGuid()) == attackers.end())
+        return nullptr;
+
+    return current;
 }
 
 bool AttackersValue::IsValid(Unit* target, Player* player, Player* owner, bool checkInCombat, bool validatePossibleTarget, bool ignoreLos)

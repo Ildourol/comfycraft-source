@@ -32,4 +32,12 @@ namespace ai
     // The gate on crowd control OUT of combat, and the reason it exists is that
     // the mark alone used to be enough. See the definition.
     bool CcFightIsUnderway(PlayerbotAI* ai);
+
+    // Does somebody else's crowd control already hold the mark, or is one
+    // being cast at it? Not cached; see the definition.
+    bool CcMarkIsTaken(PlayerbotAI* ai, Unit* marked);
+
+    // Is this a druid cc spell, with a living mage in the group who can sheep
+    // the marked mob instead? A null mark asks only about the mage.
+    bool CcDefersToMage(PlayerbotAI* ai, std::string const& spell, Unit* marked);
 }

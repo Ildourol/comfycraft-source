@@ -2387,8 +2387,11 @@ static void RewardGroupAtKill_helper(Player* pGroupGuy, Unit* pVictim, uint32 co
         // rewarded any alive/dead/near_corpse group member
         pGroupGuy->RewardReputation(pVictim, 1.0f);
 
-        // XP updated only for alive group member
-        if (pGroupGuy->IsAlive() && not_gray_member_with_max_level)
+        // XP updated only for alive group member, and only for one who is
+        // playing (MaNGOS::XP::active_for_kill_xp). Reputation above and quest
+        // credit below are paid either way.
+        const bool playing = Script_IsAIControlled(pGroupGuy) || MaNGOS::XP::active_for_kill_xp(pGroupGuy);
+        if (pGroupGuy->IsAlive() && not_gray_member_with_max_level && playing)
         {
             // No grey-member halving any more: base is computed against this
             // member's own level, and XP::Gain already returns 0 when the victim
