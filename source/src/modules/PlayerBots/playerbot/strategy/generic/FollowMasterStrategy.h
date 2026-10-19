@@ -42,6 +42,19 @@ namespace ai
 #endif
     };
 
+    // A companion moves off a mob that is not in the fight yet: a patrol walking
+    // in, or a pack it stands too close to. Given to companions only
+    // (PlayerbotAI::ResetStrategies), in combat and out.
+    class PatrolWatchStrategy : public Strategy
+    {
+    public:
+        PatrolWatchStrategy(PlayerbotAI* ai) : Strategy(ai) {}
+        std::string getName() override { return "patrol watch"; }
+    protected:
+        void InitNonCombatTriggers(std::list<TriggerNode*>& triggers) override;
+        void InitCombatTriggers(std::list<TriggerNode*>& triggers) override;
+    };
+
     class FollowJumpStrategy : public Strategy
     {
     public:

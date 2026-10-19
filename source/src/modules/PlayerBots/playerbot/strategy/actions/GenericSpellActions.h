@@ -335,10 +335,11 @@ namespace ai
     class CastShootAction : public CastSpellAction
     {
     public:
-        CastShootAction(PlayerbotAI* ai) : CastSpellAction(ai, "shoot"), rangedWeapon(nullptr), weaponDelay(0), needsAmmo(false) {}
+        CastShootAction(PlayerbotAI* ai) : CastSpellAction(ai, "shoot"), rangedWeapon(nullptr), needsAmmo(false) {}
         ActionThreatType getThreatType() override { return ActionThreatType::ACTION_THREAT_NONE; }
         bool Execute(Event& event) override;
         bool isPossible() override;
+        bool isUseful() override;
 
     protected:
         virtual std::string GetReachActionName() override { return "reach spell"; }
@@ -348,7 +349,6 @@ namespace ai
 
     private:
         const Item* rangedWeapon;
-        uint32 weaponDelay;
         bool needsAmmo;
     };
 

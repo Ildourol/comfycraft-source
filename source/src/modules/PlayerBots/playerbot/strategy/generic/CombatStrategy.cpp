@@ -92,7 +92,11 @@ float HealBeforeFleeMultiplier::GetValue(Action* action)
     if (bot->GetHealthPercent() <= (float)sPlayerbotAIConfig.criticalHealth)
         return 1.0f;
 
-    if (!AI_VALUE(Unit*, "party member to heal"))
+    // Somebody really hurt. "party member to heal" always holds the tank, at full
+    // health too, so a priest behind a tanking player never stepped back from a
+    // mob beside it (2026-10-18).
+    Unit* patient = AI_VALUE(Unit*, "party member to heal");
+    if (!patient || patient->GetHealthPercent() >= (float)sPlayerbotAIConfig.almostFullHealth)
         return 1.0f;
 
     return 0.01f;

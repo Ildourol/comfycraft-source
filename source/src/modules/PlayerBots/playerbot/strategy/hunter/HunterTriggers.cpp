@@ -2,6 +2,7 @@
 #include "playerbot/playerbot.h"
 #include "HunterTriggers.h"
 #include "HunterActions.h"
+#include "Database/CharacterDatabaseCache.h"
 
 using namespace ai;
 
@@ -12,6 +13,28 @@ bool HunterNoStingsActiveTrigger::IsActive()
         !ai->HasAura("serpent sting", target) &&
         !ai->HasAura("scorpid sting", target) &&
         !ai->HasAura("viper sting", target);
+}
+
+// Call Pet when a pet is stored but not out. The core puts the pet away when
+// the hunter dies, and a dead pet that decays goes to the database, so Revive
+// Pet has no corpse to target. Call Pet brings back a dead pet as a corpse,
+// and "hunters pet dead" then revives it. This was inverted (on only when
+// Call Pet could NOT be cast), so a hunter companion never called its pet
+// after a death (2026-10-17).
+bool HunterNoPet::IsActive()
+{
+    if (AI_VALUE2(bool, "mounted", "self target"))
+        return false;
+
+    if (bot->GetPetGuid())
+        return false;
+
+    // Call Pet passes its cast check with nothing stored. Look for the pet
+    // it would load, or the bot casts it every tick.
+    if (!sCharacterDatabaseCache.GetCharacterPetByOwner(bot->GetGUIDLow()))
+        return false;
+
+    return ai->CanCastSpell("call pet", bot, 0);
 }
 
 bool HuntersPetDeadTrigger::IsActive()

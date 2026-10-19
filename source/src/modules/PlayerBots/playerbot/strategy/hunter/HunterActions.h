@@ -1,6 +1,7 @@
 #pragma once
 
 #include "playerbot/strategy/actions/GenericActions.h"
+#include "playerbot/CompanionOwnership.h"
 
 namespace ai
 {
@@ -267,6 +268,12 @@ public:
         // flag; a player has none of the three, in any shape.
         bool isUseful() override
         {
+            // A companion never tames (the owner's call, 2026-10-18). Its pet
+            // comes from the factory, and a tame in a fight swaps it for
+            // whatever beast it was shooting.
+            if (CompanionOwnership::IsCompanion(bot->GetGUIDLow()))
+                return false;
+
             Unit* target = GetTarget();
             if (!target || target->IsPlayer())
                 return false;

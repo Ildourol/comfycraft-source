@@ -5,10 +5,44 @@
 #include "playerbot/PlayerbotAIConfig.h"
 
 #include "playerbot/ServerFacade.h"
+#include "Group/Group.h"
 using namespace ai;
+
+// No loot while the bot, its master or a group member near it is in combat. The
+// bot's own engine is not enough: it leaves combat when its attackers list is
+// empty, and a mob fighting the player can be off that list. A companion then
+// walked to a corpse and pulled the next pack (2026-10-18). Meals use it too.
+bool ai::GroupInCombat(PlayerbotAI* ai, Player* bot)
+{
+    if (sServerFacade.IsInCombat(bot))
+        return true;
+
+    Player* master = ai->GetMaster();
+    if (master && master != bot && master->IsInWorld() && master->GetMapId() == bot->GetMapId() && sServerFacade.IsInCombat(master))
+        return true;
+
+    Group* group = bot->GetGroup();
+    if (!group)
+        return false;
+
+    for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+    {
+        Player* member = ref->getSource();
+        if (!member || member == bot || !member->IsInWorld() || member->GetMapId() != bot->GetMapId())
+            continue;
+
+        if (sServerFacade.IsInCombat(member) && sServerFacade.GetDistance2d(bot, member) < sPlayerbotAIConfig.sightDistance)
+            return true;
+    }
+
+    return false;
+}
 
 bool LootAvailableTrigger::IsActive()
 {
+    if (GroupInCombat(ai, bot))
+        return false;
+
     return AI_VALUE(bool, "has available loot") &&
             (
                     sServerFacade.IsDistanceLessOrEqualThan(AI_VALUE2(float, "distance", "loot target"), INTERACTION_DISTANCE) ||
@@ -20,6 +54,9 @@ bool LootAvailableTrigger::IsActive()
 
 bool FarFromCurrentLootTrigger::IsActive()
 {
+    if (GroupInCombat(ai, bot))
+        return false;
+
     LootObject loot = AI_VALUE(LootObject, "loot target");
 
     if (!loot.IsLootPossible(bot))
@@ -59,5 +96,8 @@ bool FarFromCurrentLootTrigger::IsActive()
 
 bool CanLootTrigger::IsActive()
 {
+    if (GroupInCombat(ai, bot))
+        return false;
+
     return AI_VALUE(bool, "can loot");
 }

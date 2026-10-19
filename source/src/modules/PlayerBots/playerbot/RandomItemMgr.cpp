@@ -15,6 +15,7 @@
 #include "ItemEnchantmentMgr.h"
 
 #include "strategy/values/SharedValueContext.h"
+#include <sys/stat.h>
 
 char * strstri (const char* str1, const char* str2);
 
@@ -867,11 +868,118 @@ bool RandomItemMgr::CanEquipWeapon(uint8 clazz, ItemPrototype const* proto)
     return true;
 }
 
+// Raise this when the calculation below changes, so the saved rows are rebuilt.
+static const uint32 ITEM_INFO_CACHE_VERSION = 1;
+
+// THE BUILD RAN EVERY START ALTHOUGH NOTHING HAD CHANGED (2026-10-18).
+//
+// It takes 15 s on the /Od develop build and 3 s on production, on the world
+// thread: with AiPlayerbot.DeferItemCache the first bot to need an item froze the
+// whole server mid-dungeon. The rows were saved and never read back. Now the
+// inputs are fingerprinted, and an equal fingerprint loads the rows instead.
+//
+// The inputs: every table the build reads, Spell.dbc (item spells feed the stat
+// weights), the level cap and the version above. CHECKSUM TABLE reads each table
+// in full, about 1.5 s for all of them.
+std::string RandomItemMgr::ItemInfoFingerprint()
+{
+    std::ostringstream out;
+    out << "v" << ITEM_INFO_CACHE_VERSION << ";lvl" << sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL);
+
+    auto result = WorldDatabase.Query("CHECKSUM TABLE item_template, creature_loot_template, gameobject_loot_template, "
+        "reference_loot_template, npc_vendor, npc_vendor_template, quest_template, conditions, creature_template, "
+        "ai_playerbot_weightscales, ai_playerbot_weightscale_data");
+    if (!result)
+        return "";
+
+    do
+    {
+        Field* fields = result->Fetch();
+        out << ";" << (fields[1].IsNULL() ? std::string("x") : fields[1].GetCppString());
+    } while (result->NextRow());
+
+    struct stat dbc;
+    const std::string path = sWorld.GetDataPath() + "dbc/Spell.dbc";
+    if (stat(path.c_str(), &dbc) != 0)
+        return "";
+
+    out << ";dbc" << (uint64)dbc.st_size << "-" << (uint64)dbc.st_mtime;
+    return out.str();
+}
+
+bool RandomItemMgr::LoadItemInfoCache(const std::string& fingerprint)
+{
+    if (fingerprint.empty())
+        return false;
+
+    auto saved = CharacterDatabase.Query("SELECT value FROM ai_playerbot_cache_fingerprint WHERE name = 'item_info'");
+    if (!saved || saved->Fetch()[0].GetCppString() != fingerprint)
+        return false;
+
+    std::ostringstream query;
+    query << "SELECT id, quality, slot, source, sourceId, team, faction, factionRepRank, minLevel, source_ids";
+    for (int i = 1; i <= MAX_STAT_SCALES; ++i)
+        query << ", scale_" << i;
+    query << " FROM ai_playerbot_item_info_cache";
+
+    auto results = CharacterDatabase.Query(query.str().c_str());
+    if (!results)
+        return false;
+
+    uint32 count = 0;
+    do
+    {
+        Field* fields = results->Fetch();
+        const uint32 itemId = fields[0].GetUInt32();
+        ItemPrototype const* proto = sObjectMgr.GetItemPrototype(itemId);
+        if (!proto)
+            continue;
+
+        ItemInfoEntry* info = new ItemInfoEntry;
+        info->itemId = itemId;
+        info->quality = fields[1].GetUInt32();
+        info->slot = fields[2].GetUInt32();
+        info->source = fields[3].GetUInt32();
+        info->team = fields[5].GetUInt32();
+        info->repFaction = fields[6].GetUInt32();
+        info->repRank = fields[7].GetUInt32();
+        info->minLevel = fields[8].GetUInt32();
+
+        std::istringstream sources(fields[9].IsNULL() ? std::string() : fields[9].GetCppString());
+        std::string id;
+        while (std::getline(sources, id, ','))
+            if (!id.empty())
+                info->sourceIds.push_back((uint32)std::stoul(id));
+        if (info->sourceIds.empty() && fields[4].GetUInt32())
+            info->sourceIds.push_back(fields[4].GetUInt32());
+
+        for (int i = 1; i <= MAX_STAT_SCALES; ++i)
+            info->weights[i] = fields[9 + i].GetUInt32();
+
+        // Not saved: read from the item, as the build does.
+        info->itemLevel = proto->ItemLevel;
+        if (proto->RequiredHonorRank > 0)
+            info->pvpRank = proto->RequiredHonorRank;
+        if (proto->RequiredSkill > 0)
+        {
+            info->reqSkill = proto->RequiredSkill;
+            info->reqSkillRank = proto->RequiredSkillRank;
+        }
+
+        itemInfoCache[itemId] = info;
+        ++count;
+    } while (results->NextRow());
+
+    sLog.outString("Item info cache loaded from %u records, inputs unchanged", count);
+    return count > 0;
+}
+
 void RandomItemMgr::BuildItemInfoCache()
 {
     for (auto& [key, itemInfo] : itemInfoCache)
         if (itemInfo)
             delete itemInfo;
+    itemInfoCache.clear();
 
     uint32 maxLevel = sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL);
 
@@ -940,6 +1048,16 @@ void RandomItemMgr::BuildItemInfoCache()
         sLog.outError("Error loading item weight scales");
         return;
     }
+
+    const std::string fingerprint = ItemInfoFingerprint();
+    if (LoadItemInfoCache(fingerprint))
+        return;
+
+    // Rows of items the build now skips must not survive into the next load, and
+    // a build that dies half way must not be loaded.
+    sLog.outString("Item info cache inputs changed, rebuilding");
+    CharacterDatabase.DirectExecute("DELETE FROM ai_playerbot_cache_fingerprint WHERE name = 'item_info'");
+    CharacterDatabase.DirectExecute("DELETE FROM ai_playerbot_item_info_cache");
 
     // vendor items
     sLog.outString("Loading vendor item list...");
@@ -1474,10 +1592,10 @@ void RandomItemMgr::BuildItemInfoCache()
         SqlStatement stmt = CharacterDatabase.CreateStatement(delCache, "DELETE FROM ai_playerbot_item_info_cache WHERE id = ?");
         stmt.PExecute(proto->ItemId);
 
-        stmt = CharacterDatabase.CreateStatement(insertCache, "INSERT INTO ai_playerbot_item_info_cache (id, quality, slot, source, sourceId, team, faction, factionRepRank, minLevel, "
+        stmt = CharacterDatabase.CreateStatement(insertCache, "INSERT INTO ai_playerbot_item_info_cache (id, quality, slot, source, sourceId, team, faction, factionRepRank, minLevel, source_ids, "
             "scale_1, scale_2, scale_3, scale_4, scale_5, scale_6, scale_7, scale_8, scale_9, scale_10, scale_11, scale_12, scale_13, scale_14, scale_15, "
             "scale_16, scale_17, scale_18, scale_19, scale_20, scale_21, scale_22, scale_23, scale_24, scale_25, scale_26, scale_27, scale_28, scale_29, scale_30, scale_31, scale_32)"
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
 
         stmt.addUInt32(cacheInfo->itemId);
         stmt.addUInt32(cacheInfo->quality);
@@ -1488,6 +1606,11 @@ void RandomItemMgr::BuildItemInfoCache()
         stmt.addUInt32(cacheInfo->repFaction);
         stmt.addUInt32(cacheInfo->repRank);
         stmt.addUInt32(cacheInfo->minLevel);
+
+        std::string sourceIds;
+        for (uint32 sourceId : cacheInfo->sourceIds)
+            sourceIds += (sourceIds.empty() ? "" : ",") + std::to_string(sourceId);
+        stmt.addString(sourceIds);
 
         for (int i = 1; i <= MAX_STAT_SCALES; ++i)
         {
@@ -1501,6 +1624,10 @@ void RandomItemMgr::BuildItemInfoCache()
 
         itemInfoCache[cacheInfo->itemId] = cacheInfo;
     }
+
+    // Last in the same transaction as the rows.
+    if (!fingerprint.empty())
+        CharacterDatabase.PExecute("REPLACE INTO ai_playerbot_cache_fingerprint (name, value) VALUES ('item_info', '%s')", fingerprint.c_str());
 
     CharacterDatabase.CommitTransaction();
     delete dropMap;

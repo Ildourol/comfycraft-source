@@ -38,6 +38,10 @@ private:
 
     ACTION_NODE_C(feign_death_threat, "feign death", "remove feign death");
 
+    // `no pet` used to run this node, with Call Pet only as its continuer, so the
+    // pet came back only after a successful tame. A bot that knew no Tame Beast
+    // never called its pet. `no pet` runs `call pet` directly since 2026-10-18;
+    // the trigger itself already tests that Call Pet can be cast.
     ACTION_NODE_C(tame_beast, "tame beast", "call pet")
 };
 
@@ -91,7 +95,7 @@ void HunterStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
 
     triggers.push_back(new TriggerNode(
         "no pet",
-        NextAction::array(0, new NextAction("tame beast", ACTION_EMERGENCY), NULL)));
+        NextAction::array(0, new NextAction("call pet", ACTION_EMERGENCY), NULL)));
 }
 
 void HunterStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
@@ -111,7 +115,7 @@ void HunterStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
 
     triggers.push_back(new TriggerNode(
         "no pet",
-        NextAction::array(0, new NextAction("tame beast", ACTION_EMERGENCY), NULL)));
+        NextAction::array(0, new NextAction("call pet", ACTION_EMERGENCY), NULL)));
 }
 
 void HunterStrategy::InitReactionTriggers(std::list<TriggerNode*>& triggers)
@@ -572,7 +576,7 @@ void HunterStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
 
     triggers.push_back(new TriggerNode(
         "no pet",
-        NextAction::array(0, new NextAction("tame beast", ACTION_EMERGENCY), NULL)));    
+        NextAction::array(0, new NextAction("call pet", ACTION_EMERGENCY), NULL)));    
 }
 
 void HunterStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
@@ -592,7 +596,7 @@ void HunterStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
 
     triggers.push_back(new TriggerNode(
         "no pet",
-        NextAction::array(0, new NextAction("tame beast", ACTION_EMERGENCY), NULL)));
+        NextAction::array(0, new NextAction("call pet", ACTION_EMERGENCY), NULL)));
 }
 
 void HunterStrategy::InitReactionTriggers(std::list<TriggerNode*>& triggers)
@@ -1046,7 +1050,7 @@ void HunterStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
 
     triggers.push_back(new TriggerNode(
         "no pet",
-        NextAction::array(0, new NextAction("tame beast", ACTION_EMERGENCY), NULL)));
+        NextAction::array(0, new NextAction("call pet", ACTION_EMERGENCY), NULL)));
 }
 
 void HunterStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
@@ -1066,7 +1070,7 @@ void HunterStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
 
     triggers.push_back(new TriggerNode(
         "no pet",
-        NextAction::array(0, new NextAction("tame beast", ACTION_EMERGENCY), NULL)));
+        NextAction::array(0, new NextAction("call pet", ACTION_EMERGENCY), NULL)));
 }
 
 void HunterStrategy::InitReactionTriggers(std::list<TriggerNode*>& triggers)

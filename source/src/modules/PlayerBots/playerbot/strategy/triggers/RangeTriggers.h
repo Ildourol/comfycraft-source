@@ -5,6 +5,8 @@
 #include "playerbot/strategy/generic/CombatStrategy.h"
 #include "playerbot/strategy/values/PossibleAttackTargetsValue.h"
 #include "playerbot/strategy/values/Formations.h"
+#include "playerbot/strategy/values/LastMovementValue.h"
+#include "playerbot/FleeManager.h"
 
 namespace ai
 {
@@ -15,6 +17,19 @@ namespace ai
         
         virtual bool IsActive() override
         {
+            // A FLEE THAT FOUND NOWHERE TO GO WAITS 5 S (2026-10-19). The trigger
+            // fired again every tick at 30 and kept a hunter 5.7 yd from a mob,
+            // unable to shoot (8 yd minimum) and unable to switch to melee, and a
+            // priest looping the same way 127 times. Now it fights where it stands.
+            const time_t noPoint = AI_VALUE(LastMovement&, "last movement").lastNoFleePoint;
+            if (noPoint && time(nullptr) - noPoint < 5)
+                return false;
+
+            // A bot led by a player with a mob on it stays and fights (MovementAction::
+            // Flee): a hunter melees, a healer heals itself. The panic flee is separate.
+            if (ai->HasRealPlayerMaster() && !bot->getAttackers().empty())
+                return false;
+
             Unit* target = AI_VALUE(Unit*, "current target");
             if (target)
             {
@@ -57,6 +72,36 @@ namespace ai
 
                 if (bot->GetMap()->IsRaid())
                     isRaid = true;
+
+                // A HUNTER THE SERVER CALLS TOO CLOSE IS TOO CLOSE (2026-10-19). The
+                // formula below shrinks the threshold by the target's combat reach, so
+                // against Rhahk'Zor it came out near 9 yd while the server refused Auto
+                // Shot with TOO_CLOSE (118): the hunter stood 22 s without a shot. The
+                // server's own cast check decides.
+                if (bot->getClass() == CLASS_HUNTER)
+                {
+                    SpellCastResult shot = SPELL_CAST_OK;
+                    ai->CanCastSpell("auto shot", target, 0, nullptr, true, false, false, &shot);
+                    if (shot == SPELL_FAILED_TOO_CLOSE)
+                        return true;
+                }
+
+                // A HEALER IN A PLAYER'S GROUP KEEPS 10 YD FROM THE FIGHT (2026-10-18).
+                // With two elites on the tanking player, the priest stood beside them
+                // for the whole fight: the rule below ignores a mob that hits someone
+                // else. Any mob on the attack list counts. HealBeforeFleeMultiplier
+                // still holds the flee back while somebody is below 90%.
+                if (PlayerbotAI::IsHeal(bot) && ai->HasRealPlayerMaster() && bot->getClass() != CLASS_HUNTER)
+                {
+                    for (ObjectGuid const& guid : AI_VALUE(std::list<ObjectGuid>, "attackers"))
+                    {
+                        Unit* attacker = ai->GetUnit(guid);
+                        if (attacker && sServerFacade.IsAlive(attacker) && sServerFacade.GetDistance2d(bot, attacker) < 10.0f)
+                            return true;
+                    }
+
+                    return false;
+                }
 
                 // Casters have no minimum range — only flee if the mob is actually targeting/attacking this bot.
                 // Hunters are excluded: their ranged weapons have a ~8 yd minimum range so they must
@@ -392,6 +437,31 @@ namespace ai
                 return true;
 
             return false;
+        }
+    };
+
+    // A hostile mob not in the fight yet, standing or walking, within its aggro
+    // radius + 5 yd of the bot. Checked once a second. Not while the bot already
+    // stands at its master, or was told to stay or guard.
+    class IdleMobNearTrigger : public Trigger
+    {
+    public:
+        IdleMobNearTrigger(PlayerbotAI* ai) : Trigger(ai, "idle mob near", 1) {}
+
+        bool IsActive() override
+        {
+            Player* master = ai->GetMaster();
+            if (!master || master == bot || !master->IsInWorld() || master->GetMapId() != bot->GetMapId() || !sServerFacade.IsAlive(bot))
+                return false;
+
+            if (ai->HasStrategy("stay", ai->GetState()) || ai->HasStrategy("guard", ai->GetState()))
+                return false;
+
+            if (sServerFacade.GetDistance2d(bot, master) <= sPlayerbotAIConfig.followDistance + 2.0f)
+                return false;
+
+            const std::list<Unit*> idle = IdleHostiles(ai);
+            return !idle.empty() && InIdleAggro(idle, bot, bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), 5.0f);
         }
     };
 

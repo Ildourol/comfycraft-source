@@ -373,6 +373,8 @@ public:
     std::string GetDefaultMovementStrategy();
     void EnsureDefaultMovementStrategy(Player* requester = nullptr);
 	std::string HandleRemoteCommand(std::string command);
+    // Safe from any thread: a line from anybody but the bot waits for the
+    // bot's own UpdateAI (see the comment above HandleCommand in the .cpp).
     void HandleCommand(uint32 type, const std::string& text, Player& fromPlayer, const uint32 lang = LANG_UNIVERSAL);
     void QueueChatResponse(uint32 msgType, ObjectGuid guid1, ObjectGuid guid2, std::string message, std::string chanName, std::string name, bool noDelay = false);
 	void HandleBotOutgoingPacket(const WorldPacket& packet);
@@ -719,6 +721,16 @@ public:
     // `follow` holds fire for a moment and then lets go; see FollowChatShortcutAction.
     void FadePassiveAfter(uint32 ms);
     void CancelPassiveFade() { passiveFadeStartMs = 0; }
+    // A buff cast that worked. The drink waits for the buffs: see HighManaTrigger.
+    void NoteBuffCast() { lastBuffCast = time(nullptr); }
+    bool BuffedWithin(time_t seconds) const { return lastBuffCast && time(nullptr) - lastBuffCast < seconds; }
+    // A heal cast that worked. A healer then only heals for a while: see CastShootAction::isUseful.
+    void NoteHealCast() { lastHealCast = time(nullptr); }
+    // The Follow order: formation follow until the companion reaches its master,
+    // then loose follow in a dungeon (FollowAction).
+    void SetTightFollow(bool on) { tightFollow = on; }
+    bool IsTightFollow() const { return tightFollow; }
+    bool HealedWithin(time_t seconds) const { return lastHealCast && time(nullptr) - lastHealCast < seconds; }
     void SetFallAfterJump() { fallAfterJump = true; }
     void SetJumpTime(uint32 time) { jumpTime = time; }
     bool CanMove();
@@ -830,6 +842,18 @@ protected:
     BotState currentState;
     ChatHelper chatHelper;
     std::queue<ChatCommandHolder> chatCommands;
+    // Lines from other threads, run by UpdateAI on the bot's map thread.
+    struct InboxCommand
+    {
+        uint32 type;
+        std::string text;
+        ObjectGuid from;
+        uint32 lang;
+    };
+    std::vector<InboxCommand> commandInbox;
+    std::mutex commandInboxMutex;
+    void RunCommand(uint32 type, const std::string& text, Player& fromPlayer, const uint32 lang);
+    void DrainCommandInbox();
     std::queue<ChatQueuedReply> chatReplies;
     std::mutex chatRepliesMutex;
     PacketHandlingHelper botOutgoingPacketHandlers;
@@ -850,6 +874,11 @@ protected:
     uint32 jumpTime;
     bool fallAfterJump;
     uint32 passiveFadeStartMs = 0; // when a follow set its passive, 0 = no fade pending
+    time_t lastBuffCast = 0;
+    time_t lastHealCast = 0;
+    bool tightFollow = false;
+    time_t ownerMapAwaySince = 0; // a companion on another map than its owner, 0 = same map
+    time_t underOwnerSince = 0;   // a companion fallen below its owner, 0 = not
     uint32 passiveFadeDurationMs = 0;
     uint32 lootingSinceMs = 0; // when the loot watchdog first saw UNIT_FLAG_LOOTING, 0 = not looting
     uint32 faceTargetUpdateDelay;

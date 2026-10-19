@@ -6,6 +6,8 @@
 #include "playerbot/PerformanceMonitor.h"
 #include <stdarg.h>
 #include <iomanip>
+#include <filesystem>
+#include <ctime>
 
 #include "playerbot/AiFactory.h"
 #include "playerbot/CompanionOwnership.h"
@@ -50,6 +52,8 @@
 #include "strategy/ItemVisitors.h"
 #include "strategy/values/LootValues.h"
 #include "strategy/values/AttackersValue.h"
+#include "strategy/generic/UseFoodStrategy.h"
+#include "strategy/triggers/BotStateTriggers.h"
 #include "Transports/Transport.h"
 #include "Guild/GuildMgr.h"
 #include "Chat/ChannelMgr.h"
@@ -300,6 +304,9 @@ void PlayerbotAI::UpdateAI(uint32 elapsed, bool minimal)
         }
     }
 
+    // Chat lines that arrived on other threads (see HandleCommand).
+    DrainCommandInbox();
+
     // LOOT WATCHDOG. Opening a corpse sets UNIT_FLAG_LOOTING, the kneel, and only
     // a loot release clears it. A bot has no client to close a loot window, so
     // its one release is StoreLootAction, run from the "loot response" trigger.
@@ -342,6 +349,16 @@ void PlayerbotAI::UpdateAI(uint32 elapsed, bool minimal)
             ChangeStrategy("-passive", BotState::BOT_STATE_NON_COMBAT);
             ChangeStrategy("-passive", BotState::BOT_STATE_COMBAT);
         }
+
+        // AND THE COMBAT-ENGINE FOLLOW GOES WITH IT. The order put `follow` in
+        // the combat engine so the bot comes back while something hits it.
+        // Left there, it holds the bot to follow range for the rest of the
+        // fight: it moves every tick, and every spell with a cast time fails.
+        // A healer then wands and does not heal (measured 2026-10-18: 369
+        // follow moves and about 150 failed heals in one fight). The
+        // non-combat follow stays.
+        if (HasStrategy("follow", BotState::BOT_STATE_COMBAT))
+            ChangeStrategy("-follow", BotState::BOT_STATE_COMBAT);
     }
 
     if(aiInternalUpdateDelay > elapsed)
@@ -1169,6 +1186,10 @@ void PlayerbotAI::OnDeath()
 
         StopMoving();
 
+        // A new death starts the companion revive wait from zero.
+        if (CompanionReviveTrigger* revive = dynamic_cast<CompanionReviveTrigger*>(aiObjectContext->GetTrigger("companion revive")))
+            revive->Restart();
+
         Player* master = GetMaster();
         AiObjectContext* context = aiObjectContext;
         if (!HasActivePlayerMaster() && !bot->InBattleGround())
@@ -1599,7 +1620,55 @@ bool PlayerbotAI::IsAllowedCommand(std::string text)
     return false;
 }
 
+// COMFYCRAFT: A LINE FROM SOMEBODY ELSE WAITS FOR THE BOT'S OWN UPDATE.
+// Party chat and whispers run on the AsyncPackets thread
+// (GetChatPacketProcessingType, PACKET_PROCESS_DB_QUERY), and say and yell on
+// the speaker's map thread. Both run while this bot updates on its own map
+// thread. RunCommand changes the bot's engines (the attack order calls
+// ChangeStrategy and ChangeEngine, and both reach Engine::Reset, which deletes
+// every TriggerNode) and pushes to chatCommands, which has no lock. Engine's
+// inDoNextAction guard covers a call from the same thread only. On the live
+// server, 2026-10-19 08:53, a party `attack` freed the trigger list under the
+// bot's ProcessTriggers: SIGSEGV in NextAction::clone.
+//
+// So only the bot itself runs a line at once (its actions call this, on its
+// own thread). Every other line goes in the inbox, and UpdateAI runs it on the
+// bot's thread, one tick later at most. The sender is kept as a guid: it can
+// log out before the bot's next update.
 void PlayerbotAI::HandleCommand(uint32 type, const std::string& text, Player& fromPlayer, const uint32 lang)
+{
+    if (&fromPlayer == bot)
+    {
+        RunCommand(type, text, fromPlayer, lang);
+        return;
+    }
+
+    std::lock_guard<std::mutex> guard(commandInboxMutex);
+    // A bot out of every map is not updated. Do not let a chat line pile up there.
+    if (commandInbox.size() >= 64)
+        return;
+    commandInbox.push_back({ type, text, fromPlayer.GetObjectGuid(), lang });
+}
+
+void PlayerbotAI::DrainCommandInbox()
+{
+    std::vector<InboxCommand> pending;
+    {
+        std::lock_guard<std::mutex> guard(commandInboxMutex);
+        pending.swap(commandInbox);
+    }
+
+    for (InboxCommand const& cmd : pending)
+    {
+        // The sender logged out since the line arrived.
+        Player* from = sObjectAccessor.FindPlayer(cmd.from);
+        if (!from)
+            continue;
+        RunCommand(cmd.type, cmd.text, *from, cmd.lang);
+    }
+}
+
+void PlayerbotAI::RunCommand(uint32 type, const std::string& text, Player& fromPlayer, const uint32 lang)
 {
     std::string filtered = text;
 
@@ -1632,15 +1701,23 @@ void PlayerbotAI::HandleCommand(uint32 type, const std::string& text, Player& fr
                 "follow: come back to you. I stop fighting for 5 seconds.",
                 "flee: run back to you and hold fire until your next order.",
                 "stay: hold this spot and fight what comes to me.",
+                "summon: appear next to you.",
             };
             for (char const* line : lines)
                 Whisper(line, fromPlayer.GetName());
             return;
         }
 
-        static const std::set<std::string> orders = { "attack", "pull", "follow", "stay", "flee" };
+        static const std::set<std::string> orders = { "attack", "pull", "follow", "stay", "flee", "summon" };
         if ((!fromPlayer.GetSession() || fromPlayer.GetSession()->GetSecurity() < SEC_DEVELOPER) &&
             !orders.count(order))
+            return;
+
+        // SUMMON IS THE OWNER'S ALONE. It is the way out for a companion that
+        // fell through a floor or got stuck, and a teleport is not something
+        // another member of the party gets to do to it.
+        if (order == "summon" && CompanionOwnership::GetOwner(bot->GetGUIDLow()) != fromPlayer.GetGUIDLow() &&
+            (!fromPlayer.GetSession() || fromPlayer.GetSession()->GetSecurity() < SEC_DEVELOPER))
             return;
     }
 
@@ -1664,7 +1741,7 @@ void PlayerbotAI::HandleCommand(uint32 type, const std::string& text, Player& fr
         split(commands, filtered, sPlayerbotAIConfig.commandSeparator.c_str());
         for (std::vector<std::string>::iterator i = commands.begin(); i != commands.end(); ++i)
         {
-            HandleCommand(type, *i, fromPlayer);
+            RunCommand(type, *i, fromPlayer, lang);
         }
         return;
     }
@@ -2599,17 +2676,92 @@ void PlayerbotAI::DoNextAction(bool min)
         ResetStrategies();
 #endif
 
+    // A COMPANION ON ANOTHER MAP THAN ITS OWNER COMES TO THE OWNER (2026-10-18).
+    //
+    // Follow only walks. Into an instance it needs the portal's area trigger,
+    // which a bot fires when it was near the owner at the portal, or when its
+    // path ends inside the trigger zone. A companion that came later (it logged
+    // in after the owner went in, or it was on stay) walked to the portal,
+    // stopped a few yards short of the zone and ran `follow` there forever. After
+    // 5 s apart, alive and out of combat, it teleports to the owner, as Summon
+    // does. A companion on stay or guard is left where it was put.
+    if (master && CompanionOwnership::IsCompanion(bot->GetGUIDLow()))
+    {
+        // A COMPANION'S PET IS ALWAYS PASSIVE. It goes in only when the companion
+        // attacks (AttackAction sends the pet bar's Attack). Defensive, a hunter's
+        // pet took the owner's pull on its way in. Set every tick, so a summon,
+        // a pull's restore or a `pet defensive` order does not leave it otherwise.
+        if (Pet* pet = bot->GetPet())
+            if (pet->AI() && !pet->AI()->HasReactState(REACT_PASSIVE))
+                pet->AI()->SetReactState(REACT_PASSIVE);
+
+        const bool apart = master->IsInWorld() && !master->IsBeingTeleported() && !bot->IsBeingTeleported() &&
+            bot->GetMapId() != master->GetMapId() && sServerFacade.IsAlive(master) && sServerFacade.IsAlive(bot) &&
+            !sServerFacade.IsInCombat(bot) && !master->IsTaxiFlying() && !bot->IsTaxiFlying() &&
+            !master->InBattleGround() && !HasStrategy("stay", BotState::BOT_STATE_NON_COMBAT) &&
+            !HasStrategy("guard", BotState::BOT_STATE_NON_COMBAT);
+
+        const time_t now = time(nullptr);
+
+        // FALLEN THROUGH THE FLOOR (2026-10-19): more than 8 yd below the owner,
+        // within 20 yd on the map, out of sight, alive and out of combat for 3 s.
+        // A companion on the Deadmines ship deck ended up 31 yd under it.
+        const bool under = master->IsInWorld() && !master->IsBeingTeleported() && !bot->IsBeingTeleported() &&
+            bot->GetMapId() == master->GetMapId() && sServerFacade.IsAlive(master) && sServerFacade.IsAlive(bot) &&
+            !sServerFacade.IsInCombat(bot) && !master->IsTaxiFlying() &&
+            master->GetPositionZ() - bot->GetPositionZ() > 8.0f &&
+            sServerFacade.GetDistance2d(bot, master) < 20.0f && !bot->IsWithinLOSInMap(master, true);
+        if (!under)
+            underOwnerSince = 0;
+        else if (!underOwnerSince)
+            underOwnerSince = now;
+        else if (now - underOwnerSince >= 3)
+        {
+            underOwnerSince = 0;
+            sLog.outError("Companion %s: %.1f yd below its owner, brought back up", bot->GetName(),
+                master->GetPositionZ() - bot->GetPositionZ());
+            StopMoving();
+            bot->NearTeleportTo(master->GetPositionX(), master->GetPositionY(), master->GetPositionZ(), master->GetOrientation());
+            return;
+        }
+
+        if (!apart)
+            ownerMapAwaySince = 0;
+        else if (!ownerMapAwaySince)
+            ownerMapAwaySince = now;
+        else if (now - ownerMapAwaySince >= 5)
+        {
+            ownerMapAwaySince = 0;
+            StopMoving();
+            bot->TeleportTo(master->GetMapId(), master->GetPositionX(), master->GetPositionY(), master->GetPositionZ(), master->GetOrientation());
+            return;
+        }
+    }
+
     if (master && master->IsInWorld())
 	{
 		if (master->m_movementInfo.HasMovementFlag(MOVEFLAG_WALK_MODE) && sServerFacade.GetDistance2d(bot, master) < 20.0f) bot->m_movementInfo.AddMovementFlag(MOVEFLAG_WALK_MODE);
 		else bot->m_movementInfo.RemoveMovementFlag(MOVEFLAG_WALK_MODE);
 
+        // The master sat: sit too, but behind. A bot in front of the master (at a
+        // corpse it looted) is often toward the next pack, so it goes to its
+        // formation spot first, which is behind, and sits on arrival.
         if (master->IsSitState() && aiInternalUpdateDelay < 1000)
         {
-            if (!sServerFacade.isMoving(bot) && sServerFacade.GetDistance2d(bot, master) < 10.0f)
-                bot->SetStandState(UNIT_STAND_STATE_SIT);
+            if (!sServerFacade.isMoving(bot) && sServerFacade.GetDistance2d(bot, master) < 10.0f &&
+                !IsStateActive(BotState::BOT_STATE_COMBAT))
+            {
+                if (!master->HasInArc(bot))
+                    bot->SetStandState(UNIT_STAND_STATE_SIT);
+                else if (bot->IsStandState() && HasStrategy("follow", BotState::BOT_STATE_NON_COMBAT))
+                    DoSpecificAction("follow", Event(), true);
+            }
         }
-        else if (aiInternalUpdateDelay < 1000)
+        // Not a bot at a meal it should finish: a healer drinking through a fight
+        // (its combat engine runs every tick, so this line stood it up at once), or
+        // any bot eating or drinking out of combat.
+        else if (aiInternalUpdateDelay < 1000 && !HealerKeepsDrinking(this) &&
+            !(!IsStateActive(BotState::BOT_STATE_COMBAT) && MealKeepsBotSeated(this)))
             bot->SetStandState(UNIT_STAND_STATE_STAND);
 
         if (!group && sRandomPlayerbotMgr.IsFreeBot(bot) && !IsRealPlayer())
@@ -2901,6 +3053,22 @@ void PlayerbotAI::ResetStrategies(bool autoLoad)
     AiFactory::AddDefaultDeadStrategies(bot, this, engines[(uint8)BotState::BOT_STATE_DEAD]);
     AiFactory::AddDefaultReactionStrategies(bot, this, reactionEngine);
     if (autoLoad && HasPlayerRelation()) sPlayerbotDbStore.Load(this);
+
+    // A COMPANION LOGS IN FOLLOWING, WITH ITS OWN STRINGS (2026-10-18).
+    //
+    // The load above clears the defaults and puts back the list saved at logout,
+    // so the companion strings in the conf did nothing for a companion with a
+    // saved row, and a saved `stay` left it outside the instance its owner walked
+    // into. Its strings go on again here, and `stay` and `guard` are dropped.
+    if (CompanionOwnership::IsCompanion(bot->GetGUIDLow()))
+    {
+        ChangeStrategy(sPlayerbotAIConfig.companionCombatStrategies, BotState::BOT_STATE_COMBAT);
+        ChangeStrategy(sPlayerbotAIConfig.companionNonCombatStrategies, BotState::BOT_STATE_NON_COMBAT);
+        ChangeStrategy("-stay,-guard,+patrol watch", BotState::BOT_STATE_COMBAT);
+        ChangeStrategy("-stay,-guard,+patrol watch", BotState::BOT_STATE_NON_COMBAT);
+        if (!HasStrategy("follow", BotState::BOT_STATE_NON_COMBAT) && !HasStrategy("wander", BotState::BOT_STATE_NON_COMBAT))
+            ChangeStrategy("+follow", BotState::BOT_STATE_NON_COMBAT);
+    }
 
     // A role handed out by the dungeon finder wins over both the talent spec
     // and the stored strategy set - hence applied last. addStrategy() drops the
@@ -3964,6 +4132,39 @@ bool PlayerbotAI::TellPlayerNoFacing(Player* player, std::string text, Playerbot
 
     if (!ignoreSilent && HasStrategy("silent", BotState::BOT_STATE_NON_COMBAT))
         return false;
+
+    // DEBUG LINES ALSO GO TO A FILE ON THE SERVER (2026-10-18).
+    //
+    // They were read from the client's chat log, and the 1.12 client stopped
+    // writing it after a disconnect and did not start again for a reload, a
+    // relog or /chatlog. With `debug` on, every line this bot says is appended
+    // to companion-logs/<name>.log beside mangosd, before the repeat filter.
+    if (HasStrategy("debug", BotState::BOT_STATE_NON_COMBAT))
+    {
+        static bool madeDir = false;
+        if (!madeDir)
+        {
+            std::error_code ignored;
+            std::filesystem::create_directories("companion-logs", ignored);
+            madeDir = true;
+        }
+
+        const std::string path = std::string("companion-logs/") + bot->GetName() + ".log";
+        if (FILE* file = fopen(path.c_str(), "a"))
+        {
+            const time_t now = time(nullptr);
+            struct tm local;
+#ifdef _WIN32
+            localtime_s(&local, &now);
+#else
+            localtime_r(&now, &local);
+#endif
+            char stamp[16];
+            std::strftime(stamp, sizeof(stamp), "%H:%M:%S", &local);
+            fprintf(file, "%s.%03u %s\n", stamp, (uint32)(WorldTimer::getMSTime() % 1000), text.c_str());
+            fclose(file);
+        }
+    }
 
     time_t lastSaid = whispers[text];
     if (!noRepeat || !lastSaid || (time(0) - lastSaid) >= sPlayerbotAIConfig.repeatDelay / 1000)

@@ -29,6 +29,7 @@ namespace ai
             nextTeleport = other.nextTeleport;
             fleeCount = other.fleeCount;
             lastFleeAttempt = other.lastFleeAttempt;
+            lastNoFleePoint = other.lastNoFleePoint;
             moveEvent = Event();
         }
 
@@ -41,6 +42,7 @@ namespace ai
             lastFlee = 0;
             fleeCount = 0;
             lastFleeAttempt = 0;
+            lastNoFleePoint = 0;
             lastMoveShort = WorldPosition();
             nextTeleport = 0;
             moveEvent = Event();
@@ -78,6 +80,9 @@ namespace ai
         // Wall-clock of the last dispatched flee, used to decide whether the next flee is
         // "subsequent" (close in time) or a fresh flee (window lapsed -> count resets).
         time_t lastFleeAttempt;
+        // When a flee last found no point. `enemy too close for spell` stays quiet
+        // for a while after, so the bot fights where it stands.
+        time_t lastNoFleePoint;
         TravelPath lastPath;
         WorldPosition lastMoveShort;
         time_t nextTeleport;

@@ -898,10 +898,23 @@ class WorldObject : public Object
         float GetDistance3dToCenter(Position const& position) const { return GetDistance(position.x, position.y, position.z, SizeFactor::None); }
         float GetDistance(WorldObject const* obj, SizeFactor distcalc = SizeFactor::BoundingRadius) const;
         float GetDistance(float x, float y, float z, SizeFactor distcalc = SizeFactor::BoundingRadius) const;
-        // bot's signature is (target, bool is3D, DistanceCalculation calc).
-        // Penqle has (target, SizeFactor); ignore the bool, ignore the calc enum (taken as int because
-        // DistanceCalculation enum is defined in the bot's shim header, not visible here).
-        float GetDistance(WorldObject const* obj, bool /*is3D*/, int /*distance_calc*/) const { return GetDistance(obj); }
+        // The bot's DistanceCalculation, taken as an int because the enum is in the bot's shim
+        // header: 0 none, 1 bounding radius, 2 combat reach, 3 combat reach with melee.
+        static SizeFactor BotSizeFactor(int distcalc)
+        {
+            return distcalc == 0 ? SizeFactor::None : distcalc == 2 ? SizeFactor::CombatReach :
+                distcalc == 3 ? SizeFactor::CombatReachWithMelee : SizeFactor::BoundingRadius;
+        }
+        // bot's signature is (target, bool is3D, DistanceCalculation calc). The calc used to be
+        // ignored and bounding radius used, while every caller asks for combat reach and the
+        // server's spell range check uses combat reach (Spell::CheckRange). Against a big mob the
+        // bot read 2 to 3 yd farther than the server, and a hunter stood where Auto Shot was
+        // refused TOO_CLOSE (2026-10-19). The bool is ignored: the distance is always 3D.
+        float GetDistance(WorldObject const* obj, bool /*is3D*/, int distcalc) const
+        {
+            float d = GetDistance(obj, BotSizeFactor(distcalc));
+            return distcalc == 0 ? d * d : d;
+        }
         float GetDistance(WorldLocation const& position, SizeFactor distcalc = SizeFactor::BoundingRadius) const { return GetDistance(position.x, position.y, position.z, distcalc); }
         float GetDistance(Position const& position, SizeFactor distcalc = SizeFactor::BoundingRadius) const { return GetDistance(position.x, position.y, position.z, distcalc); }
         // IsFriend/IsEnemy on WorldObject (forward to Unit dispatch).
@@ -913,20 +926,20 @@ class WorldObject : public Object
         // while BOUNDING_RADIUS/COMBAT_REACH return the linear distance. Penqle's SizeFactor
         // overloads are always linear, so square the result for the NONE case to match.
         float GetDistance(float x, float y, float z, int distcalc) const {
-            float d = GetDistance(x, y, z, distcalc == 0 ? SizeFactor::None : (distcalc == 2 ? SizeFactor::CombatReach : SizeFactor::BoundingRadius));
+            float d = GetDistance(x, y, z, BotSizeFactor(distcalc));
             return distcalc == 0 ? d * d : d;
         }
         float GetDistance(WorldObject const* obj, int distcalc) const {
-            float d = GetDistance(obj, distcalc == 0 ? SizeFactor::None : (distcalc == 2 ? SizeFactor::CombatReach : SizeFactor::BoundingRadius));
+            float d = GetDistance(obj, BotSizeFactor(distcalc));
             return distcalc == 0 ? d * d : d;
         }
         // GetDistance2d 3-arg form taking int.
         float GetDistance2d(float x, float y, int distcalc) const {
-            float d = GetDistance2d(x, y, distcalc == 0 ? SizeFactor::None : (distcalc == 2 ? SizeFactor::CombatReach : SizeFactor::BoundingRadius));
+            float d = GetDistance2d(x, y, BotSizeFactor(distcalc));
             return distcalc == 0 ? d * d : d;
         }
         float GetDistance2d(WorldObject const* obj, int distcalc) const {
-            float d = GetDistance2d(obj, distcalc == 0 ? SizeFactor::None : (distcalc == 2 ? SizeFactor::CombatReach : SizeFactor::BoundingRadius));
+            float d = GetDistance2d(obj, BotSizeFactor(distcalc));
             return distcalc == 0 ? d * d : d;
         }
         float GetDistance2d(WorldObject const* obj, SizeFactor distcalc = SizeFactor::BoundingRadius) const;

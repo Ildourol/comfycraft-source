@@ -34,7 +34,25 @@ namespace ai
         // is the whole reason this exists.
         bool wasHoldingForPull = false;
 
+        // THE PLAYER'S OWN PULL. Takes a mob off the list while it is still
+        // running at the group, so a dps does not hit it on the way in. Released
+        // is for good, so a mob that runs again later in the fight (fear, a
+        // switch to the healer) is not held a second time. arrivedMs is when it
+        // reached the player, 0 before that.
+        struct Approach
+        {
+            bool held = true;
+            uint32 arrivedMs = 0;
+        };
+        std::map<ObjectGuid, Approach> approaching;
+        void HoldApproaching(std::list<ObjectGuid>& result);
+        bool holdingApproach = false;
+
     public:
+        // A mob was left off the list by the pull hold at the last calculation.
+        bool IsHoldingApproach() const { return holdingApproach; }
+
+
         // mod-playerbots spelling; the range argument there is folded into the
         // validity checks here, so it is accepted and dropped.
         // A real player swinging at the target, or casting a harmful spell at it that is not

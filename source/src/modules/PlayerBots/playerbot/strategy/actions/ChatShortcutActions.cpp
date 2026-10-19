@@ -33,6 +33,23 @@ void ReturnPositionResetAction::PrintStrategies(PlayerbotAI* ai, Event& event)
     }
 }
 
+// Follow and flee move the bot only. A defensive pet stays on its target until the mob
+// dies, so stop it and send it the pet bar's Follow. Its react state is kept: it still
+// fights back when hit.
+static void RecallPet(Player* bot)
+{
+    Pet* pet = bot->GetPet();
+    if (!pet || !pet->AI())
+        return;
+
+    const uint32 command = (uint32(ACT_COMMAND) << 24) | COMMAND_FOLLOW;
+    WorldPacket data(CMSG_PET_ACTION);
+    data << pet->GetObjectGuid();
+    data << command;
+    data << ObjectGuid();
+    bot->GetSession()->HandlePetAction(data);
+}
+
 bool FollowChatShortcutAction::Execute(Event& event)
 {
     Player* requester = event.getOwner() ? event.getOwner() : GetMaster();
@@ -69,6 +86,8 @@ bool FollowChatShortcutAction::Execute(Event& event)
     ai->ChangeStrategy("+follow,+passive,-stay,-wander,", BotState::BOT_STATE_NON_COMBAT);
     ai->ChangeStrategy("+follow,+passive,-stay,-guard,-wander", BotState::BOT_STATE_COMBAT);
     ai->FadePassiveAfter(5000);
+    ai->SetTightFollow(true);
+    RecallPet(bot);
 
     // Coming back to the master abandons a pull, and it has to be said out
     // loud. Passive and PullMultiplier would otherwise gate each other into a
@@ -139,12 +158,25 @@ bool StayChatShortcutAction::Execute(Event& event)
     if (!requester)
         return false;
 
+    // STAY IS "TAKE YOUR FORMATION SPOT AROUND ME, AND HOLD IT" (2026-10-19, the
+    // owner's request). The spot is worked out once, from where the requester
+    // stands and faces now, and stamped; `return to stay position` walks the bot
+    // to it and back to it. Before, the stamp was wherever the bot stood.
+    WorldPosition spot(bot);
+    Formation* formation = AI_VALUE(Formation*, "formation");
+    if (formation)
+    {
+        WorldLocation loc = formation->GetLocation();
+        if (!Formation::IsNullLocation(loc) && loc.mapid == bot->GetMapId())
+            spot = WorldPosition(loc);
+    }
+
     ai->Reset();
     ai->ChangeStrategy("+stay,-follow,-wander,-passive", BotState::BOT_STATE_NON_COMBAT);
     ai->ChangeStrategy("+stay,-follow,-wander,-passive", BotState::BOT_STATE_COMBAT);
 
-    SetPosition(bot);
-    SetPosition(bot, "stay");
+    SetPosition(spot);
+    SetPosition(spot, "stay");
     MEM_AI_VALUE(WorldPosition, "master position")->Reset();
 
     PrintStrategies(ai, event);
@@ -219,6 +251,7 @@ bool FleeChatShortcutAction::Execute(Event& event)
     ai->ChangeStrategy("+" + movement + ",+passive", BotState::BOT_STATE_NON_COMBAT);
     ai->ChangeStrategy("+" + movement + ",+passive", BotState::BOT_STATE_COMBAT);
     ai->CancelPassiveFade(); // flee is the one that stays passive
+    RecallPet(bot);
     ResetPosition();
 
     // Same deadlock as follow: passive and PullMultiplier gate each other, so

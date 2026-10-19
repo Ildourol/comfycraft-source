@@ -191,6 +191,7 @@ namespace ai
         MovementStrategyContext() : NamedObjectContext<Strategy>(false, true)
         {
             creators["follow"] = [](PlayerbotAI* ai) { return new FollowMasterStrategy(ai); };
+            creators["patrol watch"] = [](PlayerbotAI* ai) { return new PatrolWatchStrategy(ai); };
             creators["stay"] = [](PlayerbotAI* ai) { return new StayStrategy(ai); };
             creators["runaway"] = [](PlayerbotAI* ai) { return new RunawayStrategy(ai); };
             creators["flee from adds"] = [](PlayerbotAI* ai) { return new FleeFromAddsStrategy(ai); };

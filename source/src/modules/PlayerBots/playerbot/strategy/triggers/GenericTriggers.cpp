@@ -1,6 +1,7 @@
 
 #include "playerbot/playerbot.h"
 #include "GenericTriggers.h"
+#include "LootTriggers.h"
 #include "playerbot/LootObjectStack.h"
 #include "playerbot/PlayerbotAIConfig.h"
 #include "playerbot/strategy/values/PositionValue.h"
@@ -53,26 +54,44 @@ static bool GroupIsPulling(PlayerbotAI* ai)
 
 bool HighManaTrigger::IsActive()
 {
-    if (GroupIsPulling(ai))
-        return false;
-
     if (!AI_VALUE2(bool, "has mana", "self target"))
         return false;
 
     const uint8 mana = AI_VALUE2(uint8, "mana", "self target");
+    const bool alreadyDrinking = ai->HasAura("drink", bot) || !bot->IsStandState();
+
+    // Buffs first. Party buff triggers are checked every 2 s, so on a tick that
+    // skipped them the drink won, the bot sat, and the next buff stood it up again.
+    // No new drink until 3 s pass with no buff cast (2026-10-18).
+    if (!alreadyDrinking && ai->BuffedWithin(3))
+        return false;
 
     // WHO IS DRINKING MATTERS MORE THAN THE NUMBER.
     //
-    // DrinkAtMana is 95 and the config comment defends that for the case it was
+    // DrinkAtMana (95 then, 90 now) and the config comment defends that for the case it was
     // written for: "a healer that starts a pull two thirds full runs dry before
     // it ends". True of healers, and only of healers. Applied to a mage it meant
     // sitting down after almost every sheep, which is not restoring mana so much
     // as being unavailable - and out-of-combat is exactly when a pull is being
     // set up, so the group waited on a mage drinking off the last 5%.
+    //
+    // A healer also drinks through a pull. The pull hold below is for bots
+    // that must walk somewhere when the pull lands; a healer waits at the
+    // anchor, and its mana is what the fight runs on. HealerKeepsDrinking
+    // keeps it seated when the fight starts.
+    // Below DrinkAtMana to sit; once sitting, to full, like the 50/90 pair below.
     if (PlayerbotAI::IsHeal(bot))
     {
-        return mana < sPlayerbotAIConfig.drinkAtMana;
+        return alreadyDrinking ? (mana < 100) : (mana < sPlayerbotAIConfig.drinkAtMana);
     }
+
+    if (GroupIsPulling(ai))
+        return false;
+
+    // Not down to a drink while the group fights: a held pull leaves the bot in
+    // the non-combat engine (AttackersValue::HoldApproaching).
+    if (!alreadyDrinking && GroupInCombat(ai, bot))
+        return false;
 
     // TWO NUMBERS, BECAUSE THIS TRIGGER IS BOTH THE START AND THE STOP.
     //
@@ -87,8 +106,6 @@ bool HighManaTrigger::IsActive()
     // So: do not sit down before half, and once sitting, finish the job. The
     // ceiling is short of full on purpose - the last few percent take as long
     // as the rest and nobody is waiting on them.
-    const bool alreadyDrinking = ai->HasAura("drink", bot) || !bot->IsStandState();
-
     return alreadyDrinking ? (mana < 90) : (mana < 50);
 }
 
@@ -100,6 +117,9 @@ bool NeedsFoodTrigger::IsActive()
 {
     // Same as drinking - see GroupIsPulling above.
     if (GroupIsPulling(ai))
+        return false;
+
+    if (bot->IsStandState() && GroupInCombat(ai, bot))
         return false;
 
     return AI_VALUE2(uint8, "health", "self target") < sPlayerbotAIConfig.eatAtHealth;

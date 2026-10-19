@@ -217,6 +217,9 @@ bool PlayerbotAIConfig::Initialize()
     if (companionReviveDelay > 600)
         companionReviveDelay = 600;
 
+    companionSummonCooldown = config.GetIntDefault("AiPlayerbot.CompanionSummonCooldown", 60);
+    looseFollowDistance = config.GetFloatDefault("AiPlayerbot.LooseFollowDistance", 10.0f);
+
     randomGearMaxLevel = config.GetIntDefault("AiPlayerbot.RandomGearMaxLevel", 500);
     randomGearMaxDiff = config.GetIntDefault("AiPlayerbot.RandomGearMaxDiff", 9);
     randomGearUpgradeEnabled = config.GetBoolDefault("AiPlayerbot.RandomGearUpgradeEnabled", true);

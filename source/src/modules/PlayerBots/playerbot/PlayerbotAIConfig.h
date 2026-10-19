@@ -171,6 +171,11 @@ public:
     // behaviour and leaves companions on the upstream corpse-run path.
     uint32 companionReviveDelay;
 
+    // Seconds between two `summon` orders to the same companion. Summon is the
+    // way out for a stuck companion, not a teleport to use in play.
+    uint32 companionSummonCooldown;
+    float looseFollowDistance;
+
     uint32 openGoSpell;
     bool randomBotAutologin;
     BotAutoLogin botAutologin;

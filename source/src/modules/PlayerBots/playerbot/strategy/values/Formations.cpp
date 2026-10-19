@@ -76,6 +76,14 @@ WorldLocation MoveAheadFormation::GetLocation()
 
     WorldLocation loc = GetLocationInternal();
 
+    // THE SPOT STAYS ON THE FOLLOW TARGET'S LEVEL (2026-10-19). The height comes
+    // from the server's ground, and on the Deadmines ship deck (z 41) that is the
+    // floor under the ship (z -2): companions told to Stay walked through the
+    // deck to it. A height more than 3 yd off the target's is replaced by the
+    // target's own.
+    if (!Formation::IsNullLocation(loc) && std::fabs(loc.coord_z - followTarget->GetPositionZ()) > 3.0f)
+        loc.coord_z = followTarget->GetPositionZ();
+
     return loc;
 
     /*

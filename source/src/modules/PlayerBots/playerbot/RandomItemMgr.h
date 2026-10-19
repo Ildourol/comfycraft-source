@@ -203,6 +203,10 @@ class RandomItemMgr
         void BuildRandomItemCache();
         void BuildEquipCache();
         void BuildItemInfoCache();
+        // What the item info cache is built from; equal to the saved one means the
+        // saved rows are still right and LoadItemInfoCache can use them.
+        std::string ItemInfoFingerprint();
+        bool LoadItemInfoCache(const std::string& fingerprint);
         void BuildAmmoCache();
         void BuildFoodCache();
         void BuildPotionCache();

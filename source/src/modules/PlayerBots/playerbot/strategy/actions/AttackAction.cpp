@@ -9,6 +9,8 @@
 #include "playerbot/strategy/generic/CombatStrategy.h"
 #include "playerbot/strategy/values/CcTargetValue.h"
 #include "playerbot/strategy/generic/PullStrategy.h"
+#include "playerbot/CompanionOwnership.h"
+#include "playerbot/strategy/generic/UseFoodStrategy.h"
 #include "playerbot/strategy/values/AttackersValue.h"
 
 using namespace ai;
@@ -48,6 +50,14 @@ void ai::EngageOnOrder(PlayerbotAI* botAi)
     botAi->ChangeStrategy("-passive", BotState::BOT_STATE_NON_COMBAT);
     botAi->ChangeStrategy("-passive", BotState::BOT_STATE_COMBAT);
     botAi->ChangeStrategy("-follow", BotState::BOT_STATE_COMBAT);
+
+    // EXCEPT A HEALER WITH A DRINK, which keeps it. The healer has nothing to
+    // walk to on a pull: the anchor is the player, and the healer is sitting
+    // next to the player. It also stays in the non-combat engine, where its
+    // meal sleep holds; the `combat start` trigger moves it to the combat
+    // engine when the fight reaches the group, and there it gets up to heal.
+    if (HealerKeepsDrinking(botAi))
+        return;
 
     // AND UP OFF THE FLOOR.
     //
@@ -257,8 +267,21 @@ bool AttackAction::Attack(Player* requester, Unit* target)
             UnitAI* creatureAI = ((Creature*)pet)->AI();
             if (creatureAI)
             {
+                const bool sendPet = !isWaitingForAttack && (!ai->HasStrategy("stay", BotState::BOT_STATE_COMBAT) || AI_VALUE2(float, "distance", "current target") < ai->GetRange("spell"));
+
+                // A companion's pet is always passive (PlayerbotAI::DoNextAction) and
+                // goes in only on this order, the pet bar's Attack. A defensive pet
+                // took the player's pull on its way in (2026-10-18).
+                if (sendPet && CompanionOwnership::IsCompanion(bot->GetGUIDLow()))
+                {
+                    WorldPacket data(CMSG_PET_ACTION);
+                    data << pet->GetObjectGuid();
+                    data << uint32((uint32(ACT_COMMAND) << 24) | COMMAND_ATTACK);
+                    data << target->GetObjectGuid();
+                    bot->GetSession()->HandlePetAction(data);
+                }
                 // Don't send the pet to attack if the bot is waiting for attack
-                if (!isWaitingForAttack && (!ai->HasStrategy("stay", BotState::BOT_STATE_COMBAT) || AI_VALUE2(float, "distance", "current target") < ai->GetRange("spell")))
+                else if (sendPet)
                 {
                     // Reset the pet state if no master
                     if (creatureAI->GetReactState() == REACT_PASSIVE && !ai->GetMaster())
@@ -282,8 +305,13 @@ bool AttackAction::Attack(Player* requester, Unit* target)
 
         bool result = true;
 
+        // A healer in a player's group takes the target for its wand and nothing
+        // more. Auto-attack drew the weapon and played the attack emote with no
+        // swing to follow, since a healer does not melee (MeleeAction).
+        const bool healerTargetOnly = PlayerbotAI::IsHeal(bot) && ai->HasRealPlayerMaster();
+
         // Don't attack target if it is waiting for attack or in stealth
-        if (!ai->HasStrategy("stealthed", BotState::BOT_STATE_COMBAT) && !isWaitingForAttack)
+        if (!healerTargetOnly && !ai->HasStrategy("stealthed", BotState::BOT_STATE_COMBAT) && !isWaitingForAttack)
         {
             ai->PlayAttackEmote(1);
             result = bot->Attack(target, !ai->IsRanged(bot) || (sServerFacade.GetDistance2d(bot, target) < 5.0f));

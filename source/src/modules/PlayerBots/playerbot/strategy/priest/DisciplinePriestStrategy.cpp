@@ -44,6 +44,16 @@ void DisciplinePriestStrategy::InitCombatTriggers(std::list<TriggerNode*>& trigg
     triggers.push_back(new TriggerNode(
         "party member almost full health",
         NextAction::array(0, new NextAction("renew on party", ACTION_LIGHT_HEAL), NULL)));
+
+    // Below Renew, so it runs only while Renew is already on the target.
+    triggers.push_back(new TriggerNode(
+        "party member top up health",
+        NextAction::array(0, new NextAction("heal on party", ACTION_LIGHT_HEAL - 1), NULL)));
+
+    // Renew at any health lost, in combat only.
+    triggers.push_back(new TriggerNode(
+        "party member any health lost",
+        NextAction::array(0, new NextAction("renew on party", ACTION_LIGHT_HEAL), NULL)));
 }
 
 void DisciplinePriestStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)

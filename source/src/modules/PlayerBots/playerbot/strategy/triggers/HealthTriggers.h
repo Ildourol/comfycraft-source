@@ -104,6 +104,30 @@ namespace ai
         bool IsActive() override;
     };
 
+    // Any health lost, almostFullHealth up to full. A priest puts Renew on in
+    // combat at any loss (the owner's request, 2026-10-18); combat strategies only,
+    // so the buffs out of combat are not mixed with Renews.
+    class PartyMemberAnyHealthLostTrigger : public PartyMemberLowHealthTrigger
+    {
+    public:
+        PartyMemberAnyHealthLostTrigger(PlayerbotAI* ai) :
+            PartyMemberLowHealthTrigger(ai, "party member any health lost", 100, sPlayerbotAIConfig.almostFullHealth) {}
+
+        bool IsActive() override;
+    };
+
+    // The lower part of the top-up tier, mediumHealth to 80 percent. A priest's top-up
+    // is Renew, and Renew is not cast again while it runs, so a healer wanded from 90
+    // down to 70 percent. This tier gives the direct heal that fills that gap.
+    class PartyMemberTopUpHealthTrigger : public PartyMemberLowHealthTrigger
+    {
+    public:
+        PartyMemberTopUpHealthTrigger(PlayerbotAI* ai) :
+            PartyMemberLowHealthTrigger(ai, "party member top up health", 80, sPlayerbotAIConfig.mediumHealth) {}
+
+        bool IsActive() override;
+    };
+
     class TargetLowHealthTrigger : public HealthInRangeTrigger 
     {
     public:

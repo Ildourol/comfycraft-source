@@ -4,6 +4,9 @@
 #include "UseItemAction.h"
 #include "playerbot/strategy/values/CcTargetValue.h"
 
+#include <iomanip>
+#include <sstream>
+
 using namespace ai;
 
 CastSpellAction::CastSpellAction(PlayerbotAI* ai, std::string spell)
@@ -101,18 +104,35 @@ bool CastSpellAction::isPossible()
         }
     }
 
+    // WHY "IMPOSSIBLE". With `debug action` on, the engine prints
+    // "try: <spell> impossible" and nothing more, and this function has four
+    // ways to say no. Say which one, on the line before the engine's.
+    // (2026-10-18: a hunter's Auto Shot was refused every tick of a fight while
+    // Multi-Shot and Serpent Sting worked, and the log could not say why.)
+    const bool explain = ai->HasStrategy("debug action", BotState::BOT_STATE_NON_COMBAT) && ai->GetMaster();
+    auto why = [&](const std::string& reason)
+    {
+        if (explain)
+            ai->TellPlayerNoFacing(ai->GetMaster(), "why: " + spellName + " " + reason,
+                PlayerbotSecurityLevel::PLAYERBOT_SECURITY_ALLOW_ALL, true, false);
+    };
+
     Unit* spellTarget = GetTarget();
     if (!spellTarget)
+    {
+        why("no target (" + GetTargetName() + ")");
         return false;
+    }
 
     bool canReach = false;
+    float dist = 0.0f, minRange = 0.0f, maxRange = range + sPlayerbotAIConfig.contactDistance;
     if (spellTarget == bot)
     {
         canReach = true;
     }
     else
     {
-        float dist = bot->GetDistance(spellTarget, true, ai->IsRanged(bot) ? DIST_CALC_COMBAT_REACH : DIST_CALC_COMBAT_REACH_WITH_MELEE);
+        dist = bot->GetDistance(spellTarget, true, ai->IsRanged(bot) ? DIST_CALC_COMBAT_REACH : DIST_CALC_COMBAT_REACH_WITH_MELEE);
         if (range == ATTACK_DISTANCE) 
         {
             canReach = bot->CanReachWithMeleeAttack(spellTarget);
@@ -133,6 +153,8 @@ bool CastSpellAction::isPossible()
                 if (ai->GetSpellRange(GetSpellName(), &max_range, &min_range))
                 {
                     canReach = dist < max_range && dist >= min_range;
+                    minRange = min_range;
+                    maxRange = max_range;
                 }
             }
         }
@@ -140,11 +162,44 @@ bool CastSpellAction::isPossible()
 
     if(!canReach)
     {
+        if (explain)
+        {
+            std::ostringstream out;
+            out << std::fixed << std::setprecision(1) << "out of reach: " << spellTarget->GetName()
+                << " at " << dist << ", range " << minRange << "-" << maxRange;
+            why(out.str());
+        }
+
         return false;
     }
     
     // Check if the spell can be casted
-	return ai->CanCastSpell(spellName, spellTarget, 0, nullptr, true);
+    SpellCastResult result = SPELL_CAST_OK;
+    const bool possible = ai->CanCastSpell(spellName, spellTarget, 0, nullptr, true, false, false, &result);
+    if (!possible)
+        why("refused on " + std::string(spellTarget->GetName()) + ", cast result " + std::to_string((uint32)result));
+
+    // A HEAL STOPS THE WAND (2026-10-18). Every wand shot starts the global
+    // cooldown, so a heal checked while the wand runs is NOT_READY, and the bot
+    // gave up instead of stopping the wand: a priest wanded for 28 s while the
+    // party died, about 6,000 refused heals. A player who casts stops the wand
+    // first. So does the bot now, and the heal goes out on a later tick.
+    if (!possible && result == SPELL_FAILED_NOT_READY)
+    {
+        Spell* autoRepeat = bot->GetCurrentSpell(CURRENT_AUTOREPEAT_SPELL);
+        SpellEntry const* spellInfo = sServerFacade.LookupSpellInfo(GetSpellID());
+        const bool heal = dynamic_cast<CastHealingSpellAction*>(this) || (spellInfo && PlayerbotAI::IsHealSpell(spellInfo));
+        if (autoRepeat && spellInfo && autoRepeat->m_spellInfo->Id != spellInfo->Id && heal)
+        {
+            bot->InterruptSpell(CURRENT_AUTOREPEAT_SPELL);
+            // And keep it stopped: the timer restarted it each second, each start
+            // began the cooldown again, and the heal waited 4 s.
+            ai->NoteHealCast();
+            why("stopped the wand for " + spellName);
+        }
+    }
+
+    return possible;
 }
 
 bool CastSpellAction::isUseful()
@@ -345,6 +400,26 @@ bool CastShootAction::isPossible()
     return false;
 }
 
+// ONLY HEALS FOR 10 S AFTER A HEAL (2026-10-18, the owner's request).
+//
+// A healer wanded between heals, and each wand shot starts the global cooldown,
+// so the next heal waited or was refused. After a heal that worked, a healer does
+// not start the wand for HEAL_ONLY_SECONDS, and the wand stops if it runs.
+static const time_t HEAL_ONLY_SECONDS = 10;
+
+bool CastShootAction::isUseful()
+{
+    if (PlayerbotAI::IsHeal(bot) && ai->HealedWithin(HEAL_ONLY_SECONDS))
+    {
+        if (bot->GetCurrentSpell(CURRENT_AUTOREPEAT_SPELL))
+            bot->InterruptSpell(CURRENT_AUTOREPEAT_SPELL);
+
+        return false;
+    }
+
+    return CastSpellAction::isUseful();
+}
+
 bool CastShootAction::Execute(Event& event)
 {
     bool succeeded = false;
@@ -353,20 +428,22 @@ bool CastShootAction::Execute(Event& event)
 
     if (rangedWeapon && !needsAmmo)
     {
-        // Prevent calling the shoot spell when already active
+        // Prevent calling the shoot spell when already active.
+        //
+        // No wait while the weapon fires. This set the weapon speed plus the
+        // GCD (3 s or more) on every call, and a healer priest calls shoot
+        // once a second between heals, so it did not see a party member's
+        // health for most of each fight (2026-10-17). A new shot keeps the
+        // duration CastSpellAction sets, the GCD.
         Spell* autoRepeatSpell = ai->GetBot()->GetCurrentSpell(CURRENT_AUTOREPEAT_SPELL);
         if (autoRepeatSpell && (autoRepeatSpell->m_spellInfo->Id == GetSpellID()))
         {
+            SetDuration(sPlayerbotAIConfig.reactDelay);
             succeeded = true;
         }
         else if (CastSpellAction::Execute(event))
         {
             succeeded = true;
-        }
-
-        if (succeeded)
-        {
-            SetDuration(weaponDelay);
         }
     }
 
@@ -591,7 +668,6 @@ void CastShootAction::UpdateWeaponInfo()
             {
                 SetSpellName(spellName);
                 rangedWeapon = equippedWeapon;
-                weaponDelay = itemPrototype->Delay + sPlayerbotAIConfig.globalCoolDown;
             }
         }
 

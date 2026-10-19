@@ -8,6 +8,8 @@
 #include "playerbot/PerformanceMonitor.h"
 #include "playerbot/BotActionLog.h"
 #include "playerbot/strategy/generic/PullStrategy.h"
+#include "playerbot/strategy/generic/UseFoodStrategy.h"
+#include "playerbot/strategy/actions/GenericSpellActions.h"
 
 #ifdef BUILD_ELUNA
 #include "LuaEngine/LuaEngine.h"
@@ -169,6 +171,14 @@ bool Engine::DoNextAction(Unit* unit, int depth, bool minimal, bool isStunned)
 
     std::vector<Action*> modifiedActions;
 
+    // A seated healer with a drink runs only its heals. A gate on isUseful, not
+    // a multiplier: a zeroed action still runs when nothing outranks it (see
+    // PassiveMultiplier::Allows). Read once per tick; HealerKeepsDrinking
+    // explains the releases.
+    // Out of combat the same gate covers every bot at a meal (MealKeepsBotSeated).
+    const bool healerDrinking = (state == BotState::BOT_STATE_COMBAT && HealerKeepsDrinking(ai)) ||
+        (state == BotState::BOT_STATE_NON_COMBAT && MealKeepsBotSeated(ai));
+
     int iterations = 0;
     int iterationsPerTick = queue.Size() * (minimal ? (uint32)(sPlayerbotAIConfig.iterationsPerTick / 2) : sPlayerbotAIConfig.iterationsPerTick);
     bool hasBasket = false;
@@ -245,7 +255,8 @@ bool Engine::DoNextAction(Unit* unit, int depth, bool minimal, bool isStunned)
             else
             {
                 bool isUseful = false;
-                if (!isStunned || action->isUsefulWhenStunned())
+                if ((!isStunned || action->isUsefulWhenStunned()) &&
+                    (!healerDrinking || AllowedWhileHealerDrinks(action)))
                 {
                     auto pmo2 = sPerformanceMonitor.start(PERF_MON_ACTION, "isUseful", ai);
                     isUseful = action->isUseful();
@@ -849,6 +860,10 @@ bool Engine::ListenAndExecute(Action* action, Event& event)
         {
             ai->SetActionDuration(action);
             lastExecutedAction = action;
+            if (dynamic_cast<CastBuffSpellAction*>(action))
+                ai->NoteBuffCast();
+            if (dynamic_cast<CastHealingSpellAction*>(action))
+                ai->NoteHealCast();
         }
     }
 

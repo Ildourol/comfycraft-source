@@ -62,6 +62,24 @@ bool PartyMemberAlmostFullHealthTrigger::IsActive()
     return PartyMemberLowHealthTrigger::IsActive();
 }
 
+// The same mana floor as the top-up tiers.
+bool PartyMemberAnyHealthLostTrigger::IsActive()
+{
+    if (AI_VALUE2(uint8, "mana", "self target") < sPlayerbotAIConfig.mediumMana)
+        return false;
+
+    return PartyMemberLowHealthTrigger::IsActive();
+}
+
+// The same mana floor as the tier above it.
+bool PartyMemberTopUpHealthTrigger::IsActive()
+{
+    if (AI_VALUE2(uint8, "mana", "self target") < sPlayerbotAIConfig.mediumMana)
+        return false;
+
+    return PartyMemberLowHealthTrigger::IsActive();
+}
+
 bool PartyMemberDeadTrigger::IsActive()
 {
 	return GetTarget();

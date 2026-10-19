@@ -54,9 +54,11 @@ bool CompanionReviveTrigger::IsActive()
     if (!sPlayerbotAIConfig.companionReviveDelay)
         return false;
 
-    // Reset here rather than on resurrect: this is the one place guaranteed to
-    // run every tick whatever engine is active, so a companion that was raised
-    // by a healer starts its next death from zero and not from a stale stamp.
+    // This branch is NOT the reset it looks like. Only the dead engine runs this
+    // trigger, and a revived bot leaves that engine before it ticks again, so
+    // this seldom sees a live bot. The reset that counts is Restart(), called
+    // from PlayerbotAI::OnDeath. Without it a death outside combat read the
+    // previous death's stamp and revived at once (fixed 2026-10-18).
     if (sServerFacade.IsAlive(bot))
     {
         outOfCombatSince = 0;

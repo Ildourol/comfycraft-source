@@ -12,6 +12,13 @@ bool MeleeAction::isUseful()
     if (ai->IsInVehicle() && !ai->IsInVehicle(false, false, true))
         return false;
 
+    // A HEALER IN A PLAYER'S GROUP DOES NOT MELEE (2026-10-18). `melee` is the
+    // priest wand's fallback, and the wand is impossible during every heal's
+    // cooldown, so the healer walked into melee between heals. A solo healer
+    // keeps it.
+    if (PlayerbotAI::IsHeal(bot) && ai->HasRealPlayerMaster())
+        return false;
+
     return true;
 }
 

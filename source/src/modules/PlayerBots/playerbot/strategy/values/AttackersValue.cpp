@@ -1,6 +1,8 @@
 
 #include "playerbot/playerbot.h"
 #include "AttackersValue.h"
+#include <iomanip>
+#include <sstream>
 #include "PossibleTargetsValue.h"
 #include "EnemyPlayerValue.h"
 #include "playerbot/strategy/generic/PullStrategy.h"
@@ -198,6 +200,7 @@ std::list<ObjectGuid> AttackersValue::Calculate()
             for(auto& guid : filter)
                 result.remove(guid);
 
+            HoldApproaching(result);
             return result;
         }
     }
@@ -239,7 +242,138 @@ std::list<ObjectGuid> AttackersValue::Calculate()
         result.push_back(target->GetObjectGuid());
     }
 
+    HoldApproaching(result);
     return result;
+}
+
+// HOLD FIRE WHILE THE PULL COMES IN (2026-10-18, the owner's request).
+//
+// The player pulls with a shot and the mob runs at them. It is in combat from
+// the first hit, so it was on this list at once, and a dps companion hit it on
+// the way in and took it off the tank. The tank pull hold above covers only a
+// pull made by a companion tank.
+//
+// So a mob running at anyone in the group, and not yet in melee with them, is
+// left off until it arrives. Anyone, not only the player: a Renew on the tank
+// during the pull turns the mob onto the priest, and that must not release it
+// early. A mob running at a companion is held the same way, so self-defence also
+// waits for arrival.
+//
+// A mob that reaches the player is not released on arrival: the hunter's pet was
+// on it before the player's first swing. It is released by the player's melee
+// attack on it (a tank), or APPROACH_GRACE_MS after it arrived (a ranged dps that
+// never swings). A caster that stops at range is the same once the player walks
+// up to it.
+//
+// There is no time limit. An 8 s one released a slow mob on the way in. While a
+// mob is held, the bot's list can be empty: it stays in the non-combat engine,
+// follows the player and heals from there. Loot and meals check the group's
+// combat flag (GroupInCombat), so it does not loot or sit down.
+//
+// Only for a bot led by a real player. Random bots and bot-led groups keep the
+// old behaviour.
+static const uint32 APPROACH_GRACE_MS = 1500;
+
+void AttackersValue::HoldApproaching(std::list<ObjectGuid>& result)
+{
+    holdingApproach = false;
+    if (!ai->HasRealPlayerMaster())
+    {
+        approaching.clear();
+        return;
+    }
+
+    Player* master = ai->GetMaster();
+    const uint32 now = sWorld.GetCurrentMSTime();
+    std::map<ObjectGuid, Approach> seen;
+
+    for (auto it = result.begin(); it != result.end();)
+    {
+        const ObjectGuid guid = *it;
+        Unit* unit = ai->GetUnit(guid);
+
+        auto known = approaching.find(guid);
+        Approach state = known != approaching.end() ? known->second : Approach();
+        const bool released = !state.held;
+
+        if (released || !unit || unit->IsPlayer() || !sServerFacade.IsAlive(unit))
+        {
+            if (released)
+                seen[guid] = state;
+
+            ++it;
+            continue;
+        }
+
+        // No victim yet counts as coming in: the player's shot puts the mob on
+        // this list while it is still in flight, before the mob picks anyone.
+        Unit* victim = unit->GetVictim();
+        Player* victimPlayer = victim ? victim->GetCharmerOrOwnerPlayerOrPlayerItself() : nullptr;
+        const bool atGroup = victimPlayer &&
+            (victimPlayer == bot || victimPlayer == master || bot->IsInSameGroupWith(victimPlayer));
+
+        // Fighting somebody outside the group: none of this pull's business.
+        if (victim && !atGroup)
+        {
+            ++it;
+            continue;
+        }
+
+        // With `debug` on, the hold says what it does with each mob: once when it
+        // starts holding, once when it lets go, and why.
+        const bool explain = ai->HasStrategy("debug", BotState::BOT_STATE_NON_COMBAT) && master;
+        auto where = [&](Unit* other) -> std::string
+        {
+            std::ostringstream out;
+            out << std::fixed << std::setprecision(1) << sServerFacade.GetDistance2d(unit, other) << " yd from " << other->GetName();
+            return out.str();
+        };
+
+        // At a companion (or a pet): it defends itself at once.
+        bool release = victim && victim != master && unit->CanReachWithMeleeAttack(victim);
+        std::string reason = release ? "reached " + where(victim) : "";
+
+        // At the player, or the player went up to it.
+        if (!release && master && sServerFacade.IsAlive(master) && unit->CanReachWithMeleeAttack(master))
+        {
+            if (master->GetVictim() == unit)
+            {
+                release = true;
+                reason = "you attack it, " + where(master);
+            }
+            else if (!state.arrivedMs)
+                state.arrivedMs = now ? now : 1;
+            else if (now - state.arrivedMs >= APPROACH_GRACE_MS)
+            {
+                release = true;
+                reason = "1.5 s at you, " + where(master);
+            }
+        }
+
+        if (!release)
+        {
+            if (explain && known == approaching.end())
+                ai->TellPlayerNoFacing(master, "hold: holding " + std::string(unit->GetName()) + ", " + where(master) +
+                    (victim ? ", on " + std::string(victim->GetName()) : ", no target yet"));
+
+            holdingApproach = true;
+            seen[guid] = state;
+            it = result.erase(it);
+            continue;
+        }
+
+        if (explain)
+            ai->TellPlayerNoFacing(master, "hold: released " + std::string(unit->GetName()) + ", " + reason +
+                (known == approaching.end() ? " (never held)" : ""));
+
+        // Fought from now on.
+        state.held = false;
+        seen[guid] = state;
+        ++it;
+    }
+
+    // Keep only what is still on the list, so the map cannot grow.
+    approaching.swap(seen);
 }
 
 void AttackersValue::AddTargetsOf(Group* group, std::set<Unit*>& targets, std::set<ObjectGuid>& invalidTargets, bool getOne)

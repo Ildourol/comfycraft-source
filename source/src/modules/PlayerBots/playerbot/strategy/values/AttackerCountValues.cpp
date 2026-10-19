@@ -1,6 +1,7 @@
 
 #include "playerbot/playerbot.h"
 #include "AttackerCountValues.h"
+#include "AttackersValue.h"
 #include "playerbot/PlayerbotAIConfig.h"
 #include "playerbot/ServerFacade.h"
 
@@ -68,9 +69,19 @@ uint8 PossibleAttackTargetsCountValue::Calculate()
     return context->GetValue<std::list<ObjectGuid>>("possible attack targets")->Get().size();
 }
 
+// A mob held by the pull hold does not START a fight: from out of combat the bot
+// stays in the non-combat engine and follows the player while it runs in
+// (AttackersValue::HoldApproaching). It does KEEP one going: in a chain pull the
+// last mob died while the next was held, the bot left the combat engine, and a
+// healer walked from its spot back to the player (2026-10-18).
 bool HasAttackersValue::Calculate()
 {
-    return !context->GetValue<std::list<ObjectGuid>>("attackers", 1)->Get().empty();
+    Value<std::list<ObjectGuid>>* attackers = context->GetValue<std::list<ObjectGuid>>("attackers", 1);
+    if (!attackers->Get().empty())
+        return true;
+
+    AttackersValue* held = dynamic_cast<AttackersValue*>(attackers);
+    return held && held->IsHoldingApproach() && ai->IsStateActive(BotState::BOT_STATE_COMBAT);
 }
 
 bool HasPossibleAttackTargetsValue::Calculate()

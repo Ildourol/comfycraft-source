@@ -94,7 +94,9 @@ Unit* PartyMemberToHeal::Calculate()
                 incomingDamage = getIncomingdamage(player);
 
             uint8 health = (((player->GetHealth() - incomingDamage) * 100.0f) / player->GetMaxHealth());
-            if (isTank || (health < sPlayerbotAIConfig.almostFullHealth && !IsTargetOfSpellCast(player, predicate)))
+            // Anyone below full is a candidate: a priest's Renew fires at any health
+            // lost in combat. Each health trigger still checks its own range.
+            if (isTank || (health < 100 && !IsTargetOfSpellCast(player, predicate)))
             { 
                 needHeals.push_back(player);
             }

@@ -16,6 +16,10 @@ namespace ai
         bool Teleport(Player* requester, Player *summoner, Player *player);
         bool SummonUsingGos(Player* requester, Player *summoner, Player *player);
         bool SummonUsingNpcs(Player* requester, Player *summoner, Player *player);
+
+        // When this companion was last summoned by its owner. A member, because
+        // the context keeps one action per bot.
+        time_t lastCompanionSummon = 0;
     };
 
     class UseMeetingStoneAction : public SummonAction

@@ -4,6 +4,9 @@
 
 namespace ai
 {
+    // The bot, its master or a group member in sight range has the game's combat flag.
+    bool GroupInCombat(PlayerbotAI* ai, Player* bot);
+
     class LootAvailableTrigger : public Trigger
     {
     public:

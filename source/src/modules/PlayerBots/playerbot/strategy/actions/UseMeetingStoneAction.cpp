@@ -3,6 +3,7 @@
 #include "UseMeetingStoneAction.h"
 #include "playerbot/PlayerbotAIConfig.h"
 #include "playerbot/ServerFacade.h"
+#include "playerbot/CompanionOwnership.h"
 
 #include "Maps/GridNotifiers.h"
 #include "Maps/GridNotifiersImpl.h"
@@ -77,6 +78,51 @@ bool SummonAction::Execute(Event& event)
     Player* requester = event.getOwner() ? event.getOwner() : GetMaster();
     if (!requester || requester->IsBeingTeleported())
         return false;
+
+    // A COMPANION COMES TO ITS OWNER FOR FREE, and never comes back to life
+    // this way. `summon` is the owner's way out when a companion fell through a
+    // floor or got stuck, so it needs no meeting stone. Teleport would also
+    // revive a dead bot at full health, which skips the companion revive wait
+    // (CompanionReviveTrigger), so a dead companion refuses. That holds for a GM
+    // too: the revive wait is the rule, and a GM has other ways to revive.
+    if (CompanionOwnership::IsCompanion(bot->GetGUIDLow()))
+    {
+        if (!sServerFacade.IsAlive(bot))
+        {
+            ai->TellPlayerNoFacing(requester, "I'm dead. I get up after the fight.",
+                PlayerbotSecurityLevel::PLAYERBOT_SECURITY_ALLOW_ALL, false, true, true);
+            return false;
+        }
+
+        if (CompanionOwnership::GetOwner(bot->GetGUIDLow()) == requester->GetGUIDLow())
+        {
+            // Out of combat only, and not more than once a minute: a way out
+            // for a stuck companion, not a teleport to use in a fight.
+            if (sServerFacade.IsInCombat(requester) || sServerFacade.IsInCombat(bot))
+            {
+                ai->TellPlayerNoFacing(requester, "Not in combat.",
+                    PlayerbotSecurityLevel::PLAYERBOT_SECURITY_ALLOW_ALL, false, true, true);
+                return false;
+            }
+
+            const time_t now = time(nullptr);
+            const time_t ready = lastCompanionSummon + (time_t)sPlayerbotAIConfig.companionSummonCooldown;
+            if (lastCompanionSummon && now < ready)
+            {
+                ai->TellPlayerNoFacing(requester, "Summon ready in " + std::to_string(ready - now) + " s.",
+                    PlayerbotSecurityLevel::PLAYERBOT_SECURITY_ALLOW_ALL, false, true, true);
+                return false;
+            }
+
+            if (!Teleport(requester, requester, bot))
+                return false;
+
+            lastCompanionSummon = now;
+            ai->TellPlayerNoFacing(requester, BOT_TEXT("hello"),
+                PlayerbotSecurityLevel::PLAYERBOT_SECURITY_ALLOW_ALL, false, true, true);
+            return true;
+        }
+    }
 
     // Say something either way. The meeting stone and innkeeper routes below
     // both report what happened; this one used to return in silence, which is

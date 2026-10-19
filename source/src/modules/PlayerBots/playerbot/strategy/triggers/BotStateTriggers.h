@@ -45,6 +45,16 @@ namespace ai
         CompanionReviveTrigger(PlayerbotAI* ai) : Trigger(ai, "companion revive") {}
         virtual bool IsActive() override;
 
+        // Called by PlayerbotAI::OnDeath on each new death. The reset in
+        // IsActive cannot do this job: only the dead engine runs this trigger,
+        // and the reaction engine moves a revived bot out of it before it ticks
+        // again. Not Reset(), which the engine calls on every tick.
+        void Restart()
+        {
+            outOfCombatSince = 0;
+            announcedWait = false;
+        }
+
     private:
         bool PartyIsFighting();
 

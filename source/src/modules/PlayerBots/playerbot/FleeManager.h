@@ -8,6 +8,16 @@ namespace ai
 {
     class Engine;
 
+    // Hostile creatures in sight of the bot that are not in a fight yet.
+    std::list<Unit*> IdleHostiles(PlayerbotAI* ai);
+    // A point inside the aggro radius of one of them, plus margin, pulls a new pack.
+    // A mob more than 10 yd above or below the point is on another floor and is skipped.
+    bool InIdleAggro(const std::list<Unit*>& idle, Player* bot, float x, float y, float z, float margin = 3.0f);
+
+    // A spot for a companion on a ring around its master, on the side it already
+    // stands. False when none passes; `note` says where.
+    bool FindMasterRingSpot(PlayerbotAI* ai, float& rx, float& ry, float& rz, std::string& note);
+
 	
 
 	class FleePoint {
@@ -45,6 +55,12 @@ namespace ai
 		bool CalculateDestination(float* rx, float* ry, float* rz);
         bool isUseful();
 
+        // For a flee in a fight: skip a point more than 3 yd above or below the bot (the
+        // top of a crate, another floor), and walk the path to the best points before one
+        // is chosen. Off for the random bot teleport, which searches up to sight distance
+        // over open hills.
+        void CheckGround() { checkGround = true; }
+
 	private:
 		void calculatePossibleDestinations(std::list<FleePoint*> &points);
 		void calculateDistanceToCreatures(FleePoint *point);
@@ -52,12 +68,14 @@ namespace ai
 		FleePoint* selectOptimalDestination(std::list<FleePoint*> &points);
 		bool isBetterThan(FleePoint* point, FleePoint* other);
 		bool isTooCloseToEdge(float x, float y, float z, float angle);
+        bool hasShortPath(FleePoint* point);
 
 	private:
 		Player* bot;
 		float maxAllowedDistance;
 		float followAngle;
         bool forceMaxDistance;
+        bool checkGround = false;
 		WorldPosition startPosition;
 	};
 

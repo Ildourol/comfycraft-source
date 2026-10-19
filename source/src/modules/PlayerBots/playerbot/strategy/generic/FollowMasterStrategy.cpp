@@ -66,3 +66,17 @@ void FollowMasterStrategy::OnStrategyRemoved(BotState state)
         ai->ChangeStrategy("-" + getName(), BotState::BOT_STATE_REACTION);
     }
 }
+
+// Above flee (30), so a flee cannot send the bot back toward the patrol, and
+// below every heal (59 and up), so a heal goes out first.
+void PatrolWatchStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
+{
+    triggers.push_back(new TriggerNode(
+        "idle mob near",
+        NextAction::array(0, new NextAction("avoid patrol", 40.0f), NULL)));
+}
+
+void PatrolWatchStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
+{
+    InitNonCombatTriggers(triggers);
+}

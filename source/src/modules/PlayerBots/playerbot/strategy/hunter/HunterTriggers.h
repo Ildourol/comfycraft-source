@@ -385,19 +385,7 @@ private:
     {
     public:
         HunterNoPet(PlayerbotAI* ai) : Trigger(ai, "no pet", 1) {}
-        virtual bool IsActive() override
-        {
-            if (AI_VALUE2(bool, "mounted", "self target"))
-            return false;
-
-            if (bot->GetPetGuid())
-            return false;
-
-            if (ai->CanCastSpell("call pet", bot, 0))
-            return false;
-
-            return ai->CanCastSpell("tame beast", bot, 0);
-        }
+        virtual bool IsActive() override;
     };
 
     class StealthedNearbyTrigger : public Trigger 

@@ -70,6 +70,8 @@ namespace ai
             creators["party member low health"] = [](PlayerbotAI* ai) { return new PartyMemberLowHealthTrigger(ai); };
             creators["party member medium health"] = [](PlayerbotAI* ai) { return new PartyMemberMediumHealthTrigger(ai); };
             creators["party member almost full health"] = [](PlayerbotAI* ai) { return new PartyMemberAlmostFullHealthTrigger(ai); };
+            creators["party member top up health"] = [](PlayerbotAI* ai) { return new PartyMemberTopUpHealthTrigger(ai); };
+            creators["party member any health lost"] = [](PlayerbotAI* ai) { return new PartyMemberAnyHealthLostTrigger(ai); };
 
             creators["protect party member"] = [](PlayerbotAI* ai) { return new ProtectPartyMemberTrigger(ai); };
             creators["party member attacked"] = [](PlayerbotAI* ai) { return new PartyMemberAttackedTrigger(ai); };
@@ -157,6 +159,7 @@ namespace ai
 
             // Register freefollow triggers
             creators["wander far"] = [](PlayerbotAI* ai) { return new WanderFarTrigger(ai); };
+            creators["idle mob near"] = [](PlayerbotAI* ai) { return new IdleMobNearTrigger(ai); };
             creators["wander medium"] = [](PlayerbotAI* ai) { return new WanderMediumTrigger(ai); };
             creators["wander near"] = [](PlayerbotAI* ai) { return new WanderNearTrigger(ai); };
 

@@ -139,6 +139,7 @@ namespace ai
             creators["follow"] = [](PlayerbotAI* ai) { return new FollowAction(ai); };
             creators["stop follow"] = [](PlayerbotAI* ai) { return new StopFollowAction(ai); };
             creators["flee to master"] = [](PlayerbotAI* ai) { return new FleeToMasterAction(ai); };
+            creators["avoid patrol"] = [](PlayerbotAI* ai) { return new AvoidPatrolAction(ai); };
             creators["runaway"] = [](PlayerbotAI* ai) { return new RunAwayAction(ai); };
             creators["stay"] = [](PlayerbotAI* ai) { return new StayAction(ai); };
             creators["sit"] = [](PlayerbotAI* ai) { return new SitAction(ai); };

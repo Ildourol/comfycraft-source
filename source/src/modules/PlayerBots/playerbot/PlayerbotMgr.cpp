@@ -24,6 +24,10 @@
 #include "ObjectMgr.h"
 #include "Pet.h"
 #include "Handlers/LoginQueryHolder.h"
+#include "ObjectAccessor.h"
+#include <atomic>
+#include <mutex>
+#include <thread>
 
 #ifdef GenerateBotTests
 #include "strategy/tests/TestAction.h"
@@ -53,6 +57,185 @@ namespace {
         uint32 masterAccountId;
     };
     std::map<SqlQueryHolder*, PendingBotLogin> m_pendingBotLogins;
+}
+
+// Bot logouts and deletes that arrive off the world thread wait for it.
+//
+// A logout frees the bot's Player, PlayerbotAI and AI context. Only the thread
+// that updates the bot's map may do that, and the holder is often somewhere
+// else: a master's PlayerbotMgr runs on the MASTER's map thread, and drives
+// its bots' sessions, logouts and dismissals from there. On 2026-10-19 prod
+// died this way: companion Neries was freed in the middle of its own UpdateAI
+// in the Deadmines while its owner was between maps (SIGSEGV in
+// AiObjectContext::GetValue, the item cheat's ammo refill). The core showed
+// the context valid at the virtual call and freed a few instructions later.
+//
+// So off the world thread, queue it; the bot world script drains the queue
+// after MapManager::Update, when no map is running. Before the first drain,
+// and during shutdown, nothing is deferred.
+//
+// A bot that is mid-teleport, or out of every map, waits for the world thread
+// too. A far-teleport ack adds the bot to its destination map (the core runs a
+// player's MSG_MOVE_WORLDPORT_ACK on the world thread for the same reason). A
+// near-teleport ack moves the bot inside a map that another thread may be
+// updating.
+namespace {
+    struct DeferredBotLogout {
+        uint32 guid;
+        uint32 masterGuid;      // 0: the random manager holds the bot
+        bool allowInstant;
+        bool forDelete;
+        bool isDelete;          // DeleteBot rather than LogoutPlayerBot
+    };
+    struct DeferredBotSession {
+        uint32 guid;
+        uint32 masterGuid;
+    };
+    std::mutex s_deferredLock;
+    std::vector<DeferredBotLogout> s_deferredLogouts;
+    std::vector<DeferredBotSession> s_deferredSessions;
+    std::atomic<std::thread::id> s_worldThread{};
+
+    bool MustDeferToWorldThread()
+    {
+        const std::thread::id world = s_worldThread.load();
+        return world != std::thread::id() && std::this_thread::get_id() != world && !World::IsStopped();
+    }
+
+    uint32 MasterGuidOf(PlayerbotHolder* holder, Player** master = nullptr)
+    {
+        if (holder == &sRandomPlayerbotMgr)
+            return 0;
+        Player* m = static_cast<PlayerbotMgr*>(holder)->GetMaster();
+        if (master)
+            *master = m;
+        return m ? m->GetGUIDLow() : 0;
+    }
+
+    // Finishes a teleport, or brings a bot that is out of every map home.
+    void DriveBotSession(Player* bot)
+    {
+        if (GetBotAI(bot) && bot->IsBeingTeleported())
+        {
+            GetBotAI(bot)->HandleTeleportAck();
+        }
+        else if (bot->IsInWorld())
+        {
+            bot->GetSession()->HandleBotPackets();
+        }
+        else
+        {
+            // Underlying root-cause fix candidate (ghost branch). Bot has no
+            // teleport flag but is also not in world. This is the limbo state
+            // that produces "Trying to login already ingame" on the next
+            // .bot add. Most likely cause: HandleMoveWorldportAckOpcode's
+            // map->Add returned false and HandleReturnOnTeleportFail's
+            // chained TeleportTo also failed — leaving the Player removed
+            // from old map but never added to any new map. SemaphoreTeleportFar
+            // was reset by HandleReturnOnTeleportFail so we can no longer
+            // re-drive the ACK.
+            //
+            // Recovery: kick the bot to homebind synchronously so it lands
+            // *somewhere* in-world. Better than ghost-state forever.
+            if (GetBotAI(bot))
+            {
+                SC_LOG("UpdateSessions GHOST RECOVERY bot=%s guid=%u — driving "
+                       "TeleportToHomebind to break out of limbo",
+                       bot->GetName(), bot->GetGUIDLow());
+                bot->TeleportToHomebind();
+            }
+        }
+    }
+
+    void DeferBotSession(PlayerbotHolder* holder, uint32 guid)
+    {
+        const uint32 masterGuid = MasterGuidOf(holder);
+        std::lock_guard<std::mutex> lock(s_deferredLock);
+        for (const DeferredBotSession& queued : s_deferredSessions)
+            if (queued.guid == guid)
+                return;
+        s_deferredSessions.push_back({ guid, masterGuid });
+    }
+
+    void DeferBotLogout(PlayerbotHolder* holder, uint32 guid, bool allowInstant, bool forDelete, bool isDelete)
+    {
+        Player* master = nullptr;
+        const uint32 masterGuid = MasterGuidOf(holder, &master);
+
+        {
+            std::lock_guard<std::mutex> lock(s_deferredLock);
+            for (DeferredBotLogout& queued : s_deferredLogouts)
+            {
+                if (queued.guid != guid)
+                    continue;
+                // A delete includes the logout. Never turn one back into a logout.
+                if (isDelete && !queued.isDelete)
+                    queued = { guid, masterGuid, allowInstant, true, true };
+                return;
+            }
+            s_deferredLogouts.push_back({ guid, masterGuid, allowInstant, forDelete, isDelete });
+        }
+
+        // Where both were: a bot on another map than its master is the case
+        // that crashed. A map of -1 is not in the world (offline, or between maps).
+        Player* bot = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, guid));
+        const auto mapOf = [](Player* p) { return p && p->IsInWorld() ? int32(p->GetMapId()) : -1; };
+        const auto instanceOf = [](Player* p) { return p && p->IsInWorld() ? p->GetInstanceId() : 0u; };
+        sLog.outString("[Bots] %s of bot %u (map %d instance %u) deferred to the world thread. Master %u on map %d instance %u.",
+                       isDelete ? "Delete" : "Logout", guid, mapOf(bot), instanceOf(bot),
+                       masterGuid, mapOf(master), instanceOf(master));
+    }
+}
+
+// Called from PlayerbotWorldScript::OnUpdate, on the world thread, after the maps.
+void DrainDeferredBotWork()
+{
+    s_worldThread.store(std::this_thread::get_id());
+
+    std::vector<DeferredBotSession> sessions;
+    std::vector<DeferredBotLogout> work;
+    {
+        std::lock_guard<std::mutex> lock(s_deferredLock);
+        sessions.swap(s_deferredSessions);
+        work.swap(s_deferredLogouts);
+    }
+
+    // Resolve the holder now: the master may have logged out since.
+    const auto holderOf = [](uint32 masterGuid) -> PlayerbotHolder*
+    {
+        if (masterGuid)
+            if (Player* master = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, masterGuid)))
+                if (PlayerbotMgr* mgr = GetBotMgr(master))
+                    return mgr;
+        return &sRandomPlayerbotMgr;
+    };
+
+    // Before the logouts, so a bot logged out in the same tick does not get
+    // an ack after its Player is gone. GetPlayerBot also skips a bot that has
+    // left the holder since it was queued.
+    for (const DeferredBotSession& d : sessions)
+        if (Player* bot = holderOf(d.masterGuid)->GetPlayerBot(d.guid))
+            DriveBotSession(bot);
+
+    for (const DeferredBotLogout& d : work)
+    {
+        PlayerbotHolder* holder = holderOf(d.masterGuid);
+
+        if (!d.isDelete)
+        {
+            holder->LogoutPlayerBot(d.guid, d.allowInstant, d.forDelete);
+            continue;
+        }
+
+        holder->DeleteBot(ObjectGuid(HIGHGUID_PLAYER, d.guid), d.allowInstant);
+
+        // Only the master's PlayerbotMgr unregisters a companion it deletes.
+        if (CompanionOwnership::GetOwner(d.guid))
+        {
+            sRandomPlayerbotMgr.ForgetTrackedPlayer(d.guid);
+            CompanionOwnership::Unregister(d.guid);
+        }
+    }
 }
 
 void PlayerbotHolder::AddPlayerBot(uint32 guidLow, uint32 masterAccountId)
@@ -395,36 +578,10 @@ void PlayerbotHolder::UpdateSessions(uint32 elapsed)
                    (int)bot->IsBeingTeleportedNear());
         }
 
-        if (GetBotAI(bot) && bot->IsBeingTeleported())
-        {
-            GetBotAI(bot)->HandleTeleportAck();
-        }
-        else if (bot->IsInWorld())
-        {
-            bot->GetSession()->HandleBotPackets();
-        }
+        if (MustDeferToWorldThread() && (isMidTeleport || !isInWorld))
+            DeferBotSession(this, bot->GetGUIDLow());
         else
-        {
-            // Underlying root-cause fix candidate (ghost branch). Bot has no
-            // teleport flag but is also not in world. This is the limbo state
-            // that produces "Trying to login already ingame" on the next
-            // .bot add. Most likely cause: HandleMoveWorldportAckOpcode's
-            // map->Add returned false and HandleReturnOnTeleportFail's
-            // chained TeleportTo also failed — leaving the Player removed
-            // from old map but never added to any new map. SemaphoreTeleportFar
-            // was reset by HandleReturnOnTeleportFail so we can no longer
-            // re-drive the ACK.
-            //
-            // Recovery: kick the bot to homebind synchronously so it lands
-            // *somewhere* in-world. Better than ghost-state forever.
-            if (GetBotAI(bot))
-            {
-                SC_LOG("UpdateSessions GHOST RECOVERY bot=%s guid=%u — driving "
-                       "TeleportToHomebind to break out of limbo",
-                       bot->GetName(), bot->GetGUIDLow());
-                bot->TeleportToHomebind();
-            }
-        }
+            DriveBotSession(bot);
 
         if (GetBotAI(bot) && GetBotAI(bot)->GetShouldLogOut() && !bot->IsStunnedByLogout() && !bot->GetSession()->isLogingOut())
         {
@@ -511,6 +668,12 @@ void PlayerbotHolder::LogoutPlayerBot(uint32 guid, bool allowInstant, bool forDe
 {
     SC_LOG("LogoutPlayerBot entry guid=%u allowInstant=%d forDelete=%d",
            guid, (int)allowInstant, (int)forDelete);
+    if (MustDeferToWorldThread())
+    {
+        DeferBotLogout(this, guid, allowInstant, forDelete, false);
+        return;
+    }
+
     Player* bot = GetPlayerBot(guid);
     if (bot)
     {
@@ -784,7 +947,13 @@ void PlayerbotHolder::OnBotLogin(Player * const bot)
     // setting also covers the owner's own alts run with `.bot add`, and those
     // are real characters with a real inventory.
     if (CompanionOwnership::IsCompanion(bot->GetGUIDLow()))
+    {
         ai->SetCheat(BotCheatMask((uint32)ai->GetCheat() | (uint32)BotCheatMask::item));
+
+        // On every login, not only on hire: a companion hired before
+        // 2026-10-18 has no Call Pet, and this is what gives it one.
+        PlayerbotFactory::LearnQuestOnlySpells(bot);
+    }
 
     // Clear intro cinematic state — bots never watch it but HandlePlayerLogin sets
     // watching_cinematic_entry for characters that haven't logged in via a real client,
@@ -3211,6 +3380,13 @@ void PlayerbotHolder::OnBotDeleted(uint32 botGuid, uint32 accountId)
 
 bool PlayerbotHolder::DeleteBot(ObjectGuid guid, bool allowInstant)
 {
+    // Before anything below touches the Player: see DeferBotLogout.
+    if (MustDeferToWorldThread())
+    {
+        DeferBotLogout(this, guid.GetCounter(), allowInstant, true, true);
+        return true;
+    }
+
     uint32 botAccount = sObjectMgr.GetPlayerAccountIdByGUID(guid);
 
     if (Player* player = sObjectMgr.GetPlayer(guid, true))

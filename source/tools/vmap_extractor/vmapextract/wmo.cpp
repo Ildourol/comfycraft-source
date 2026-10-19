@@ -142,17 +142,23 @@ bool WMORoot::open()
             // coordinates in WMOs and models also have to be read as (X,Z,-Y) to work in my system. 
             // But then again, the ADT files have the "correct" order of coordinates. Weird.
             nModels = (int)size / 0x28;
-            modelis = new WMOModelInstance*[nModels];
+            // Every slot starts empty: a name that cannot be read left the rest of
+            // the array uninitialised, and GetDoodadModel followed the garbage
+            // (a crash on a Turtle-changed DSNightElfHuntersLodge.wmo).
+            modelis = new WMOModelInstance*[nModels]();
             //printf("Loading %u models spawn\n", nModels);
             for (size_t i=0; i<nModels; i++)
             {
                 int ofs;
-                f.read(&ofs,4); // Offset to the start of the model's filename in the MODN chunk. 
-                WMOModelInstance* mi = new WMOModelInstance();
+                f.read(&ofs,4); // Offset to the start of the model's filename in the MODN chunk.
                 std::string path;
-                uint32 len = ExtractFileName(ddnames+ofs, ddnames+ddsize, path);
+                uint32 len = (ddnames && ofs >= 0 && (uint32)ofs < ddsize) ? ExtractFileName(ddnames+ofs, ddnames+ddsize, path) : 0;
                 if (!len)
-                    break;
+                {
+                    f.seekRelative(0x28 - 4); // the rest of this record
+                    continue;
+                }
+                WMOModelInstance* mi = new WMOModelInstance();
                 mi->init(path, f);
                 modelis[i] = mi;
             }

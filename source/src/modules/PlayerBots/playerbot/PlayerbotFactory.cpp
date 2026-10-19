@@ -4518,11 +4518,55 @@ void PlayerbotFactory::SetRandomSkill(uint16 id)
         bot->SetSkill(id, value, maxValue);
 }
 
+// CLASS QUEST SPELLS, FOR BOTS THAT NEVER DID THE QUESTS (2026-10-18).
+//
+// Only a real random bot gets quest-reward spells (InitQuests and
+// learnQuestRewardedSpells in Randomize). Everything else, companions
+// included, gets trainer spells only, and no trainer teaches these. A hunter
+// companion knew Revive Pet but not Call Pet, so after its pet died it tried
+// Revive Pet every tick with no pet in the world (SPELL_FAILED_NO_PET) and
+// never brought it back.
+//
+// Each list is what the quest's teaching spell teaches (spell_template,
+// effect 36), by the quest's minimum level. Tame Beast (1515) is left out on
+// purpose: with it, the `no pet` trigger can make a companion tame a random
+// beast in the middle of a fight. Infernal (1122) stays in InitAvailableSpells,
+// which already taught it.
+void PlayerbotFactory::LearnQuestOnlySpells(Player* bot)
+{
+    struct QuestSpell { uint8 cls; uint32 level; uint32 spell; };
+    static const QuestSpell spells[] =
+    {
+        { CLASS_HUNTER,  10,   883 },   // Call Pet           (Taming the Beast, 1579)
+        { CLASS_HUNTER,  10,  2641 },   // Dismiss Pet        (Taming the Beast, 1579)
+        { CLASS_HUNTER,  10,  5149 },   // Beast Training     (Training the Beast, 5300)
+        { CLASS_HUNTER,  10,  6991 },   // Feed Pet           (Training the Beast, 5300)
+        { CLASS_HUNTER,  10,   982 },   // Revive Pet         (Training the Beast, 5300)
+        { CLASS_WARLOCK,  1,   688 },   // Summon Imp         (7763)
+        { CLASS_WARLOCK, 10,   697 },   // Summon Voidwalker  (11520)
+        { CLASS_WARLOCK, 20,   712 },   // Summon Succubus    (11519)
+        { CLASS_WARLOCK, 30,   691 },   // Summon Felhunter   (1373)
+        { CLASS_WARLOCK, 40,  5784 },   // Summon Felsteed    (1710)
+        { CLASS_WARLOCK, 60, 18540 },   // Ritual of Doom     (20700)
+        { CLASS_WARLOCK, 60, 23161 },   // Summon Dreadsteed  (23160)
+    };
+
+    for (const QuestSpell& s : spells)
+    {
+        if (bot->getClass() != s.cls || bot->GetLevel() < s.level || bot->HasSpell(s.spell))
+            continue;
+
+        if (sSpellTemplate.LookupEntry<SpellEntry>(s.spell))
+            bot->learnSpell(s.spell, false);
+    }
+}
+
 void PlayerbotFactory::InitAvailableSpells()
 {
     auto pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Spells1");
     bot->learnDefaultSpells();
     bot->learnClassLevelSpells(true);
+    LearnQuestOnlySpells(bot);
 
 #ifndef MANGOSBOT_TWO
     if (bot->getClass() == CLASS_PALADIN)

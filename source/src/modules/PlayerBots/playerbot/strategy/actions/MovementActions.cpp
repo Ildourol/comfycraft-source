@@ -5,6 +5,8 @@
 #include "Movement/MotionMaster.h"
 #include "Movement/MovementGenerator.h"
 #include "playerbot/FleeManager.h"
+#include "playerbot/CompanionOwnership.h"
+#include "Maps/PathFinder.h"
 #include "playerbot/LootObjectStack.h"
 #include "playerbot/PlayerbotAIConfig.h"
 #include "playerbot/ServerFacade.h"
@@ -19,6 +21,9 @@
 #include "Entities/Vehicle.h"
 #endif
 #include "playerbot/strategy/generic/CombatStrategy.h"
+
+#include <iomanip>
+#include <sstream>
 
 using namespace ai;
 
@@ -1153,6 +1158,51 @@ Unit* MovementAction::GetMover(Player* bot)
 
 bool MovementAction::MoveTo2(const WorldPosition& endPos, bool idle, bool react, bool noPath, bool ignoreEnemyTargets)
 {
+    // A MOVE THROUGH THE FLOOR (2026-10-19). A hunter and a priest fought on the
+    // Deadmines ship deck and ended up 19 and 31 yd below it: some target point
+    // got the height of the ground under the deck. A companion on its owner's
+    // level is not sent to a point more than 6 yd below it within 25 yd; the
+    // refusal goes to the server log with the action, so the next one names the
+    // code path. An owner who went down first is followed down.
+    if (endPos.getMapId() == bot->GetMapId() && CompanionOwnership::IsCompanion(bot->GetGUIDLow()))
+    {
+        const float drop = bot->GetPositionZ() - endPos.getZ();
+        const float flat = sServerFacade.GetDistance2d(bot, endPos.getX(), endPos.getY());
+        Player* owner = GetMaster();
+        if (drop > 6.0f && flat < 25.0f && owner && owner->GetMapId() == bot->GetMapId() &&
+            std::fabs(owner->GetPositionZ() - bot->GetPositionZ()) < 4.0f)
+        {
+            sLog.outError("Companion %s: refused a move %.1f yd down (z %.1f to %.1f, %.1f yd away), action '%s'",
+                bot->GetName(), drop, bot->GetPositionZ(), endPos.getZ(), flat, getName().c_str());
+            return false;
+        }
+    }
+
+    // A PATH THROUGH A FLOOR THE SERVER CANNOT SEE (2026-10-19). With the target
+    // fixed at deck height, a companion still sank through the Deadmines ship deck
+    // on the way to it: the vmap extractor leaves out the M2 models placed inside
+    // a WMO (the ship), so the pathing map has no deck and the path ran along the
+    // floor below (docs/ai/server/vmap-wmo-doodads.md). A short move between two
+    // points on one level whose path dips more than 4 yd below both ends goes in
+    // a straight line instead.
+    if (!noPath && endPos.getMapId() == bot->GetMapId() && CompanionOwnership::IsCompanion(bot->GetGUIDLow()) &&
+        std::fabs(endPos.getZ() - bot->GetPositionZ()) < 3.0f && sServerFacade.GetDistance2d(bot, endPos.getX(), endPos.getY()) < 25.0f)
+    {
+        PathFinder dip(bot);
+        dip.calculate(endPos.getX(), endPos.getY(), endPos.getZ(), false);
+        const float floor = std::min(bot->GetPositionZ(), endPos.getZ()) - 4.0f;
+        for (auto const& point : dip.getPath())
+        {
+            if (point.z < floor)
+            {
+                sLog.outString("Companion %s: path dips to z %.1f between z %.1f and %.1f, moving straight, action '%s'",
+                    bot->GetName(), point.z, bot->GetPositionZ(), endPos.getZ(), getName().c_str());
+                noPath = true;
+                break;
+            }
+        }
+    }
+
     // The pull owns where the bot goes, and this is the choke point.
     //
     // The gate started in isUseful, but subclasses override that without
@@ -2934,6 +2984,17 @@ bool MovementAction::Flee(Unit *target)
     HostileReference* ref = sServerFacade.GetThreatManager(target).getCurrentVictim();
     const bool isTarget = ref && ref->getTarget() == bot;
 
+    // WHERE IT FLED TO. With `debug action` on, say which branch picked the
+    // spot, the same way CastSpellAction::isPossible says why a spell was
+    // refused. Added 2026-10-18 for a hunter that sometimes ran ahead down a
+    // dungeon corridor to get range instead of back towards the group.
+    const bool explain = ai->HasStrategy("debug action", BotState::BOT_STATE_NON_COMBAT) && master;
+    auto where = [&](const std::string& text)
+    {
+        if (explain)
+            ai->TellPlayerNoFacing(master, "flee: " + text, PlayerbotSecurityLevel::PLAYERBOT_SECURITY_ALLOW_ALL, true, false);
+    };
+
     time_t lastFlee = AI_VALUE(LastMovement&, "last movement").lastFlee;
     time_t now = time(0);
     uint32 fleeDelay = urand(2, sPlayerbotAIConfig.returnDelay / 1000);
@@ -2952,6 +3013,50 @@ bool MovementAction::Flee(Unit *target)
         }
     }
     
+    // A BOT LED BY A PLAYER FLEES AROUND THE PLAYER (2026-10-19, with the owner).
+    //
+    // A mob on the bot: it stays, so the player can take the mob off it. Running
+    // pulled the mob along and moved the fight. Only below critical health does
+    // it run, to the player. Otherwise it takes a spot on the ring around the
+    // player (FindMasterRingSpot), on its own side. With no spot
+    // it stays and fights, and `enemy too close for spell` waits 5 s. A player
+    // over 40 yd away, or dead, leaves the old flee below.
+    if (master && ai->HasRealPlayerMaster() && sServerFacade.IsAlive(master) && master->GetMapId() == bot->GetMapId() &&
+        sServerFacade.GetDistance2d(bot, master) <= 40.0f)
+    {
+        const bool panic = AI_VALUE2(uint8, "health", "self target") <= sPlayerbotAIConfig.criticalHealth;
+        if (panic)
+        {
+            where("to " + std::string(master->GetName()) + ", low health");
+            AI_VALUE(LastMovement&, "last movement").lastFlee = time(nullptr);
+            return MoveNear(master, sPlayerbotAIConfig.followDistance);
+        }
+
+        if (!bot->getAttackers().empty())
+        {
+            where("staying, a mob is on me");
+            return false;
+        }
+
+        float rx, ry, rz;
+        std::string note;
+        if (FindMasterRingSpot(ai, rx, ry, rz, note))
+        {
+            where("to a spot " + note);
+            if (!MoveTo(bot->GetMapId(), rx, ry, rz, false, false, false, true))
+                return false;
+
+            LastMovement& lm = AI_VALUE(LastMovement&, "last movement");
+            lm.lastFlee = time(nullptr);
+            lm.lastFleeAttempt = now;
+            return true;
+        }
+
+        where("no spot around " + std::string(master->GetName()) + ", staying");
+        AI_VALUE(LastMovement&, "last movement").lastNoFleePoint = time(nullptr);
+        return false;
+    }
+
     const bool isHealer = ai->IsHeal(bot);
     const bool isTank = ai->IsTank(bot);
     const bool isDps = !isHealer && !isTank;
@@ -3060,6 +3165,17 @@ bool MovementAction::Flee(Unit *target)
     if (fleeTarget)
     {
         succeeded = MoveNear(fleeTarget);
+
+        if (explain)
+        {
+            std::ostringstream out;
+            out << std::fixed << std::setprecision(0) << "to " << fleeTarget->GetName()
+                << (fleeTarget == master ? " (master)" : isTarget ? " (tank, I have aggro)" : " (ranged or healer)")
+                << ", " << sServerFacade.GetDistance2d(bot, fleeTarget) << " yd away, "
+                << sServerFacade.GetDistance2d(fleeTarget, target) << " yd from " << target->GetName()
+                << (succeeded ? "" : ", move failed");
+            where(out.str());
+        }
     }
 
     if (!ai->HasRealPlayerMaster() && !ai->IsRealPlayer(target))
@@ -3113,8 +3229,10 @@ bool MovementAction::Flee(Unit *target)
             fullDistance = true;
 
         FleeManager manager(bot, fullDistance ? (ai->GetRange("flee") * 2) : ai->GetRange("flee"), bot->GetAngle(target) + M_PI);
+        manager.CheckGround();
         if (!manager.isUseful())
         {
+            where("not needed, no mob in reach");
             return false;
         }
 
@@ -3129,8 +3247,31 @@ bool MovementAction::Flee(Unit *target)
         float rx, ry, rz;
         if (!manager.CalculateDestination(&rx, &ry, &rz))
         {
+            where("no group member fits, and no point found");
+            AI_VALUE(LastMovement&, "last movement").lastNoFleePoint = time(nullptr);
             ai->TellError(GetMaster(), "Nowhere to flee");
             return false;
+        }
+
+        if (explain)
+        {
+            // 0 degrees is straight away from the mob, 180 is past it.
+            const float away = bot->GetAngle(target) + M_PI_F;
+            float off = std::fabs(bot->GetAngle(rx, ry) - away);
+            while (off > 2 * M_PI_F)
+                off -= 2 * M_PI_F;
+            if (off > M_PI_F)
+                off = 2 * M_PI_F - off;
+
+            std::ostringstream out;
+            out << std::fixed << std::setprecision(0) << "to a point, no group member fits: "
+                << sServerFacade.GetDistance2d(bot, rx, ry) << " yd away at " << (off * 180.0f / M_PI_F)
+                << " deg from straight away, " << sServerFacade.GetDistance2d(target, rx, ry) << " yd from "
+                << target->GetName();
+            if (master)
+                out << ", " << sServerFacade.GetDistance2d(master, rx, ry) << " yd from " << master->GetName()
+                    << " (now " << sServerFacade.GetDistance2d(bot, master) << ")";
+            where(out.str());
         }
 
         if(MoveTo(target->GetMapId(), rx, ry, rz))

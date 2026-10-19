@@ -51,6 +51,11 @@ public:
 
     static ObjectGuid GetRandomBot();
     static void Init();
+
+    // Teaches the hunter and warlock spells that only a class quest teaches,
+    // up to the bot's level. Idempotent. Called from InitAvailableSpells and
+    // on every companion login.
+    static void LearnQuestOnlySpells(Player* bot);
     void Refresh();
     void Randomize(bool incremental, bool syncWithMaster);
     static std::list<uint32> classQuestIds;

@@ -71,6 +71,9 @@ char output_path[128] = ".";
 char input_path[1024] = ".";
 bool hasInputPathParam = false;
 bool preciseVectorData = false;
+// -m <id>: extract this map only. A test run for one map needs a few minutes,
+// not the hour every map takes.
+int onlyMapId = -1;
 
 // Constants
 
@@ -203,6 +206,15 @@ bool ExtractSingleWmo(std::string& fname)
 
     char szLocalFile[1024];
     const char* plain_name = GetPlainName(fname.c_str());
+
+    // A Turtle patch lists "*transport_zeppelin.wmo". No file of that name can
+    // exist, and a failed write stopped the whole extract.
+    if (strpbrk(plain_name, "*?\"<>|:"))
+    {
+        printf("Skipping %s: not a valid file name\n", fname.c_str());
+        return true;
+    }
+
     sprintf(szLocalFile, "%s/%s", szWorkDirWmo, plain_name);
     fixnamen(szLocalFile, strlen(szLocalFile));
 
@@ -299,6 +311,9 @@ void ParsMapFiles()
     StringSet failedPaths;
     for (unsigned int i = 0; i < map_count; ++i)
     {
+        if (onlyMapId >= 0 && map_ids[i].id != (uint32)onlyMapId)
+            continue;
+
         sprintf(id, "%03u", map_ids[i].id);
         sprintf(fn, "World\\Maps\\%s\\%s.wdt", map_ids[i].name, map_ids[i].name);
         WDTFile WDT(fn, map_ids[i].name);
@@ -356,6 +371,16 @@ bool scan_patches(char* scanmatch, std::vector<std::string>& pArchiveNames)
         {
             sprintf(path, "%s.MPQ", scanmatch);
         }
+        if (ResolveMPQFilename(path))
+            pArchiveNames.push_back(path);
+    }
+
+    // Turtle WoW ships its own patches as patch-A to patch-Z, which the client
+    // loads after the numbered ones. Without them the extract is of a world
+    // the client does not show.
+    for (char c = 'A'; c <= 'Z'; ++c)
+    {
+        sprintf(path, "%s-%c.MPQ", scanmatch, c);
         if (ResolveMPQFilename(path))
             pArchiveNames.push_back(path);
     }
@@ -434,6 +459,11 @@ bool processArgv(int argc, char** argv)
         {
             preciseVectorData = true;
         }
+        else if (strcmp("-m", argv[i]) == 0 && (i + 1) < argc)
+        {
+            onlyMapId = atoi(argv[i + 1]);
+            ++i;
+        }
         else
         {
             result = false;
@@ -447,6 +477,7 @@ bool processArgv(int argc, char** argv)
         printf("   -s : (default) small size (data size optimization), ~500MB less vmap data.\n");
         printf("   -l : large size, ~500MB more vmap data. (might contain more details)\n");
         printf("   -d <path>: Path to the vector data source folder.\n");
+        printf("   -m <id>: Extract this map only.\n");
         printf("   -? : This message.\n");
     }
     return result;

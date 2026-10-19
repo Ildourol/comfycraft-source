@@ -3,6 +3,7 @@
 #include "playerbot/PlayerbotAIConfig.h"
 #include "playerbot/ServerFacade.h"
 #include "playerbot/strategy/values/SharedValueContext.h"
+#include "FleeManager.h"
 
 using namespace ai;
 
@@ -371,6 +372,10 @@ std::vector<LootObject> LootObjectStack::OrderByDistance(float maxDistance)
         sLog.outDebug("[BOT LOOT] %s: loot stack expired %zu corpse(s) (>30s old, dropped before looting)",
             bot->GetName(), beforeShrink - availableLoot.size());
 
+    // Loot next to a pack that is not in the fight is left: walking to it pulls the
+    // pack (2026-10-18). Empty when nothing hostile is idle in sight.
+    const std::list<Unit*> idle = IdleHostiles(GetBotAI(bot));
+
     std::map<float, LootObject> sortedMap;
     LootTargetList safeCopy(availableLoot);
     for (LootTargetList::iterator i = safeCopy.begin(); i != safeCopy.end(); i++)
@@ -378,6 +383,10 @@ std::vector<LootObject> LootObjectStack::OrderByDistance(float maxDistance)
         ObjectGuid guid = i->guid;
         LootObject lootObject(bot, guid);
         if (!lootObject.IsLootPossible(bot))
+            continue;
+
+        WorldObject* wo = lootObject.GetWorldObject(bot);
+        if (!idle.empty() && InIdleAggro(idle, bot, wo->GetPositionX(), wo->GetPositionY(), wo->GetPositionZ()))
             continue;
 
         float distance = bot->GetDistance(lootObject.GetWorldObject(bot));

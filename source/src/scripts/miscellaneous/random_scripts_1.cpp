@@ -3097,6 +3097,8 @@ enum HighElfStartingZone
     QUEST_SLAKING_THEIR_THIRST = 80205,
     QUEST_BURNT_WHEELS = 80206,
     NPC_CUSTOM_OBJECTIVE_ITEM_SCRAPPING = 80206,
+    NPC_HIGH_ELF_REFUGEE_1 = 80208,
+    NPC_HIGH_ELF_REFUGEE_2 = 80209,
     NPC_ALISHA_SUNBLADE = 80210,
     NPC_CUSTOM_OBJECTIVE_SUNBLADE_RENUNION = 80211,
     QUEST_SUNBLADE_RENUNION = 80208,
@@ -3294,19 +3296,26 @@ bool GOHello_go_shadowforge_cage(Player* pPlayer, GameObject* pGo)
         if (cInfo != nullptr)
             pPlayer->KilledMonster(cInfo, ObjectGuid());
 
-        Creature* Alisha = pPlayer->FindNearestCreature(NPC_ALISHA_SUNBLADE, 5.0F);
+        // No Mercy For The Wicked (41906) asks for the cage itself.
+        pPlayer->CastedCreatureOrGO(pGo->GetEntry(), pGo->GetObjectGuid(), 0);
 
-        if (Alisha)
+        // The captives (sql/custom/157) run out and respawn in the cage.
+        std::list<Creature*> captives;
+        pGo->GetCreatureListWithEntryInGrid(captives, { NPC_ALISHA_SUNBLADE, NPC_HIGH_ELF_REFUGEE_1, NPC_HIGH_ELF_REFUGEE_2 }, 5.0F);
+
+        for (Creature* captive : captives)
         {
-            Alisha->MonsterSayToPlayer(66900, pPlayer);
-            // Change it later to real coords.
-            float fX, fY, fZ;
-            Alisha->GetRandomPoint(Alisha->GetPositionX(), Alisha->GetPositionY(), Alisha->GetPositionZ(), 15.0f, fX, fY, fZ);
-            Alisha->GetMotionMaster()->MovePoint(0, -5831.14F, -4119.65F, 387.77F, 0, 3.0F);
-            Alisha->SetWalk(false);
+            if (!captive->IsAlive())
+                continue;
 
-            DoAfterTime(Alisha, 25 * IN_MILLISECONDS,
-                [playerGuid = pPlayer->GetObjectGuid(), me = Alisha]()
+            if (captive->GetEntry() == NPC_ALISHA_SUNBLADE)
+                captive->MonsterSayToPlayer(66900, pPlayer);
+
+            captive->GetMotionMaster()->MovePoint(0, -5831.14F, -4119.65F, 387.77F, 0, 3.0F);
+            captive->SetWalk(false);
+
+            DoAfterTime(captive, 25 * IN_MILLISECONDS,
+                [me = captive]()
             {
                 me->DespawnOrUnsummon();
             });

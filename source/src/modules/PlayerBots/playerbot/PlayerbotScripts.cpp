@@ -31,6 +31,8 @@
 #include "playerbot/CompanionOwnership.h"
 #include "Group/Group.h"
 
+void DrainDeferredBotWork();    // PlayerbotMgr.cpp
+
 class PlayerbotWorldScript : public WorldScript
 {
     public:
@@ -53,6 +55,7 @@ class PlayerbotWorldScript : public WorldScript
             if (!sPlayerbotAIConfig.enabled)
                 return;
             sRandomPlayerbotMgr.UpdateAI(diff);
+            DrainDeferredBotWork();
             auctionbot.Update();
         }
 };
