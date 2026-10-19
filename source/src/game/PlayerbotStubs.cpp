@@ -38,6 +38,10 @@ bool Playerbot_RecruitBotForPlayer(Player*, uint32, uint32) { return false; }
 bool BotNpc_Dress(Player*, std::string const&, std::string& error)
     { error = "playerbots not built"; return false; }
 
+// Backs `.gear`: the item pick is the bots' own.
+bool Playerbot_GearPlayer(Player*, uint32, uint32, std::string& error)
+    { error = "gear needs the playerbots module"; return false; }
+
 // ChatHandler bot-command stubs. Chat.cpp registers `.bot`, `.rndbot`,
 // `.ahbot`, and `.perfmon` in the command table unconditionally (no
 // #ifdef BUILD_PLAYERBOTS gate), so the host must link these symbols even
@@ -50,6 +54,8 @@ bool ComfyCommands::HandleAddDressingRoomCommand(ChatHandler* handler, char*)
     { handler->SendSysMessage("Saved looks need the playerbots module (BUILD_PLAYERBOTS=OFF)."); return true; }
 bool ComfyCommands::HandleCompanionsCommand(ChatHandler* handler, char*)
     { handler->SendSysMessage("No companions out."); return true; }
+bool ComfyCommands::HandleCompanionDebugCommand(ChatHandler* handler, char*)
+    { handler->SendSysMessage("Companions need the playerbots module (BUILD_PLAYERBOTS=OFF)."); return true; }
 bool ChatHandler::HandleRandomPlayerbotCommand(char*)
     { SendSysMessage("Random playerbots not built (BUILD_PLAYERBOTS=OFF)."); return true; }
 bool ChatHandler::HandleAhBotCommand(char*)

@@ -481,6 +481,29 @@ void PathInfo::BuildPointPath(const float *startPoint, const float *endPoint, fl
             m_type |= PATHFIND_FLYPATH;
     }
 
+    // PATH POINTS ON THE COLLISION FLOOR (2026-10-19).
+    //
+    // A smooth path point is the navmesh height plus 0.5 yd (findSmoothPath),
+    // and the navmesh itself sat 0.4 to 0.7 yd above the floor of a tunnel slope
+    // in Dun Morogh, 1.1 yd at a bend. A spline runs straight between its points,
+    // so a unit ran about a yard in the air down that slope and dropped when its
+    // height was next set from the floor. Each point after the first goes to the
+    // floor found just below it. A floor more than 2.5 yd down is another level
+    // (a bridge's ground, a deck's hold) and the point is left alone.
+    if (!m_transport && !m_sourceUnit->CanFly() && !m_sourceUnit->IsInWater())
+    {
+        Map const* map = m_sourceUnit->GetMap();
+        for (uint32 i = 1; i < m_pathPoints.size(); ++i)
+        {
+            Vector3& point = m_pathPoints[i];
+            float const floor = map->GetHeight(point.x, point.y, point.z + 0.5f, true, 3.0f);
+            if (floor > INVALID_HEIGHT && point.z - floor < 2.5f && floor - point.z < 0.5f)
+                point.z = floor + 0.1f;
+        }
+        if (!m_pathPoints.empty())
+            setActualEndPosition(m_pathPoints[m_pathPoints.size() - 1]);
+    }
+
     //DEBUG_FILTER_LOG(LOG_FILTER_PATHFINDING, "++ PathFinder::BuildPointPath path type %d size %d poly-size %d\n", m_type, pointCount, m_polyLength);
 }
 

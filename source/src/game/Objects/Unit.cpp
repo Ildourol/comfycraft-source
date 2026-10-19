@@ -5363,7 +5363,7 @@ bool Unit::AttackStop(bool targetSwitch /*=false*/)
             if (me->HasSearchedAssistance())
             {
                 me->SetNoSearchAssistance(false);
-                UpdateSpeed(MOVE_RUN, false);
+                UpdateSpeed(MOVE_RUN, false, GetSpeedRatePersistance(MOVE_RUN));
             }
         }
     }
@@ -5454,7 +5454,7 @@ void Unit::ModifyAuraState(AuraState flag, bool apply)
                     case AURA_STATE_HEALTHLESS_15_PERCENT:
                     case AURA_STATE_HEALTHLESS_10_PERCENT:
                     case AURA_STATE_HEALTHLESS_5_PERCENT:
-                        UpdateSpeed(MOVE_RUN, false);
+                        UpdateSpeed(MOVE_RUN, false, GetSpeedRatePersistance(MOVE_RUN));
                         break;
                 }
             }
@@ -5489,7 +5489,7 @@ void Unit::ModifyAuraState(AuraState flag, bool apply)
                     case AURA_STATE_HEALTHLESS_15_PERCENT:
                     case AURA_STATE_HEALTHLESS_10_PERCENT:
                     case AURA_STATE_HEALTHLESS_5_PERCENT:
-                        UpdateSpeed(MOVE_RUN, false);
+                        UpdateSpeed(MOVE_RUN, false, GetSpeedRatePersistance(MOVE_RUN));
                         break;
                 }
             }
@@ -7833,7 +7833,9 @@ void Unit::UpdateSpeed(UnitMoveType mtype, bool forced, float ratio)
     int32 slow = GetMaxNegativeAuraModifier(SPELL_AURA_MOD_DECREASE_SPEED);
 	if (slow)
 	{
-		int32 scaledSlow = int32(float(slow) * ratio);
+		// Capped at 1: a GM rate above 1 (`.setspeed`, the kept rate) would
+		// turn a 50% slow into -150% and the speed negative.
+		int32 scaledSlow = int32(float(slow) * std::min(ratio, 1.0f));
         speed *= (100.0f + scaledSlow) / 100.0f;
 	}
 

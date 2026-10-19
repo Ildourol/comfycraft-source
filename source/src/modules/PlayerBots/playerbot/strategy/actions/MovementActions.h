@@ -119,6 +119,12 @@ namespace ai
         float GetFollowAngle();
         bool Follow(Unit* target, float distance = 0);
         bool Follow(Unit* target, float distance, float angle);
+    public:
+        // The bot already runs a follow movement on target at this offset and
+        // angle. `distance` is the formation's, before Follow takes the target's
+        // bounding radius off it.
+        static bool IsFollowing(Player* bot, Unit* target, float distance, float angle);
+    protected:
         float MoveDelay(float distance);
         bool FollowOnTransport(Unit* target);
 

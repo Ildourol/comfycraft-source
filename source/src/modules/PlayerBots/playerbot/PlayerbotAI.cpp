@@ -304,8 +304,10 @@ void PlayerbotAI::UpdateAI(uint32 elapsed, bool minimal)
         }
     }
 
-    // Chat lines that arrived on other threads (see HandleCommand).
+    // Chat lines that arrived on other threads (see HandleCommand), and chat
+    // the bot heard (see HandleBotOutgoingPacket).
     DrainCommandInbox();
+    DrainChatInbox();
 
     // LOOT WATCHDOG. Opening a corpse sets UNIT_FLAG_LOOTING, the kneel, and only
     // a loot release clears it. A bot has no client to close a loot window, so
@@ -1304,8 +1306,26 @@ void PlayerbotAI::HandleCommands()
             continue;
         }
 
+        // A sender who logged out takes the order with them. One between maps
+        // waits: its Player exists but is in no map.
+        Player* owner = nullptr;
+        if (!holder.GetOwnerGuid().IsEmpty())
+        {
+            owner = sObjectAccessor.FindPlayerNotInWorld(holder.GetOwnerGuid());
+            if (!owner)
+            {
+                chatCommands.pop();
+                continue;
+            }
+            if (!owner->IsInWorld())
+            {
+                delayed.push_back(holder);
+                chatCommands.pop();
+                continue;
+            }
+        }
+
         std::string command = holder.GetCommand();
-        Player* owner = holder.GetOwner();
         if (!helper.ParseChatCommand(command, owner) && holder.GetType() == CHAT_MSG_WHISPER)
         {
             // AN UNRECOGNISED WHISPER IS DROPPED IN SILENCE, and that silence
@@ -1650,6 +1670,14 @@ void PlayerbotAI::HandleCommand(uint32 type, const std::string& text, Player& fr
     commandInbox.push_back({ type, text, fromPlayer.GetObjectGuid(), lang });
 }
 
+void PlayerbotAI::QueueOwnCommand(const std::string& text)
+{
+    std::lock_guard<std::mutex> guard(commandInboxMutex);
+    if (commandInbox.size() >= 64)
+        return;
+    commandInbox.push_back({ CHAT_MSG_WHISPER, text, bot->GetObjectGuid(), LANG_UNIVERSAL });
+}
+
 void PlayerbotAI::DrainCommandInbox()
 {
     std::vector<InboxCommand> pending;
@@ -1984,6 +2012,290 @@ void PlayerbotAI::RunCommand(uint32 type, const std::string& text, Player& fromP
     }
 }
 
+void PlayerbotAI::DrainChatInbox()
+{
+    std::vector<WorldPacket> pending;
+    {
+        std::lock_guard<std::mutex> guard(chatInboxMutex);
+        pending.swap(chatInbox);
+    }
+
+    for (WorldPacket const& packet : pending)
+        HandleChatPacket(packet);
+}
+
+// A chat line the bot received: whether to reply, on the bot's own thread.
+// Do not react to self, or when not ready to reply.
+void PlayerbotAI::HandleChatPacket(const WorldPacket& packet)
+{
+    if (!AllowActivity())
+        return;
+
+    WorldPacket p(packet);
+#ifndef MANGOSBOT_ZERO
+    if (!p.empty() && (p.GetOpcode() == SMSG_MESSAGECHAT || p.GetOpcode() == SMSG_GM_MESSAGECHAT))
+#else
+    if (!p.empty() && p.GetOpcode() == SMSG_MESSAGECHAT)
+#endif
+    {
+        p.rpos(0);
+        uint8 msgtype, chatTag;
+        uint32 lang, textLen, unused;
+        ObjectGuid guid1, guid2;
+        std::string name, chanName, message;
+        p >> msgtype >> lang;
+
+        // filter msg type
+        switch (msgtype)
+        {
+        case CHAT_MSG_CHANNEL:
+        case CHAT_MSG_SAY:
+        case CHAT_MSG_PARTY:
+#ifdef MANGOSBOT_TWO
+        case CHAT_MSG_PARTY_LEADER:
+#endif
+        case CHAT_MSG_YELL:
+        case CHAT_MSG_WHISPER:
+        case CHAT_MSG_GUILD:
+            break;
+        default:
+            return;
+            break;
+        }
+
+#ifdef MANGOSBOT_ZERO
+        switch (msgtype)
+        {
+        case CHAT_MSG_SAY:
+        case CHAT_MSG_PARTY:
+        case CHAT_MSG_YELL:
+            p >> guid1 >> guid2;
+            break;
+        case CHAT_MSG_CHANNEL:
+            p >> chanName >> unused >> guid1;
+            break;
+        default:
+            p >> guid1;
+            break;
+        }
+
+        if (guid1.IsEmpty() || p.size() > 0x1000)
+            return;
+
+        p >> textLen >> message >> chatTag;
+#endif
+#ifdef MANGOSBOT_ONE
+        p >> guid1 >> unused;
+        if (guid1.IsEmpty() || p.size() > 0x1000)
+            return;
+
+        switch (msgtype)
+        {
+        case CHAT_MSG_CHANNEL:
+            p >> chanName;
+            [[fallthrough]];
+        case CHAT_MSG_SAY:
+        case CHAT_MSG_PARTY:
+        case CHAT_MSG_YELL:
+        case CHAT_MSG_WHISPER:
+        case CHAT_MSG_GUILD:
+            p >> guid2;
+            p >> textLen >> message >> chatTag;
+            break;
+        default:
+            break;
+        }
+#endif
+#ifdef MANGOSBOT_TWO
+        p >> guid1 >> unused;
+        if (guid1.IsEmpty() || p.size() > 0x1000)
+            return;
+
+        if (p.GetOpcode() == SMSG_GM_MESSAGECHAT)
+        {
+            p >> textLen;
+            p >> name;
+        }
+
+        switch (msgtype)
+        {
+        case CHAT_MSG_CHANNEL:
+            p >> chanName;
+            [[fallthrough]];
+        case CHAT_MSG_SAY:
+        case CHAT_MSG_PARTY:
+        case CHAT_MSG_PARTY_LEADER:
+        case CHAT_MSG_YELL:
+        case CHAT_MSG_WHISPER:
+        case CHAT_MSG_GUILD:
+            p >> guid2;
+            p >> textLen >> message >> chatTag;
+            break;
+        default:
+            break;
+        }
+#endif
+
+        bool isAiChat = sPlayerbotAIConfig.llmEnabled > 0 && (HasStrategy("ai chat", BotState::BOT_STATE_NON_COMBAT) || sPlayerbotAIConfig.llmEnabled == 3);
+
+        if (m_recordIncommingMessages)
+        {
+            std::string recievedMessage = message;
+
+            std::string senderName;
+            if(!sObjectMgr.GetPlayerNameByGUID(guid1, senderName))
+                senderName = "unknown";
+
+            std::string recievedChatType;
+
+            //Add chat type prefix before recieved message. Ie. for Guilg "guild:".
+            switch (msgtype)
+            {
+                case CHAT_MSG_SAY:
+                    recievedChatType = "says";
+                    break;
+                case CHAT_MSG_YELL:
+                    recievedChatType = "yells";
+                    break;
+                case CHAT_MSG_PARTY:
+                    recievedChatType = "party";
+                    break;
+#ifdef MANGOSBOT_TWO
+                case CHAT_MSG_PARTY_LEADER:
+                    recievedChatType = "party leader";
+                    break;
+#endif
+                case CHAT_MSG_GUILD:
+                    recievedChatType = "guild";
+                    break;
+                case CHAT_MSG_OFFICER:
+                    recievedChatType = "officer";
+                    break;
+                case CHAT_MSG_WHISPER:
+                    //Get player name for whisper and add "<whispe:" before message.
+                    recievedChatType = "whispers";
+                    break;
+                case CHAT_MSG_CHANNEL: //Channel needs channel name to be added as prefix, so we add "c:" before channel name.
+                    recievedChatType = chanName;
+                    break;
+                default:
+                    break;
+            }
+
+            recievedMessage = "[" + senderName + "] " + recievedChatType + ": " + recievedMessage;
+
+            m_recordedMessages.push_back(recievedMessage);
+        }
+
+        if (isAiChat && (lang == LANG_ADDON || message.find("d:") == 0))
+            return;
+
+        if (guid1 != bot->GetObjectGuid()) // do not reply to self
+        {
+            // try to always reply to real player
+            time_t lastChat = GetAiObjectContext()->GetValue<time_t>("last said", "chat")->Get();
+            bool isPaused = time(0) < lastChat;
+            bool shouldReply = false;
+            bool isFromFreeBot = false;
+            sObjectMgr.GetPlayerNameByGUID(guid1, name);
+            uint32 accountId = sObjectMgr.GetPlayerAccountIdByGUID(guid1);
+            isFromFreeBot = sPlayerbotAIConfig.IsInRandomAccountList(accountId);
+            if (!isFromFreeBot)
+            {
+
+                isFromFreeBot = sPlayerbotAIConfig.IsFreeAltBot(guid1);
+
+                if (isFromFreeBot)
+                {
+                    Player* player = sObjectMgr.GetPlayer(guid1);
+                    if (player && IsRealPlayer(player))
+                        isFromFreeBot = false;
+                }
+            }
+
+            bool isMentioned = message.find(bot->GetName()) != std::string::npos;
+            
+
+            ChatChannelSource chatChannelSource = GetChatChannelSource(bot, msgtype, chanName);
+
+            if (!isAiChat || isFromFreeBot)
+            {
+                // random bot speaks, chat CD
+                if ((isFromFreeBot || isAiChat) && isPaused)
+                    return;
+
+                // BG: react only if mentioned or if not channel and real player spoke
+                if (bot->InBattleGround() && !(isMentioned || (msgtype != CHAT_MSG_CHANNEL && !isFromFreeBot)))
+                    return;
+
+                if (HasRealPlayerMaster() && guid1 != GetMaster()->GetObjectGuid())
+                    return;
+
+                if (lang == LANG_ADDON)
+                    return;
+
+                if (boost::algorithm::istarts_with(message, sPlayerbotAIConfig.toxicLinksPrefix)
+                    && (GetChatHelper()->ExtractAllItemIds(message).size() > 0 || GetChatHelper()->ExtractAllQuestIds(message).size() > 0)
+                    && sPlayerbotAIConfig.toxicLinksRepliesChance)
+                {
+                    if (urand(0, 50) > 0 || urand(1, 100) > sPlayerbotAIConfig.toxicLinksRepliesChance)
+                    {
+                        return;
+                    }
+                }
+                else if ((GetChatHelper()->ExtractAllItemIds(message).count(19019) && sPlayerbotAIConfig.thunderfuryRepliesChance))
+                {
+                    if (urand(0, 60) > 0 || urand(1, 100) > sPlayerbotAIConfig.thunderfuryRepliesChance)
+                    {
+                        return;
+                    }
+                }
+                else
+                {
+                    if (isFromFreeBot && urand(0, 20))
+                        return;
+
+                    if (msgtype == CHAT_MSG_GUILD && (!sPlayerbotAIConfig.guildRepliesRate || urand(1, 100) >= sPlayerbotAIConfig.guildRepliesRate))
+                        return;
+
+                    if (!isFromFreeBot)
+                    {
+                        if (!isMentioned && urand(0, 4))
+                            return;
+                    }
+                    else
+                    {
+                        if (urand(0, 20 + 10 * isMentioned))
+                            return;
+                    }
+                }
+            }
+
+            MANGOS_ASSERT(!message.empty());     
+            QueueChatResponse(msgtype, guid1, ObjectGuid(), message, chanName, name, isAiChat);
+            GetAiObjectContext()->GetValue<time_t>("last said", "chat")->Set(time(0) + urand(5, 25));
+
+            return;
+        }
+
+        if (isAiChat)
+        {
+            ChatChannelSource chatChannelSource = GetBotAI(bot)->GetChatChannelSource(bot, msgtype, chanName);
+
+            std::string llmChannel;
+
+            if (!sPlayerbotAIConfig.llmGlobalContext)
+                llmChannel = ((chatChannelSource == ChatChannelSource::SRC_WHISPER) ? name : std::to_string(chatChannelSource));
+
+            AiObjectContext* context = aiObjectContext;
+            std::string llmContext = AI_VALUE(std::string, "manual string::llmcontext" + llmChannel);
+            llmContext = llmContext + " " + bot->GetName() + ":" + message;
+            PlayerbotLLMInterface::LimitContext(llmContext, llmContext.size());
+            SET_AI_VALUE(std::string, "manual string::llmcontext" + llmChannel, llmContext);
+        }
+    }
+}
+
 void PlayerbotAI::HandleBotOutgoingPacket(const WorldPacket& packet)
 {
     //if (packet.empty())
@@ -2033,275 +2345,17 @@ void PlayerbotAI::HandleBotOutgoingPacket(const WorldPacket& packet)
 
         return;
     }
-    case SMSG_MESSAGECHAT: // do not react to self or if not ready to reply
+    case SMSG_MESSAGECHAT:
     {
-        if (!AllowActivity())
-            return;
-
-        WorldPacket p(packet);
-#ifndef MANGOSBOT_ZERO
-        if (!p.empty() && (p.GetOpcode() == SMSG_MESSAGECHAT || p.GetOpcode() == SMSG_GM_MESSAGECHAT))
-#else
-        if (!p.empty() && p.GetOpcode() == SMSG_MESSAGECHAT)
-#endif
-        {
-            p.rpos(0);
-            uint8 msgtype, chatTag;
-            uint32 lang, textLen, unused;
-            ObjectGuid guid1, guid2;
-            std::string name, chanName, message;
-            p >> msgtype >> lang;
-
-            // filter msg type
-            switch (msgtype)
-            {
-            case CHAT_MSG_CHANNEL:
-            case CHAT_MSG_SAY:
-            case CHAT_MSG_PARTY:
-#ifdef MANGOSBOT_TWO
-            case CHAT_MSG_PARTY_LEADER:
-#endif
-            case CHAT_MSG_YELL:
-            case CHAT_MSG_WHISPER:
-            case CHAT_MSG_GUILD:
-                break;
-            default:
-                return;
-                break;
-            }
-
-#ifdef MANGOSBOT_ZERO
-            switch (msgtype)
-            {
-            case CHAT_MSG_SAY:
-            case CHAT_MSG_PARTY:
-            case CHAT_MSG_YELL:
-                p >> guid1 >> guid2;
-                break;
-            case CHAT_MSG_CHANNEL:
-                p >> chanName >> unused >> guid1;
-                break;
-            default:
-                p >> guid1;
-                break;
-            }
-
-            if (guid1.IsEmpty() || p.size() > 0x1000)
-                return;
-
-            p >> textLen >> message >> chatTag;
-#endif
-#ifdef MANGOSBOT_ONE
-            p >> guid1 >> unused;
-            if (guid1.IsEmpty() || p.size() > 0x1000)
-                return;
-
-            switch (msgtype)
-            {
-            case CHAT_MSG_CHANNEL:
-                p >> chanName;
-                [[fallthrough]];
-            case CHAT_MSG_SAY:
-            case CHAT_MSG_PARTY:
-            case CHAT_MSG_YELL:
-            case CHAT_MSG_WHISPER:
-            case CHAT_MSG_GUILD:
-                p >> guid2;
-                p >> textLen >> message >> chatTag;
-                break;
-            default:
-                break;
-            }
-#endif
-#ifdef MANGOSBOT_TWO
-            p >> guid1 >> unused;
-            if (guid1.IsEmpty() || p.size() > 0x1000)
-                return;
-
-            if (p.GetOpcode() == SMSG_GM_MESSAGECHAT)
-            {
-                p >> textLen;
-                p >> name;
-            }
-
-            switch (msgtype)
-            {
-            case CHAT_MSG_CHANNEL:
-                p >> chanName;
-                [[fallthrough]];
-            case CHAT_MSG_SAY:
-            case CHAT_MSG_PARTY:
-            case CHAT_MSG_PARTY_LEADER:
-            case CHAT_MSG_YELL:
-            case CHAT_MSG_WHISPER:
-            case CHAT_MSG_GUILD:
-                p >> guid2;
-                p >> textLen >> message >> chatTag;
-                break;
-            default:
-                break;
-            }
-#endif
-
-            bool isAiChat = sPlayerbotAIConfig.llmEnabled > 0 && (HasStrategy("ai chat", BotState::BOT_STATE_NON_COMBAT) || sPlayerbotAIConfig.llmEnabled == 3);
-
-            if (m_recordIncommingMessages)
-            {
-                std::string recievedMessage = message;
-
-                std::string senderName;
-                if(!sObjectMgr.GetPlayerNameByGUID(guid1, senderName))
-                    senderName = "unknown";
-
-                std::string recievedChatType;
-
-                //Add chat type prefix before recieved message. Ie. for Guilg "guild:".
-                switch (msgtype)
-                {
-                    case CHAT_MSG_SAY:
-                        recievedChatType = "says";
-                        break;
-                    case CHAT_MSG_YELL:
-                        recievedChatType = "yells";
-                        break;
-                    case CHAT_MSG_PARTY:
-                        recievedChatType = "party";
-                        break;
-#ifdef MANGOSBOT_TWO
-                    case CHAT_MSG_PARTY_LEADER:
-                        recievedChatType = "party leader";
-                        break;
-#endif
-                    case CHAT_MSG_GUILD:
-                        recievedChatType = "guild";
-                        break;
-                    case CHAT_MSG_OFFICER:
-                        recievedChatType = "officer";
-                        break;
-                    case CHAT_MSG_WHISPER:
-                        //Get player name for whisper and add "<whispe:" before message.
-                        recievedChatType = "whispers";
-                        break;
-                    case CHAT_MSG_CHANNEL: //Channel needs channel name to be added as prefix, so we add "c:" before channel name.
-                        recievedChatType = chanName;
-                        break;
-                    default:
-                        break;
-                }
-
-                recievedMessage = "[" + senderName + "] " + recievedChatType + ": " + recievedMessage;
-
-                m_recordedMessages.push_back(recievedMessage);
-            }
-
-            if (isAiChat && (lang == LANG_ADDON || message.find("d:") == 0))
-                return;
-
-            if (guid1 != bot->GetObjectGuid()) // do not reply to self
-            {
-                // try to always reply to real player
-                time_t lastChat = GetAiObjectContext()->GetValue<time_t>("last said", "chat")->Get();
-                bool isPaused = time(0) < lastChat;
-                bool shouldReply = false;
-                bool isFromFreeBot = false;
-                sObjectMgr.GetPlayerNameByGUID(guid1, name);
-                uint32 accountId = sObjectMgr.GetPlayerAccountIdByGUID(guid1);
-                isFromFreeBot = sPlayerbotAIConfig.IsInRandomAccountList(accountId);
-                if (!isFromFreeBot)
-                {
-
-                    isFromFreeBot = sPlayerbotAIConfig.IsFreeAltBot(guid1);
-
-                    if (isFromFreeBot)
-                    {
-                        Player* player = sObjectMgr.GetPlayer(guid1);
-                        if (player && IsRealPlayer(player))
-                            isFromFreeBot = false;
-                    }
-                }
-
-                bool isMentioned = message.find(bot->GetName()) != std::string::npos;
-                
-
-                ChatChannelSource chatChannelSource = GetChatChannelSource(bot, msgtype, chanName);
-
-                if (!isAiChat || isFromFreeBot)
-                {
-                    // random bot speaks, chat CD
-                    if ((isFromFreeBot || isAiChat) && isPaused)
-                        return;
-
-                    // BG: react only if mentioned or if not channel and real player spoke
-                    if (bot->InBattleGround() && !(isMentioned || (msgtype != CHAT_MSG_CHANNEL && !isFromFreeBot)))
-                        return;
-
-                    if (HasRealPlayerMaster() && guid1 != GetMaster()->GetObjectGuid())
-                        return;
-
-                    if (lang == LANG_ADDON)
-                        return;
-
-                    if (boost::algorithm::istarts_with(message, sPlayerbotAIConfig.toxicLinksPrefix)
-                        && (GetChatHelper()->ExtractAllItemIds(message).size() > 0 || GetChatHelper()->ExtractAllQuestIds(message).size() > 0)
-                        && sPlayerbotAIConfig.toxicLinksRepliesChance)
-                    {
-                        if (urand(0, 50) > 0 || urand(1, 100) > sPlayerbotAIConfig.toxicLinksRepliesChance)
-                        {
-                            return;
-                        }
-                    }
-                    else if ((GetChatHelper()->ExtractAllItemIds(message).count(19019) && sPlayerbotAIConfig.thunderfuryRepliesChance))
-                    {
-                        if (urand(0, 60) > 0 || urand(1, 100) > sPlayerbotAIConfig.thunderfuryRepliesChance)
-                        {
-                            return;
-                        }
-                    }
-                    else
-                    {
-                        if (isFromFreeBot && urand(0, 20))
-                            return;
-
-                        if (msgtype == CHAT_MSG_GUILD && (!sPlayerbotAIConfig.guildRepliesRate || urand(1, 100) >= sPlayerbotAIConfig.guildRepliesRate))
-                            return;
-
-                        if (!isFromFreeBot)
-                        {
-                            if (!isMentioned && urand(0, 4))
-                                return;
-                        }
-                        else
-                        {
-                            if (urand(0, 20 + 10 * isMentioned))
-                                return;
-                        }
-                    }
-                }
-
-                MANGOS_ASSERT(!message.empty());     
-                QueueChatResponse(msgtype, guid1, ObjectGuid(), message, chanName, name, isAiChat);
-                GetAiObjectContext()->GetValue<time_t>("last said", "chat")->Set(time(0) + urand(5, 25));
-
-                return;
-            }
-
-            if (isAiChat)
-            {
-                ChatChannelSource chatChannelSource = GetBotAI(bot)->GetChatChannelSource(bot, msgtype, chanName);
-
-                std::string llmChannel;
-
-                if (!sPlayerbotAIConfig.llmGlobalContext)
-                    llmChannel = ((chatChannelSource == ChatChannelSource::SRC_WHISPER) ? name : std::to_string(chatChannelSource));
-
-                AiObjectContext* context = aiObjectContext;
-                std::string llmContext = AI_VALUE(std::string, "manual string::llmcontext" + llmChannel);
-                llmContext = llmContext + " " + bot->GetName() + ":" + message;
-                PlayerbotLLMInterface::LimitContext(llmContext, llmContext.size());
-                SET_AI_VALUE(std::string, "manual string::llmcontext" + llmChannel, llmContext);
-            }
-        }
-
+        // This runs on the SENDER's thread: AsyncPackets for a player's party
+        // chat, whispers and channels. The reply logic (HandleChatPacket)
+        // reads and writes the AI context and the engines while the bot's map
+        // thread changes them, so only the copy happens here and UpdateAI
+        // parses it.
+        std::lock_guard<std::mutex> guard(chatInboxMutex);
+        // A bot out of every map is not updated. Do not let lines pile up.
+        if (chatInbox.size() < 32)
+            chatInbox.push_back(packet);
         return;
     }
     case SMSG_MOVE_KNOCK_BACK: // handle knockbacks
@@ -2517,8 +2571,27 @@ void PlayerbotAI::DoNextAction(bool min)
 
     bool minimal = !AllowActivity();
 
+    // While a companion waits between its stop and its teleport to the owner, no
+    // action runs: the engine runs before the companion block below, and in that
+    // half second `follow` gave it a new point move (flags 0x400001 at the teleport).
+    // Cleared after 2 s whatever happens: an owner who logs out in that half
+    // second no longer runs the companion block that would clear it.
+    if (farStopSentMs && WorldTimer::getMSTimeDiff(farStopSentMs, WorldTimer::getMSTime()) > 2000)
+        farStopSentMs = 0;
+
+    // A companion picked up for a ride whose owner is gone shows again here: the
+    // companion block below is not run without an owner.
+    if ((hiddenRide || showAfterRide) && !GetMaster())
+    {
+        hiddenRide = false;
+        showAfterRide = false;
+        bot->SetVisibility(VISIBILITY_ON);
+        bot->ResummonPetTemporaryUnSummonedIfAny();
+    }
+
     SC_PHASE("DoNextAction.engineDoNextAction", bot ? bot->GetName() : "(null)");
-    currentEngine->DoNextAction(NULL, 0, (minimal || min), bot->IsTaxiFlying());
+    if (!farStopSentMs && !hiddenRide)
+        currentEngine->DoNextAction(NULL, 0, (minimal || min), bot->IsTaxiFlying());
     SC_PHASE("DoNextAction.afterEngine", bot ? bot->GetName() : "(null)");
 
     if (!bot->IsInWorld()) //Teleport out of bg
@@ -2703,6 +2776,67 @@ void PlayerbotAI::DoNextAction(bool min)
 
         const time_t now = time(nullptr);
 
+        // RIDING WITH THE OWNER (2026-10-19, the owner's request). On foot a
+        // companion cannot keep up with a mount, a rented one or a gryphon; it fell
+        // behind until the 100 yd teleport below fetched it, which looked jumpy.
+        // When the owner mounts, out of combat, the companion is picked up: it
+        // stops, turns invisible, its pet is put away, and it is moved to the owner
+        // unseen, at most every 2 s. When the owner dismounts, a fight starts or
+        // the maps differ, it is put down next to the owner and shows once that
+        // teleport has landed. No action runs while it is picked up.
+        if (showAfterRide && !bot->IsBeingTeleported())
+        {
+            showAfterRide = false;
+            bot->SetVisibility(VISIBILITY_ON);
+            bot->ResummonPetTemporaryUnSummonedIfAny();
+        }
+
+        // A flight path counts: the companion stays where it was picked up and is
+        // put down at the landing.
+        const bool ownerRiding = master->IsInWorld() && (master->IsMounted() || master->IsTaxiFlying()) &&
+            !bot->IsTaxiFlying() && !master->IsBeingTeleported() && bot->GetMapId() == master->GetMapId() &&
+            sServerFacade.IsAlive(master) && sServerFacade.IsAlive(bot) &&
+            !sServerFacade.IsInCombat(master) && !sServerFacade.IsInCombat(bot) && !master->InBattleGround() &&
+            !HasStrategy("stay", BotState::BOT_STATE_NON_COMBAT) && !HasStrategy("guard", BotState::BOT_STATE_NON_COMBAT);
+
+        if (ownerRiding && !hiddenRide && !showAfterRide)
+        {
+            StopMoving();
+            bot->UnsummonPetTemporaryIfAny();
+            bot->SetVisibility(VISIBILITY_OFF);
+            hiddenRide = true;
+            hiddenMoveAt = now;
+            sLog.outString("Companion %s: its owner mounted, picked up", bot->GetName());
+            return;
+        }
+
+        if (hiddenRide)
+        {
+            if (!ownerRiding)
+            {
+                hiddenRide = false;
+                if (bot->GetMapId() == master->GetMapId() && master->IsInWorld() && !master->IsBeingTeleported())
+                {
+                    bot->NearTeleportTo(master->GetPositionX(), master->GetPositionY(), master->GetPositionZ(), master->GetOrientation());
+                    showAfterRide = true;
+                }
+                else
+                {
+                    bot->SetVisibility(VISIBILITY_ON);
+                    bot->ResummonPetTemporaryUnSummonedIfAny();
+                }
+                sLog.outString("Companion %s: its owner dismounted, put down", bot->GetName());
+                return;
+            }
+
+            if (!master->IsTaxiFlying() && sServerFacade.GetDistance2d(bot, master) > 10.0f && now - hiddenMoveAt >= 2)
+            {
+                hiddenMoveAt = now;
+                bot->NearTeleportTo(master->GetPositionX(), master->GetPositionY(), master->GetPositionZ(), master->GetOrientation());
+            }
+            return;
+        }
+
         // FALLEN THROUGH THE FLOOR (2026-10-19): more than 8 yd below the owner,
         // within 20 yd on the map, out of sight, alive and out of combat for 3 s.
         // A companion on the Deadmines ship deck ended up 31 yd under it.
@@ -2721,6 +2855,50 @@ void PlayerbotAI::DoNextAction(bool min)
             sLog.outError("Companion %s: %.1f yd below its owner, brought back up", bot->GetName(),
                 master->GetPositionZ() - bot->GetPositionZ());
             StopMoving();
+            bot->NearTeleportTo(master->GetPositionX(), master->GetPositionY(), master->GetPositionZ(), master->GetOrientation());
+            return;
+        }
+
+        // TOO FAR FROM THE OWNER ON THE SAME MAP (2026-10-19, the owner's request):
+        // past AiPlayerbot.CompanionTeleportDistance (100 yd) for 1 s, it stops and
+        // teleports to the owner. A path that long is a detour: in a Dun Morogh
+        // tunnel with no navmesh at its exit, a companion ran 427 yd back round the
+        // mountain. Not in combat, on a flight path, on a transport, on stay or
+        // guard, or in a battleground.
+        const bool tooFar = master->IsInWorld() && !master->IsBeingTeleported() && !bot->IsBeingTeleported() &&
+            bot->GetMapId() == master->GetMapId() && sServerFacade.IsAlive(master) && sServerFacade.IsAlive(bot) &&
+            !sServerFacade.IsInCombat(bot) && !sServerFacade.IsInCombat(master) &&
+            !master->IsTaxiFlying() && !bot->IsTaxiFlying() && !master->GetTransport() && !bot->GetTransport() &&
+            !master->InBattleGround() && !HasStrategy("stay", BotState::BOT_STATE_NON_COMBAT) &&
+            !HasStrategy("guard", BotState::BOT_STATE_NON_COMBAT) &&
+            sServerFacade.GetDistance2d(bot, master) > sPlayerbotAIConfig.companionTeleportDistance;
+        //
+        // The stop goes out first and the teleport about 0.5 s later. Sent in the
+        // same tick, the owner saw the companion arrive running and snap back: its
+        // client still played the old movement when the teleport came.
+        if (!tooFar)
+        {
+            farFromOwnerSince = 0;
+            farStopSentMs = 0;
+        }
+        else if (!farFromOwnerSince)
+            farFromOwnerSince = now;
+        else if (now - farFromOwnerSince >= 1)
+        {
+            if (!farStopSentMs)
+            {
+                StopMoving();
+                farStopSentMs = WorldTimer::getMSTime() | 1;
+                SetAIInternalUpdateDelay(500);
+                return;
+            }
+            if (WorldTimer::getMSTimeDiff(farStopSentMs, WorldTimer::getMSTime()) < 400)
+                return;
+
+            farFromOwnerSince = 0;
+            farStopSentMs = 0;
+            sLog.outString("Companion %s: %.0f yd from its owner, teleported to it", bot->GetName(),
+                sServerFacade.GetDistance2d(bot, master));
             bot->NearTeleportTo(master->GetPositionX(), master->GetPositionY(), master->GetPositionZ(), master->GetOrientation());
             return;
         }
@@ -8886,8 +9064,11 @@ bool ComfyCommands::HandleNpcBotCommand(ChatHandler* handler, char* args)
         // online by their own row, not by that flag -- see
         // PlayerbotAIConfig::loadBotNpcs for why leaning on it never survived a
         // restart. Clearing character_guid above is the whole of the unplace.
-        sPlayerbotAIConfig.freeAltBots.remove_if(
-            [wasGuid](std::pair<uint32, uint32> i) { return i.second == wasGuid; });
+        {
+            std::lock_guard<std::recursive_mutex> guard(sPlayerbotAIConfig.freeAltBotsLock);
+            sPlayerbotAIConfig.freeAltBots.remove_if(
+                [wasGuid](std::pair<uint32, uint32> i) { return i.second == wasGuid; });
+        }
 
         if (bot)
         {
@@ -9584,12 +9765,15 @@ bool ComfyCommands::HandleNpcBotCommand(ChatHandler* handler, char* args)
     uint32 accountId = sObjectMgr.GetPlayerAccountIdByGUID(ObjectGuid(HIGHGUID_PLAYER, spawn.characterGuid));
 
     uint32 wantGuid = spawn.characterGuid;
-    bool queued = std::find_if(sPlayerbotAIConfig.freeAltBots.begin(), sPlayerbotAIConfig.freeAltBots.end(),
-                               [wantGuid](std::pair<uint32, uint32> i) { return i.second == wantGuid; })
-                  != sPlayerbotAIConfig.freeAltBots.end();
+    {
+        std::lock_guard<std::recursive_mutex> guard(sPlayerbotAIConfig.freeAltBotsLock);
+        bool queued = std::find_if(sPlayerbotAIConfig.freeAltBots.begin(), sPlayerbotAIConfig.freeAltBots.end(),
+                                   [wantGuid](std::pair<uint32, uint32> i) { return i.second == wantGuid; })
+                      != sPlayerbotAIConfig.freeAltBots.end();
 
-    if (!queued)
-        sPlayerbotAIConfig.freeAltBots.push_back(std::make_pair(accountId, wantGuid));
+        if (!queued)
+            sPlayerbotAIConfig.freeAltBots.push_back(std::make_pair(accountId, wantGuid));
+    }
 
     char const* saySomething = entry.gossipMenuId ? "" : " -- it has nothing to say yet";
 

@@ -4,6 +4,7 @@
 #include "BotNpc.h"
 #include "PlayerbotDbStore.h"
 #include "playerbot/PlayerbotFactory.h"
+#include "playerbot/RandomItemMgr.h"
 #include "playerbot/RandomPlayerbotFactory.h"
 #include "playerbot/RandomPlayerbotMgr.h"
 #include "playerbot/ServerFacade.h"
@@ -71,8 +72,11 @@ namespace {
 // the context valid at the virtual call and freed a few instructions later.
 //
 // So off the world thread, queue it; the bot world script drains the queue
-// after MapManager::Update, when no map is running. Before the first drain,
-// and during shutdown, nothing is deferred.
+// after MapManager::Update, when no map is running. Before the first drain
+// nothing is deferred. A stop changes nothing: it can land while the maps
+// update, and the rest of that tick still runs them on their threads. That
+// tick's drain still runs, and World::Shutdown, on the world thread after the
+// loop, drains once more (PlayerbotWorldScript::OnShutdown).
 //
 // A bot that is mid-teleport, or out of every map, waits for the world thread
 // too. A far-teleport ack adds the bot to its destination map (the core runs a
@@ -99,7 +103,7 @@ namespace {
     bool MustDeferToWorldThread()
     {
         const std::thread::id world = s_worldThread.load();
-        return world != std::thread::id() && std::this_thread::get_id() != world && !World::IsStopped();
+        return world != std::thread::id() && std::this_thread::get_id() != world;
     }
 
     uint32 MasterGuidOf(PlayerbotHolder* holder, Player** master = nullptr)
@@ -227,10 +231,11 @@ void DrainDeferredBotWork()
             continue;
         }
 
-        holder->DeleteBot(ObjectGuid(HIGHGUID_PLAYER, d.guid), d.allowInstant);
-
         // Only the master's PlayerbotMgr unregisters a companion it deletes.
-        if (CompanionOwnership::GetOwner(d.guid))
+        // A delete that refused (a live Player nobody logged out) leaves the
+        // companion registered, so it stays visible to its owner.
+        if (holder->DeleteBot(ObjectGuid(HIGHGUID_PLAYER, d.guid), d.allowInstant) &&
+            CompanionOwnership::GetOwner(d.guid))
         {
             sRandomPlayerbotMgr.ForgetTrackedPlayer(d.guid);
             CompanionOwnership::Unregister(d.guid);
@@ -317,6 +322,15 @@ void PlayerbotHolder::AddPlayerBot(uint32 guidLow, uint32 masterAccountId)
         }
     }
 
+    // 2c. One login at a time. LoginFreeBots calls this on every pass until
+    //     the bot is in world, so a second pass before the first load returns
+    //     queued a second login. That one landed after a logout (the owner's,
+    //     parking the companion) and logged the bot in again from rows read
+    //     before the logout saved: a hire came back without its gear.
+    for (const auto& pending : m_pendingBotLogins)
+        if (pending.second.botGuid == botGuid)
+            return;
+
     // 3. Queue the bot's character data load via the standard pipeline.
     //    Critically, we do NOT pre-create a WorldSession here — the callback below allocates
     //    a fresh, free-floating session per bot. This avoids stomping the master's existing
@@ -376,6 +390,17 @@ void PlayerbotHolder::HandlePlayerBotLoginCallback(QueryResult* /*dummy*/, SqlQu
         return;
     }
 
+    // A companion parked while its load was out: its owner logged out after
+    // the hire or the restore queued it. Logged in now, it has no owner to
+    // join. The owner's next login queues it again (unparked first).
+    if (CompanionOwnership::IsParked(lqh->GetGuid().GetCounter()))
+    {
+        sLog.outBasic("[Companions] %u: login dropped, its owner left while it loaded.",
+                      lqh->GetGuid().GetCounter());
+        delete holder;
+        return;
+    }
+
     // Allocate the bot's dedicated WorldSession. NOT added to sWorld.m_sessions — this session
     // exists only to own the bot Player and route its packets (which the null-socket guard drops).
     //
@@ -419,11 +444,14 @@ void PlayerbotHolder::HandlePlayerBotLoginCallback(QueryResult* /*dummy*/, SqlQu
         // Give up on this bot instead. Removing the queue entry is the whole fix
         // for the loop - the guid stays a perfectly good character and `.bot add`
         // will still log it in on demand, this just stops the unattended retrying.
-        sPlayerbotAIConfig.freeAltBots.remove_if(
-            [&](const std::pair<uint32, uint32>& entry)
-            {
-                return entry.second == info.botGuid.GetCounter();
-            });
+        {
+            std::lock_guard<std::recursive_mutex> guard(sPlayerbotAIConfig.freeAltBotsLock);
+            sPlayerbotAIConfig.freeAltBots.remove_if(
+                [&](const std::pair<uint32, uint32>& entry)
+                {
+                    return entry.second == info.botGuid.GetCounter();
+                });
+        }
 
         // And close the leak. Two cases, and they need different handling:
         //
@@ -733,8 +761,9 @@ void PlayerbotHolder::LogoutPlayerBot(uint32 guid, bool allowInstant, bool forDe
                 // bot's racial language. A bot NPC being unplaced hits this
                 // after its binding is gone, so MaySpeak() no longer stops it.
                 // Not GetMaster(): an alt bot's master is not null, and is not
-                // a real player either.
-                if (ai->HasRealPlayerMaster())
+                // a real player either. Not out of world either: TellPlayer
+                // turns the bot to face its master, on a map it is not in.
+                if (ai->HasRealPlayerMaster() && bot->IsInWorld())
                     ai->TellPlayer(ai->GetMaster(), BOT_TEXT("logout_start"));
 
                 WorldPacket p(CMSG_LOGOUT_REQUEST);
@@ -763,8 +792,9 @@ void PlayerbotHolder::LogoutPlayerBot(uint32 guid, bool allowInstant, bool forDe
         // if instant logout possible, do it
         else if (bot && (logout || !botWorldSessionPtr->isLogingOut()))
         {
-            // No real master, no goodbye: see the logout_start line above.
-            if (ai->HasRealPlayerMaster())
+            // No real master, or out of world, no goodbye: see the
+            // logout_start line above.
+            if (ai->HasRealPlayerMaster() && bot->IsInWorld())
                 ai->TellPlayer(ai->GetMaster(), BOT_TEXT("goodbye"));
             playerBots[guid] = nullptr;    // deletes bot player ptr inside this WorldSession PlayerBotMap
             // LogoutPlayer(false) when we are about to delete the character.
@@ -1118,14 +1148,23 @@ std::string PlayerbotHolder::ProcessBotCommand(std::string cmd, ObjectGuid guid,
     auto it = m_botCommandHandlers.find(cmd);
     if (it != m_botCommandHandlers.end())
     {
+        const bool takesGuid = it->second == &PlayerbotHolder::HandleBotAddLogin || it->second == &PlayerbotHolder::HandleBotAlways || it->second == &PlayerbotHolder::HandleBotDelete;
+
+        // `bot` is null for a bot that is offline, still logging in or between
+        // maps, and most handlers use it on their first line: `.bot gear` on
+        // one crashed the server. Only the handlers that take the bot by guid
+        // work on one that is not in world.
+        if (!bot && !takesGuid)
+            return "Bot is not online";
+
         std::string realParam;
-        
+
         if (!subType.empty())
             realParam = subType;
-        else if (it->second == &PlayerbotHolder::HandleBotAddLogin || it->second == &PlayerbotHolder::HandleBotAlways || it->second == &PlayerbotHolder::HandleBotDelete)
-            realParam = std::to_string(guid.GetRawValue());        
+        else if (takesGuid)
+            realParam = std::to_string(guid.GetRawValue());
         else
-            realParam = param;            
+            realParam = param;
 
         return (this->*it->second)(bot, master, realParam);
     }
@@ -1495,6 +1534,15 @@ void PlayerbotMgr::UpdateAIInternal(uint32 elapsed, bool minimal)
     SetAIInternalUpdateDelay(sPlayerbotAIConfig.reactDelay);
     CheckTellErrors(elapsed);
 
+    // The master's orders from chat (QueueCommand).
+    std::vector<QueuedCommand> pending;
+    {
+        std::lock_guard<std::mutex> guard(commandInboxMutex);
+        pending.swap(commandInbox);
+    }
+    for (QueuedCommand const& cmd : pending)
+        HandleCommand(cmd.type, cmd.text, cmd.lang, cmd.to);
+
     // Companions removed from the party, dismissed here rather than in the
     // group hook that noticed. PlayerbotGroupScript queues them because it
     // fires from inside Group::RemoveMember, and deleting a Player from there
@@ -1527,6 +1575,15 @@ void PlayerbotMgr::UpdateAIInternal(uint32 elapsed, bool minimal)
     // continent) auto-teleport to master never completes, bot doesn't
     // appear in /who, can't be invited.
     UpdateSessions(elapsed);
+}
+
+void PlayerbotMgr::QueueCommand(uint32 type, const std::string& text, uint32 lang, const std::string& to)
+{
+    std::lock_guard<std::mutex> guard(commandInboxMutex);
+    // A master out of every map is not updated. Do not let lines pile up.
+    if (commandInbox.size() >= 64)
+        return;
+    commandInbox.push_back({ type, text, lang, to });
 }
 
 void PlayerbotMgr::HandleCommand(uint32 type, const std::string& text, uint32 lang, const std::string& to)
@@ -1562,7 +1619,8 @@ void PlayerbotMgr::HandleCommand(uint32 type, const std::string& text, uint32 la
             if (bot->GetMapId() != master->GetMapId() || sServerFacade.GetDistance2d(bot, master) > 300)
                return;
 
-        GetBotAI(bot)->HandleCommand(type, text, *master, lang);
+        if (PlayerbotAI* ai = GetBotAI(bot))
+            ai->HandleCommand(type, text, *master, lang);
     });
 
     sRandomPlayerbotMgr.ForEachPlayerbot([&](Player* bot)
@@ -1578,32 +1636,33 @@ void PlayerbotMgr::HandleCommand(uint32 type, const std::string& text, uint32 la
             if (bot->GetMapId() != master->GetMapId() || sServerFacade.GetDistance2d(bot, master) > 300)
                return;
 
-        if (GetBotAI(bot)->GetMaster() == master)
+        if (GetBotAI(bot) && GetBotAI(bot)->GetMaster() == master)
             GetBotAI(bot)->HandleCommand(type, text, *master, lang);
     });
 }
 
 void PlayerbotMgr::HandleMasterIncomingPacket(const WorldPacket& packet)
 {
+    // A bot in the holder can be without its AI: between the login and
+    // OnBotLogin, and during the logout.
     ForEachPlayerbot([&](Player* bot)
     {
-        GetBotAI(bot)->HandleMasterIncomingPacket(packet);
+        if (PlayerbotAI* ai = GetBotAI(bot))
+            ai->HandleMasterIncomingPacket(packet);
     });
 
     sRandomPlayerbotMgr.ForEachPlayerbot([&](Player* bot)
     {
-        if (GetBotAI(bot)->GetMaster() == GetMaster())
+        if (GetBotAI(bot) && GetBotAI(bot)->GetMaster() == GetMaster())
             GetBotAI(bot)->HandleMasterIncomingPacket(packet);
     });
 
+    // No case for CMSG_LOGOUT_REQUEST. It used to log every bot out at the
+    // start of the master's 20 s countdown, so a cancelled logout left the
+    // companions gone. The logout itself parks them and logs them out
+    // (OnBeforeLogout, then RemoveBotMgr).
     switch (packet.GetOpcode())
     {
-        // if master is logging out, log out all bots
-        case CMSG_LOGOUT_REQUEST:
-        {
-            LogoutAllBots();
-            return;
-        }
         // if master cancelled logout, cancel too
         case CMSG_LOGOUT_CANCEL:
         {
@@ -1624,7 +1683,7 @@ void PlayerbotMgr::HandleMasterOutgoingPacket(const WorldPacket& packet)
 
     sRandomPlayerbotMgr.ForEachPlayerbot([&](Player* bot)
     {
-        if (GetBotAI(bot)->GetMaster() == GetMaster())
+        if (GetBotAI(bot) && GetBotAI(bot)->GetMaster() == GetMaster())
             GetBotAI(bot)->HandleMasterOutgoingPacket(packet);
     });
 }
@@ -1638,7 +1697,7 @@ void PlayerbotMgr::SaveToDB()
 
     sRandomPlayerbotMgr.ForEachPlayerbot([&](Player* bot)
     {
-        if (GetBotAI(bot)->GetMaster() == GetMaster())
+        if (GetBotAI(bot) && GetBotAI(bot)->GetMaster() == GetMaster())
             bot->SaveToDB();
     });
 }
@@ -1779,16 +1838,25 @@ void PlayerbotMgr::RestoreParkedCompanions()
             continue;
         }
 
-        // Still online: a logout that never got as far as logging the bot
-        // out. Nothing to relog, so just take the stamp off; the AI adopts
-        // its master from the party on its own.
-        if (sObjectMgr.GetPlayer(guid))
+        // Still online. A logout that never got as far as logging the bot out
+        // leaves it in the party, and the AI adopts its master from there. A
+        // hire that logged in after its owner left is not in the party: it
+        // goes on the queue below like an offline one, and LoginFreeBots
+        // joins and teleports a bot that is already online.
+        Player* online = sObjectMgr.GetPlayer(guid);
+        uint32 accountId = p.accountId;
+        if (online)
         {
-            CompanionOwnership::Unpark(p.companionGuid);
-            continue;
+            Group* party = master->GetGroup();
+            if (party && party->IsMember(guid))
+            {
+                CompanionOwnership::Unpark(p.companionGuid);
+                continue;
+            }
+            if (!accountId)
+                accountId = online->GetSession()->GetAccountId();
         }
-
-        if (!p.accountId)
+        else if (!accountId)
         {
             sLog.outError("RestoreParkedCompanions: no account for companion %u of %s, deleting it.",
                           p.companionGuid, master->GetName());
@@ -1797,10 +1865,12 @@ void PlayerbotMgr::RestoreParkedCompanions()
         }
 
         CompanionOwnership::Unpark(p.companionGuid);
-        CompanionOwnership::MarkReturning(p.companionGuid);
+        if (!online)
+            CompanionOwnership::MarkReturning(p.companionGuid);
 
         // Never queue the same guid twice: LoginFreeBots would start two
         // logins for it, and the second is the "already ingame" kick.
+        std::lock_guard<std::recursive_mutex> guard(sPlayerbotAIConfig.freeAltBotsLock);
         const bool queued = std::any_of(
             sPlayerbotAIConfig.freeAltBots.begin(), sPlayerbotAIConfig.freeAltBots.end(),
             [&](const std::pair<uint32, uint32>& entry) { return entry.second == p.companionGuid; });
@@ -1808,7 +1878,7 @@ void PlayerbotMgr::RestoreParkedCompanions()
         if (!queued)
         {
             sRandomPlayerbotMgr.SetValue(p.companionGuid, "create group", 1, master->GetName());
-            sPlayerbotAIConfig.freeAltBots.push_back(std::make_pair(p.accountId, p.companionGuid));
+            sPlayerbotAIConfig.freeAltBots.push_back(std::make_pair(accountId, p.companionGuid));
         }
 
         chat.PSendSysMessage("%s is on the way back.", name.c_str());
@@ -1999,7 +2069,10 @@ std::string PlayerbotHolder::HandleBotAlways(Player* bot, Player* master, const 
     if (always == BotAlwaysOnline::DISABLED || always == BotAlwaysOnline::DISABLED_BY_COMMAND)
     {
         sRandomPlayerbotMgr.SetValue(guid.GetCounter(), "always", (uint32)BotAlwaysOnline::ACTIVE);
-        sPlayerbotAIConfig.freeAltBots.push_back(std::make_pair(accountId, guid.GetCounter()));
+        {
+            std::lock_guard<std::recursive_mutex> guard(sPlayerbotAIConfig.freeAltBotsLock);
+            sPlayerbotAIConfig.freeAltBots.push_back(std::make_pair(accountId, guid.GetCounter()));
+        }
 
         Player* existingBot = sRandomPlayerbotMgr.GetPlayerBot(guid);
         if (existingBot)
@@ -2038,8 +2111,11 @@ std::string PlayerbotHolder::HandleBotAlways(Player* bot, Player* master, const 
             }
         }
 
-        auto it = std::remove_if(sPlayerbotAIConfig.freeAltBots.begin(), sPlayerbotAIConfig.freeAltBots.end(), [guid](std::pair<uint32, uint32> i) { return i.second == guid.GetCounter(); });
-        sPlayerbotAIConfig.freeAltBots.erase(it, sPlayerbotAIConfig.freeAltBots.end());
+        {
+            std::lock_guard<std::recursive_mutex> guard(sPlayerbotAIConfig.freeAltBotsLock);
+            auto it = std::remove_if(sPlayerbotAIConfig.freeAltBots.begin(), sPlayerbotAIConfig.freeAltBots.end(), [guid](std::pair<uint32, uint32> i) { return i.second == guid.GetCounter(); });
+            sPlayerbotAIConfig.freeAltBots.erase(it, sPlayerbotAIConfig.freeAltBots.end());
+        }
 
         return "Disabled offline player ai for " + alwaysName;
     }
@@ -3018,7 +3094,10 @@ void PlayerbotHolder::CreateBot(Player* master, const std::string param, std::li
 
         if (autoAdd)
         {
-            sPlayerbotAIConfig.freeAltBots.push_back(std::make_pair(accountId, botGuid));
+            {
+                std::lock_guard<std::recursive_mutex> guard(sPlayerbotAIConfig.freeAltBotsLock);
+                sPlayerbotAIConfig.freeAltBots.push_back(std::make_pair(accountId, botGuid));
+            }
             messages.push_back("Bot is now online");
         }
         else
@@ -3389,51 +3468,70 @@ bool PlayerbotHolder::DeleteBot(ObjectGuid guid, bool allowInstant)
 
     uint32 botAccount = sObjectMgr.GetPlayerAccountIdByGUID(guid);
 
-    if (Player* player = sObjectMgr.GetPlayer(guid, true))
-    {
-        // A DEAD BOT IS BUSY. Put it back on its feet before deleting it.
-        //
-        // A dead bot runs the revive machinery - FindCorpseAction walks the
-        // FleeManager to work out where its corpse is, which reaches deep into
-        // the AI object context. Delete the bot from under that and the next
-        // tick dereferences a freed context:
-        //
-        //   PlayerbotAI::UpdateAI -> Engine::ListenAndExecute
-        //     -> FindCorpseAction::Execute -> FleeManager::CalculateDestination
-        //     -> MoveStyleValue::HasValue -> NamedObjectContext::GetObjectA
-        //     -> SEH 0xc0000005
-        //
-        // That killed the server on 2026-09-06 when a companion was uninvited
-        // while dead - which is a perfectly ordinary thing to do after a wipe,
-        // and the one state in which dismissing had never been tried.
-        //
-        // Resurrecting first is not cosmetic: it takes the bot out of the
-        // corpse state so none of that machinery is live, and clears the
-        // corpse, which would otherwise outlive the character we are about to
-        // delete.
-        if (!player->IsAlive())
+    // A BOT BETWEEN MAPS IS STILL A LIVE PLAYER. GetPlayer(guid, true) misses
+    // it (it needs IsInWorld), and the delete then ran DeleteFromDB under a
+    // Player whose next save wrote the row back: "dismiss all" during a
+    // companion's teleport to its owner. Finish the teleport first, as the
+    // drain does. Only on the world thread, where the maps are idle:
+    // finishing the teleport adds the bot to another map. The deferral above
+    // sends every other thread to the drain; this refuses one that gets past.
+    if (Player* moving = sObjectAccessor.FindPlayerNotInWorld(guid))
+        if (!moving->IsInWorld())
         {
-            player->ResurrectPlayer(1.0f);
-            player->SpawnCorpseBones();
+            if (std::this_thread::get_id() != s_worldThread.load())
+                return false;
+            if (moving->IsBeingTeleported())
+                DriveBotSession(moving);
         }
 
-        // Kill the pet FIRST, and kill it as deleted rather than saved.
-        //
-        // A hunter or warlock companion writes character_pet and pet_spell the
-        // moment it summons, and every later save - logout included - writes
-        // them again. Those writes are async PExecute on four unordered
-        // workers, so one landing after DeleteFromDB's transaction leaves
-        // pet_spell rows behind with no character_pet to find them by. Measured
-        // 2026-09-06: 43 orphan pet_spell rows from a handful of hires, even
-        // with the delete-order fix already in.
-        //
-        // PET_SAVE_AS_DELETED is "not saved in fact" - it removes the rows and
-        // guarantees nothing is written afterwards, which is the only version
-        // of this that does not depend on winning a race. It matters because
-        // pet guids are reused and pet_spell keys PRIMARY on guid, so an orphan
-        // here is a future abort, not just clutter.
-        if (player->GetPet())
-            player->RemovePet(PET_SAVE_AS_DELETED);
+    if (Player* player = sObjectAccessor.FindPlayerNotInWorld(guid))
+    {
+        if (player->IsInWorld())
+        {
+            // A DEAD BOT IS BUSY. Put it back on its feet before deleting it.
+            //
+            // A dead bot runs the revive machinery - FindCorpseAction walks the
+            // FleeManager to work out where its corpse is, which reaches deep into
+            // the AI object context. Delete the bot from under that and the next
+            // tick dereferences a freed context:
+            //
+            //   PlayerbotAI::UpdateAI -> Engine::ListenAndExecute
+            //     -> FindCorpseAction::Execute -> FleeManager::CalculateDestination
+            //     -> MoveStyleValue::HasValue -> NamedObjectContext::GetObjectA
+            //     -> SEH 0xc0000005
+            //
+            // That killed the server on 2026-09-06 when a companion was uninvited
+            // while dead - which is a perfectly ordinary thing to do after a wipe,
+            // and the one state in which dismissing had never been tried.
+            //
+            // Resurrecting first is not cosmetic: it takes the bot out of the
+            // corpse state so none of that machinery is live, and clears the
+            // corpse, which would otherwise outlive the character we are about to
+            // delete.
+            if (!player->IsAlive())
+            {
+                player->ResurrectPlayer(1.0f);
+                player->SpawnCorpseBones();
+            }
+
+            // Kill the pet FIRST, and kill it as deleted rather than saved.
+            //
+            // A hunter or warlock companion writes character_pet and pet_spell the
+            // moment it summons, and every later save - logout included - writes
+            // them again. Those writes are async PExecute on four unordered
+            // workers, so one landing after DeleteFromDB's transaction leaves
+            // pet_spell rows behind with no character_pet to find them by. Measured
+            // 2026-09-06: 43 orphan pet_spell rows from a handful of hires, even
+            // with the delete-order fix already in.
+            //
+            // PET_SAVE_AS_DELETED is "not saved in fact" - it removes the rows and
+            // guarantees nothing is written afterwards, which is the only version
+            // of this that does not depend on winning a race. It matters because
+            // pet guids are reused and pet_spell keys PRIMARY on guid, so an orphan
+            // here is a future abort, not just clutter.
+            if (player->GetPet())
+                player->RemovePet(PET_SAVE_AS_DELETED);
+        }
 
         //Attempt instant logout.
         player->SetFlag(PLAYER_FLAGS, PLAYER_FLAGS_RESTING); 
@@ -3444,8 +3542,17 @@ bool PlayerbotHolder::DeleteBot(ObjectGuid guid, bool allowInstant)
         // falls through otherwise. Deleting the character regardless is what
         // leaves a bot standing in the world with no row behind it, so make
         // sure somebody actually logged it out before we delete.
-        if (sObjectMgr.GetPlayer(guid, true) && this != &sRandomPlayerbotMgr)
+        if (sObjectAccessor.FindPlayerNotInWorld(guid) && this != &sRandomPlayerbotMgr)
             sRandomPlayerbotMgr.LogoutPlayerBot(guid.GetCounter(), allowInstant, true);
+    }
+
+    // Nobody held it, so nobody logged it out. Deleting the row under a live
+    // Player is what its next save undoes; leave the character, and the
+    // startup purge sweeps it off the pool account.
+    if (sObjectAccessor.FindPlayerNotInWorld(guid))
+    {
+        sLog.outError("[Bots] Delete of bot %u skipped: still a live Player after the logout.", guid.GetCounter());
+        return false;
     }
 
     Player::DeleteFromDB(guid, botAccount, true, true);
@@ -3557,6 +3664,34 @@ std::string PlayerbotHolder::HandleBotGear(Player* bot, Player* master, const st
     }
 
     return "unknown gear command";
+}
+
+// Backs `.gear` (ComfyCommands::HandleGearCommand) on a PLAYER: the bot gear
+// pick for the slots in slotMask. The player has no PlayerbotAI, which
+// EquipGearForPlayer allows for. quality is 0 for the bots' own mix by level,
+// or ITEM_QUALITY_UNCOMMON and up for that quality only. Returns false with
+// `error` set when it does nothing at all.
+bool Playerbot_GearPlayer(Player* player, uint32 slotMask, uint32 quality, std::string& error)
+{
+    // The same two refusals InitEquipment makes silently.
+    if (player->GetLevel() < 5)
+    {
+        error = "gear needs level 5";
+        return false;
+    }
+    if (!sRandomItemMgr.GetPlayerSpecId(player))
+    {
+        error = "no spec found for this class";
+        return false;
+    }
+
+    // A mask of 0 inside the factory means "a bot, every slot".
+    if (!slotMask)
+        return true;
+
+    PlayerbotFactory factory(player, player->GetLevel(), quality);
+    factory.EquipGearForPlayer(slotMask);
+    return true;
 }
 
 std::string PlayerbotHolder::HandleBotTrainLearn(Player* bot, Player* master, const std::string param)

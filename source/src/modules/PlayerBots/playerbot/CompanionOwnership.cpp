@@ -5,6 +5,7 @@
 #include "Chat/Chat.h"
 #include "Chat/ComfyCommands.h"
 #include "Database/DatabaseEnv.h"
+#include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "Log.h"
@@ -12,7 +13,9 @@
 
 #include <algorithm>
 #include <map>
+#include <mutex>
 #include <set>
+#include <shared_mutex>
 #include <sstream>
 #include <vector>
 
@@ -46,17 +49,38 @@ namespace CompanionOwnership
 
         // Companions on their way back from a park. See MarkReturning.
         std::set<uint32> s_returning;
+
+        // Guards every container above. Owners on different maps call in from
+        // their own map threads at once: restores and dismissal drains after a
+        // restart, hires, and IsCompanion on every companion tick. Reads take
+        // it shared. A write releases it before its synchronous DB write, so a
+        // slow write does not stall the reads.
+        std::shared_mutex s_lock;
+        typedef std::shared_lock<std::shared_mutex> ReadLock;
+        typedef std::unique_lock<std::shared_mutex> WriteLock;
+
+        // Callers hold s_lock.
+        uint32 OwnerOfLocked(uint32 companionGuid)
+        {
+            auto it = s_owner.find(companionGuid);
+            return it == s_owner.end() ? 0 : it->second;
+        }
     }
 
     bool IsCompanionAccount(uint32 accountId)
     {
-        return accountId && s_accounts.find(accountId) != s_accounts.end();
+        if (!accountId)
+            return false;
+        ReadLock lock(s_lock);
+        return s_accounts.find(accountId) != s_accounts.end();
     }
 
     void NoteAccount(uint32 accountId)
     {
-        if (accountId)
-            s_accounts.insert(accountId);
+        if (!accountId)
+            return;
+        WriteLock lock(s_lock);
+        s_accounts.insert(accountId);
     }
 
     std::string RandomPassword()
@@ -93,7 +117,7 @@ namespace CompanionOwnership
                     Field* fields = result->Fetch();
                     const uint32 accountId = fields[0].GetUInt32();
                     const std::string name = fields[1].GetCppString();
-                    s_accounts.insert(accountId);
+                    NoteAccount(accountId);
 
                     if (sAccountMgr.CheckPassword(accountId, name, name) &&
                         sAccountMgr.ChangePassword(accountId, RandomPassword(), name) == AOR_OK)
@@ -106,10 +130,13 @@ namespace CompanionOwnership
             }
         }
 
-        s_owner.clear();
-        s_account.clear();
-        s_parked.clear();
-        s_pendingDismiss.clear();
+        {
+            WriteLock lock(s_lock);
+            s_owner.clear();
+            s_account.clear();
+            s_parked.clear();
+            s_pendingDismiss.clear();
+        }
 
         // SINCE 2026-09-09 A RESTART IS A LOGOUT, NOT A PURGE. A row whose
         // owner still exists is kept, parked, and the owner's next login
@@ -168,9 +195,12 @@ namespace CompanionOwnership
                     continue;
                 }
 
-                s_owner[companionGuid]   = ownerGuid;
-                s_account[companionGuid] = accountId;
-                s_parked[companionGuid]  = since;
+                {
+                    WriteLock lock(s_lock);
+                    s_owner[companionGuid]   = ownerGuid;
+                    s_account[companionGuid] = accountId;
+                    s_parked[companionGuid]  = since;
+                }
                 NoteAccount(accountId);
                 kept.insert(companionGuid);
 
@@ -206,8 +236,14 @@ namespace CompanionOwnership
         // The pool accounts are ours, so the rule needs no bookkeeping:
         // nothing should be on a COMPANION account at startup that the table
         // does not vouch for. Anything else is stale.
+        std::set<uint32> accounts;
+        {
+            ReadLock lock(s_lock);
+            accounts = s_accounts;
+        }
+
         uint32 orphans = 0;
-        for (uint32 accountId : s_accounts)
+        for (uint32 accountId : accounts)
         {
             auto stale = CharacterDatabase.PQuery(
                 "SELECT guid FROM characters WHERE account = '%u'", accountId);
@@ -232,10 +268,10 @@ namespace CompanionOwnership
             sLog.outString("[Companions] Startup purge: %u kept for owners to come back to, %u past the %u-minute window deleted, "
                            "%u with no owner deleted, %u row(s) already gone. %u pool account(s) known.",
                            uint32(kept.size()), deleted, sPlayerbotAIConfig.companionParkMinutes, orphaned, missing,
-                           uint32(s_accounts.size()));
+                           uint32(accounts.size()));
         else
             sLog.outDetail("[Companions] Startup purge: nothing to clean. %u pool account(s) known.",
-                           uint32(s_accounts.size()));
+                           uint32(accounts.size()));
     }
 
     void Register(uint32 ownerGuid, uint32 companionGuid, uint32 accountId)
@@ -243,9 +279,12 @@ namespace CompanionOwnership
         if (!ownerGuid || !companionGuid)
             return;
 
-        s_owner[companionGuid] = ownerGuid;
-        s_account[companionGuid] = accountId;
-        s_parked.erase(companionGuid);
+        {
+            WriteLock lock(s_lock);
+            s_owner[companionGuid] = ownerGuid;
+            s_account[companionGuid] = accountId;
+            s_parked.erase(companionGuid);
+        }
         NoteAccount(accountId);
 
         // DirectPExecute, not PExecute. The row must be on disk before the
@@ -264,19 +303,22 @@ namespace CompanionOwnership
         if (!companionGuid)
             return;
 
-        s_owner.erase(companionGuid);
-        s_account.erase(companionGuid);
-        s_parked.erase(companionGuid);
-        s_pendingDismiss.erase(companionGuid);
-        s_returning.erase(companionGuid);
+        {
+            WriteLock lock(s_lock);
+            s_owner.erase(companionGuid);
+            s_account.erase(companionGuid);
+            s_parked.erase(companionGuid);
+            s_pendingDismiss.erase(companionGuid);
+            s_returning.erase(companionGuid);
+        }
         CharacterDatabase.DirectPExecute(
             "DELETE FROM companion_owner WHERE companion_guid = '%u'", companionGuid);
     }
 
     uint32 GetOwner(uint32 companionGuid)
     {
-        auto it = s_owner.find(companionGuid);
-        return it == s_owner.end() ? 0 : it->second;
+        ReadLock lock(s_lock);
+        return OwnerOfLocked(companionGuid);
     }
 
     bool IsCompanion(uint32 companionGuid)
@@ -291,7 +333,10 @@ namespace CompanionOwnership
         // through the same Group::RemoveMember hook, and ParkAll has already
         // run by then. Queue it here and the owner's next login would delete
         // the companions it was about to bring back.
-        if (companionGuid && GetOwner(companionGuid) && !IsParked(companionGuid))
+        if (!companionGuid)
+            return;
+        WriteLock lock(s_lock);
+        if (OwnerOfLocked(companionGuid) && s_parked.find(companionGuid) == s_parked.end())
             s_pendingDismiss.insert(companionGuid);
     }
 
@@ -302,12 +347,15 @@ namespace CompanionOwnership
 
         const time_t now = time(nullptr);
         bool any = false;
-        for (const auto& entry : s_owner)
         {
-            if (entry.second != ownerGuid)
-                continue;
-            s_parked[entry.first] = now;
-            any = true;
+            WriteLock lock(s_lock);
+            for (const auto& entry : s_owner)
+            {
+                if (entry.second != ownerGuid)
+                    continue;
+                s_parked[entry.first] = now;
+                any = true;
+            }
         }
 
         if (!any)
@@ -323,13 +371,17 @@ namespace CompanionOwnership
 
     bool IsParked(uint32 companionGuid)
     {
+        ReadLock lock(s_lock);
         return s_parked.find(companionGuid) != s_parked.end();
     }
 
     void Unpark(uint32 companionGuid)
     {
-        if (!s_parked.erase(companionGuid))
-            return;
+        {
+            WriteLock lock(s_lock);
+            if (!s_parked.erase(companionGuid))
+                return;
+        }
 
         CharacterDatabase.DirectPExecute(
             "UPDATE companion_owner SET parked_time = 0 WHERE companion_guid = '%u'", companionGuid);
@@ -337,21 +389,25 @@ namespace CompanionOwnership
 
     void MarkReturning(uint32 companionGuid)
     {
-        if (companionGuid)
-            s_returning.insert(companionGuid);
+        if (!companionGuid)
+            return;
+        WriteLock lock(s_lock);
+        s_returning.insert(companionGuid);
     }
 
     bool TakeReturning(uint32 companionGuid)
     {
+        WriteLock lock(s_lock);
         return s_returning.erase(companionGuid) > 0;
     }
 
     std::vector<Parked> ParkedOf(uint32 ownerGuid)
     {
         std::vector<Parked> out;
+        ReadLock lock(s_lock);
         for (const auto& entry : s_parked)
         {
-            if (GetOwner(entry.first) != ownerGuid)
+            if (OwnerOfLocked(entry.first) != ownerGuid)
                 continue;
 
             const auto acc = s_account.find(entry.first);
@@ -366,14 +422,15 @@ namespace CompanionOwnership
     std::vector<uint32> TakeQueuedDismissals(uint32 ownerGuid)
     {
         std::vector<uint32> out;
+        WriteLock lock(s_lock);
         for (auto it = s_pendingDismiss.begin(); it != s_pendingDismiss.end(); )
         {
-            if (GetOwner(*it) == ownerGuid)
+            if (OwnerOfLocked(*it) == ownerGuid)
             {
                 out.push_back(*it);
                 it = s_pendingDismiss.erase(it);
             }
-            else if (!GetOwner(*it))
+            else if (!OwnerOfLocked(*it))
             {
                 // Already gone by another route - dismissed from the gossip, or
                 // deleted while the queue was waiting. Drop it silently rather
@@ -389,6 +446,7 @@ namespace CompanionOwnership
     std::vector<uint32> CompanionsOf(uint32 ownerGuid)
     {
         std::vector<uint32> out;
+        ReadLock lock(s_lock);
         for (const auto& entry : s_owner)
             if (entry.second == ownerGuid)
                 out.push_back(entry.first);
@@ -398,6 +456,7 @@ namespace CompanionOwnership
     uint32 CountFor(uint32 ownerGuid)
     {
         uint32 n = 0;
+        ReadLock lock(s_lock);
         for (const auto& entry : s_owner)
             if (entry.second == ownerGuid)
                 ++n;
@@ -463,5 +522,68 @@ bool ComfyCommands::HandleCompanionsCommand(ChatHandler* handler, char* args)
         shown += names[i];
     }
     handler->PSendSysMessage("Companions: %s.", shown.c_str());
+    return true;
+}
+
+// `.ccdebug [name] on | off`: a bot's debug lines, which also go to
+// server\companion-logs\<name>.log (PlayerbotAI::TellPlayerNoFacing).
+//
+// The whisper `nc +debug` that ComfyUI used is a strategy toggle, and a
+// companion takes those from a GM only (PlayerbotAI::RunCommand), so on any
+// other account /ccdebug did nothing at all. This command is the way in from
+// the console too, where there is nobody to whisper. The console and a GM may
+// use it on any bot; an owner on its own companion when
+// AiPlayerbot.CompanionDebugForOwner is on. The change is queued to the bot,
+// which runs it on its own update.
+bool ComfyCommands::HandleCompanionDebugCommand(ChatHandler* handler, char* args)
+{
+    std::vector<std::string> words;
+    {
+        std::istringstream in(args ? args : "");
+        std::string word;
+        while (in >> word)
+            words.push_back(word);
+    }
+
+    int turn = -1; // -1 toggle, 0 off, 1 on
+    if (!words.empty() && (words.back() == "on" || words.back() == "off"))
+    {
+        turn = words.back() == "on" ? 1 : 0;
+        words.pop_back();
+    }
+
+    Player* me = handler->m_session ? handler->m_session->GetPlayer() : nullptr;
+    Player* bot = nullptr;
+    if (!words.empty())
+        bot = sObjectAccessor.FindPlayerByName(words.front().c_str());
+    else if (me)
+        bot = handler->GetSelectedPlayer();
+
+    PlayerbotAI* ai = bot ? GetBotAI(bot) : nullptr;
+    if (!ai)
+    {
+        handler->SendSysMessage(words.empty() ? "Target a companion, or name one." : "No bot online by that name.");
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+
+    bool gm = !handler->m_session || handler->m_session->GetSecurity() >= SEC_DEVELOPER;
+    if (!gm)
+    {
+        bool own = me && CompanionOwnership::GetOwner(bot->GetGUIDLow()) == me->GetGUIDLow();
+        if (!own || !sPlayerbotAIConfig.companionDebugForOwner)
+        {
+            handler->SendSysMessage(own ? "Only a GM may turn on debug here." : "That is not your companion.");
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+    }
+
+    bool on = turn < 0 ? !ai->HasStrategy("debug", BotState::BOT_STATE_NON_COMBAT) : turn == 1;
+    ai->QueueOwnCommand(on ? "nc -silent,+debug,+debug action" : "nc +silent,-debug,-debug action");
+    if (on)
+        handler->PSendSysMessage("Debug on for %s: server\\companion-logs\\%s.log", bot->GetName(), bot->GetName());
+    else
+        handler->PSendSysMessage("Debug off for %s.", bot->GetName());
     return true;
 }

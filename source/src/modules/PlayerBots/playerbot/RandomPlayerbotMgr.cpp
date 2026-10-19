@@ -752,7 +752,12 @@ void RandomPlayerbotMgr::UpdateAIInternal(uint32 elapsed, bool minimal)
             if (GetPlayerBot(bot))
                 continue;   
 
-            if (!eventCache[bot].empty() && GetEventValue(bot, "login"))
+            bool cached;
+            {
+                std::lock_guard<std::mutex> guard(eventCacheLock);
+                cached = !eventCache[bot].empty();
+            }
+            if (cached && GetEventValue(bot, "login"))
             {
                 onlineBotCount++;
                 continue;
@@ -876,14 +881,39 @@ void RandomPlayerbotMgr::ScaleBotActivity()
 
 void RandomPlayerbotMgr::LoginFreeBots()
 {
+    // The whole pass: the loop below walks the list it later prunes. World
+    // thread, maps idle, so no map thread waits on it.
+    std::lock_guard<std::recursive_mutex> guard(sPlayerbotAIConfig.freeAltBotsLock);
     if (!sPlayerbotAIConfig.freeAltBots.empty() && sPlayerbotAIConfig.botAutologin != BotAutoLogin::LOGIN_ONLY_ALWAYS_ACTIVE)
     {
         std::vector<std::pair<uint32, uint32>> botsToRemove;
+        std::vector<uint32> parkedToLogOut;
 
         for (auto [accountId, botGuid] : sPlayerbotAIConfig.freeAltBots)
         {
             ObjectGuid guid(ObjectGuid(HIGHGUID_PLAYER, botGuid));
             Player* bot = sObjectMgr.GetPlayer(guid, false);
+
+            // A parked companion's owner logged out after the hire queued it
+            // (RestoreParkedCompanions unparks before it queues). Logged in
+            // now, it would find no owner to join and stand ungrouped, still
+            // counted against the owner's hires. Leave it parked and offline;
+            // the owner's next login brings it back. One already online is a
+            // login that was in flight at the logout.
+            if (CompanionOwnership::IsParked(botGuid))
+            {
+                if (!bot)
+                {
+                    botsToRemove.push_back({accountId, botGuid});
+                    continue;
+                }
+                if (bot->IsInWorld() && !bot->IsBeingTeleported())
+                {
+                    botsToRemove.push_back({accountId, botGuid});
+                    parkedToLogOut.push_back(botGuid);
+                    continue;
+                }
+            }
 
             if (!bot)
             {
@@ -1187,6 +1217,15 @@ void RandomPlayerbotMgr::LoginFreeBots()
         sPlayerbotAIConfig.freeAltBots.remove_if([&](const std::pair<uint32, uint32>& entry) {
             return std::find(botsToRemove.begin(), botsToRemove.end(), entry) != botsToRemove.end();
         });
+
+        // After the walk, not inside it. World thread, so the logout is not
+        // deferred. Only this holder has it: its owner, and with it the
+        // owner's PlayerbotMgr, are gone.
+        for (uint32 botGuid : parkedToLogOut)
+        {
+            sLog.outBasic("[Companions] %u logged in after its owner left; parked again.", botGuid);
+            LogoutPlayerBot(botGuid);
+        }
     }
 }
 
@@ -2212,6 +2251,7 @@ void RandomPlayerbotMgr::AddOfflineGroupBots()
 
                 if (sPlayerbotAIConfig.IsFreeAltBot(guid))
                 {
+                    std::lock_guard<std::recursive_mutex> guard(sPlayerbotAIConfig.freeAltBotsLock);
                     for (auto& bot : sPlayerbotAIConfig.freeAltBots)
                     {
                         if (bot.second == guid)
@@ -3711,9 +3751,18 @@ std::list<uint32> RandomPlayerbotMgr::GetBgBots(uint32 bracket)
 
 uint32 RandomPlayerbotMgr::GetEventValue(uint32 bot, std::string event)
 {
-    // load all events at once on first event load
-    if (eventCache[bot].empty())
+    bool loaded;
     {
+        std::lock_guard<std::mutex> guard(eventCacheLock);
+        auto it = eventCache.find(bot);
+        loaded = it != eventCache.end() && !it->second.empty();
+    }
+
+    // load all events at once on first event load. The query runs outside the
+    // lock, so a slow read does not stall the other map threads.
+    if (!loaded)
+    {
+        std::map<std::string, CachedEvent> events;
         auto results = CharacterDatabase.PQuery("SELECT `event`, `value`, `time`, validIn, `data` FROM ai_playerbot_random_bots WHERE owner = 0 AND bot = '%u'", bot);
         if (results)
         {
@@ -3735,11 +3784,21 @@ uint32 RandomPlayerbotMgr::GetEventValue(uint32 bot, std::string event)
                 e.lastChangeTime = fields[2].GetUInt32();
                 e.validIn = fields[3].GetUInt32();
                 e.data = dataStr ? std::string(dataStr) : std::string();
-                eventCache[bot][eventName] = e;
+                events[eventName] = e;
             } while (results->NextRow());
         }
+
+        std::lock_guard<std::mutex> guard(eventCacheLock);
+        std::map<std::string, CachedEvent>& cached = eventCache[bot];
+        if (cached.empty())
+            cached = std::move(events);
     }
-    CachedEvent e = eventCache[bot][event];
+
+    CachedEvent e;
+    {
+        std::lock_guard<std::mutex> guard(eventCacheLock);
+        e = eventCache[bot][event];
+    }
 
     if ((time(0) - e.lastChangeTime) >= e.validIn && event != "specNo" && event != "specLink" && event != "init" && event != "current_time" && event != "always" && event != "selfbot")
         e.value = 0;
@@ -3749,6 +3808,7 @@ uint32 RandomPlayerbotMgr::GetEventValue(uint32 bot, std::string event)
 
 int32 RandomPlayerbotMgr::GetValueValidTime(uint32 bot, std::string event)
 {
+    std::lock_guard<std::mutex> guard(eventCacheLock);
     if (eventCache.find(bot) == eventCache.end())
         return 0;
 
@@ -3765,6 +3825,7 @@ std::string RandomPlayerbotMgr::GetEventData(uint32 bot, std::string event)
     std::string data = "";
     if (GetEventValue(bot, event))
     {
+        std::lock_guard<std::mutex> guard(eventCacheLock);
         CachedEvent e = eventCache[bot][event];
         data = e.data;
     }
@@ -3792,7 +3853,10 @@ uint32 RandomPlayerbotMgr::SetEventValue(uint32 bot, std::string event, uint32 v
     }
 
     CachedEvent e(value, (uint32)time(0), validIn, data);
-    eventCache[bot][event] = e;
+    {
+        std::lock_guard<std::mutex> guard(eventCacheLock);
+        eventCache[bot][event] = e;
+    }
     return value;
 }
 
@@ -4518,7 +4582,10 @@ void RandomPlayerbotMgr::Remove(Player* bot)
     uint32 owner = bot->GetGUIDLow();
     SC_LOG("RandomPlayerbotMgr::Remove guid=%u — deleting random_bots row", owner);
     CharacterDatabase.PExecute("DELETE FROM ai_playerbot_random_bots WHERE owner = 0 AND bot = '%d'", owner);
-    eventCache[owner].clear();
+    {
+        std::lock_guard<std::mutex> guard(eventCacheLock);
+        eventCache[owner].clear();
+    }
     SC_LOG("RandomPlayerbotMgr::Remove guid=%u — calling LogoutPlayerBot", owner);
 
     LogoutPlayerBot(owner);
@@ -4943,7 +5010,10 @@ void RandomPlayerbotMgr::ForgetBot(uint32 guid)
     // Not owner-scoped, unlike Remove() above: a deleted character owns nothing
     // any more, and half a purge is what left this behind.
     CharacterDatabase.PExecute("DELETE FROM ai_playerbot_random_bots WHERE bot = '%u'", guid);
-    eventCache.erase(guid);
+    {
+        std::lock_guard<std::mutex> guard(eventCacheLock);
+        eventCache.erase(guid);
+    }
 }
 
 std::list<std::string> RandomPlayerbotMgr::HandleRemove(Player* bot)
@@ -4963,7 +5033,10 @@ std::list<std::string> RandomPlayerbotMgr::HandleConsoleReset(std::string param)
 {
     std::list<std::string> messages;
     CharacterDatabase.PExecute("delete from ai_playerbot_random_bots where event not in ('temporary')");
-    sRandomPlayerbotMgr.eventCache.clear();
+    {
+        std::lock_guard<std::mutex> guard(sRandomPlayerbotMgr.eventCacheLock);
+        sRandomPlayerbotMgr.eventCache.clear();
+    }
     std::string msg = "Random bots were reset for all players. Please restart the Server.";
     messages.push_back(msg);
     return messages;

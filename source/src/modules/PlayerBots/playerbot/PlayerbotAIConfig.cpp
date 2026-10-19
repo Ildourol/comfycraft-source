@@ -219,6 +219,8 @@ bool PlayerbotAIConfig::Initialize()
 
     companionSummonCooldown = config.GetIntDefault("AiPlayerbot.CompanionSummonCooldown", 60);
     looseFollowDistance = config.GetFloatDefault("AiPlayerbot.LooseFollowDistance", 10.0f);
+    companionTeleportDistance = config.GetFloatDefault("AiPlayerbot.CompanionTeleportDistance", 100.0f);
+    companionDebugForOwner = config.GetBoolDefault("AiPlayerbot.CompanionDebugForOwner", false);
 
     randomGearMaxLevel = config.GetIntDefault("AiPlayerbot.RandomGearMaxLevel", 500);
     randomGearMaxDiff = config.GetIntDefault("AiPlayerbot.RandomGearMaxDiff", 9);
@@ -972,6 +974,7 @@ bool PlayerbotAIConfig::IsInRandomAccountList(uint32 id)
 
 bool PlayerbotAIConfig::IsFreeAltBot(uint32 guid)
 {
+    std::lock_guard<std::recursive_mutex> guard(freeAltBotsLock);
     for (auto bot : freeAltBots)
         if (bot.second == guid)
             return true;
@@ -1116,6 +1119,7 @@ void PlayerbotAIConfig::loadBotNpcs()
         // A design made from somebody's own alt is already in the list from
         // loadFreeAltBotAccounts, and twice would start two logins for one guid.
         uint32 guid = spawn.characterGuid;
+        std::lock_guard<std::recursive_mutex> guard(freeAltBotsLock);
         bool already = std::find_if(freeAltBots.begin(), freeAltBots.end(),
                                     [guid](std::pair<uint32, uint32> i) { return i.second == guid; })
                        != freeAltBots.end();
@@ -1135,7 +1139,10 @@ void PlayerbotAIConfig::loadFreeAltBotAccounts()
 {
     bool allCharsOnline = (selfBotLevel == BotSelfBotLevel::ALWAYS_ACTIVE);
 
-    freeAltBots.clear();
+    {
+        std::lock_guard<std::recursive_mutex> guard(freeAltBotsLock);
+        freeAltBots.clear();
+    }
 
     auto results = LoginDatabase.PQuery("SELECT username, id FROM account where username not like '%s%%'", randomBotAccountPrefix.c_str());
     if (results)
@@ -1179,6 +1186,7 @@ void PlayerbotAIConfig::loadFreeAltBotAccounts()
                 if ((thisCharAlwaysOnline && always != BotAlwaysOnline::DISABLED_BY_COMMAND) || always == BotAlwaysOnline::ACTIVE)
                 {
                     sLog.outString("Enabling always online for %s", charName.c_str());
+                    std::lock_guard<std::recursive_mutex> guard(freeAltBotsLock);
                     freeAltBots.push_back(std::make_pair(accountId, guid));
                 }
 

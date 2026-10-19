@@ -1020,6 +1020,16 @@ void LoadCommonMPQFiles()
         if (ResolveMPQFilename(filename))
             new MPQArchive(filename);
     }
+
+    // Turtle WoW ships its own patches as patch-A to patch-Z, which the client
+    // loads after the numbered ones. Without them the terrain is not the one the
+    // client shows. The archive opened last wins a lookup.
+    for (char letter = 'A'; letter <= 'Z'; ++letter)
+    {
+        sprintf(filename, "%s/Data/patch-%c.MPQ", input_path, letter);
+        if (ResolveMPQFilename(filename))
+            new MPQArchive(filename);
+    }
 }
 
 inline void CloseMPQFiles()

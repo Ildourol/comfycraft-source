@@ -24,6 +24,8 @@ struct ComfyCommands
     static bool HandleGuildHouseCommand(ChatHandler* handler, char* args);
     static bool HandleModifyNpcFlagCommand(ChatHandler* handler, char* args);
     static bool HandleSetLevelCommand(ChatHandler* handler, char* args);
+    static bool HandleGearCommand(ChatHandler* handler, char* args);
+    static bool HandleSetSpeedCommand(ChatHandler* handler, char* args);
     static bool HandleLevelCapCommand(ChatHandler* handler, char* args);
     static bool HandleFlightModeCommand(ChatHandler* handler, char* args);
     static bool HandleEffectCommand(ChatHandler* handler, char* args);
@@ -113,4 +115,5 @@ struct ComfyCommands
 
     // playerbot/CompanionOwnership.cpp, also stubbed in PlayerbotStubs.cpp.
     static bool HandleCompanionsCommand(ChatHandler* handler, char* args);
+    static bool HandleCompanionDebugCommand(ChatHandler* handler, char* args);
 };

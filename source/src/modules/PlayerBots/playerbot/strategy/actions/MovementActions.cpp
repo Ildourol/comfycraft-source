@@ -2495,6 +2495,13 @@ bool MovementAction::Follow(Unit* target, float distance, float angle)
 
     MotionMaster &mm = *bot->GetMotionMaster();
 
+    // Already following there: do nothing at all. Everything below sends
+    // something to the clients around, and UpdateMovementState alone sends a
+    // forced swim speed on every call, about 120 times in one walk behind the
+    // owner. The companion still snapped downhill with only the restarts gone.
+    if (IsFollowing(bot, target, distance, angle))
+        return false;
+
     distance = distance <= target->GetObjectBoundingRadius() ? 0 : distance - target->GetObjectBoundingRadius();
 
     UpdateMovementState();
@@ -2689,15 +2696,34 @@ bool MovementAction::Follow(Unit* target, float distance, float angle)
         }
     }
 
-    if (bot->GetMotionMaster()->GetCurrentMovementGeneratorType() == FOLLOW_MOTION_TYPE)
-    {
-        Unit* currentTarget = sServerFacade.GetChaseTarget(bot);
-        if (currentTarget && currentTarget->GetObjectGuid() == target->GetObjectGuid() && sServerFacade.GetChaseAngle(bot) == angle && sServerFacade.GetChaseOffset(bot) == distance)
-            return false;
-    }
-
     mm.MoveFollow(target, distance, angle, true, sPlayerbotAIConfig.boostFollow);
     return true;
+}
+
+// A FOLLOW MOVEMENT WAS REPLACED ON EVERY TICK (2026-10-19).
+//
+// This check read sServerFacade.GetChaseTarget/Angle/Offset, which in this port
+// return the bot's victim and 0, 0. Out of combat that never matched, so every
+// "follow" restarted the follow movement from the server's position: 183 times
+// in a few seconds behind its owner. Downhill, where the server's height and the
+// client's differ, each restart snapped the companion to a new spot. The follow
+// generator is read directly instead.
+bool MovementAction::IsFollowing(Player* bot, Unit* target, float distance, float angle)
+{
+    if (!bot || !target)
+        return false;
+
+    MotionMaster* mm = bot->GetMotionMaster();
+    if (mm->GetCurrentMovementGeneratorType() != FOLLOW_MOTION_TYPE)
+        return false;
+
+    auto const* follow = static_cast<FollowMovementGenerator<Player> const*>(mm->GetCurrent());
+    Unit* current = follow->GetTarget();
+    if (!current || current->GetObjectGuid() != target->GetObjectGuid())
+        return false;
+
+    float offset = distance <= target->GetObjectBoundingRadius() ? 0 : distance - target->GetObjectBoundingRadius();
+    return std::fabs(follow->GetOffset() - offset) < 0.01f && std::fabs(follow->GetAngle() - angle) < 0.01f;
 }
 
 WorldPosition CalculatePerpendicularPoint(const WorldPosition& A, const WorldPosition& B, float offset, bool left = true)

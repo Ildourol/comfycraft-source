@@ -3,7 +3,9 @@
 #include "Objects/Item.h"
 #include "Objects/ItemPrototype.h"
 #include "Objects/Player.h"
+#include "Objects/Bag.h"
 #include <unordered_map>
+#include <unordered_set>
 #include <ctime>
 
 using namespace ai;
@@ -29,7 +31,52 @@ uint32 ItemCountValue::Calculate()
 
 std::list<Item*> InventoryItemValue::Calculate()
 {
-    return Find(ai, qualifier);
+    std::list<Item*> items = Find(ai, qualifier);
+    found.clear();
+    for (Item* item : items)
+        found.emplace_back(item, item->GetObjectGuid());
+    return items;
+}
+
+std::list<Item*> InventoryItemValue::Get()
+{
+    CalculatedValue<std::list<Item*> >::Get();
+    return StillHeld();
+}
+
+std::list<Item*> InventoryItemValue::LazyGet()
+{
+    CalculatedValue<std::list<Item*> >::LazyGet();
+    return StillHeld();
+}
+
+// The same places Find looks: equipped, the backpack and the bags. A cached
+// pointer is compared by value before it is read, so a freed one is never
+// dereferenced.
+std::list<Item*> InventoryItemValue::StillHeld() const
+{
+    std::list<Item*> result;
+    if (found.empty())
+        return result;
+
+    Player* bot = ai->GetBot();
+    std::unordered_set<Item*> held;
+    for (uint8 slot = EQUIPMENT_SLOT_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
+        if (Item* item = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+            held.insert(item);
+    for (uint8 slot = KEYRING_SLOT_START; slot < KEYRING_SLOT_END; ++slot)
+        if (Item* item = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+            held.insert(item);
+    for (uint8 bagSlot = INVENTORY_SLOT_BAG_START; bagSlot < INVENTORY_SLOT_BAG_END; ++bagSlot)
+        if (Bag* bag = (Bag*)bot->GetItemByPos(INVENTORY_SLOT_BAG_0, bagSlot))
+            for (uint32 slot = 0; slot < bag->GetBagSize(); ++slot)
+                if (Item* item = bag->GetItemByPos(slot))
+                    held.insert(item);
+
+    for (const auto& entry : found)
+        if (held.count(entry.first) && entry.first->GetObjectGuid() == entry.second)
+            result.push_back(entry.first);
+    return result;
 }
 
 std::list<Item*> EquipedUsableTrinketValue::Calculate()

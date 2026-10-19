@@ -67,6 +67,10 @@ public:
     void EquipGearPartialUpgrade() { return InitEquipment(false, false, true, true); }
     void UpgradeGear(bool syncWithMaster) { return InitEquipment(!syncWithMaster, syncWithMaster); }
     void UpgradeGearBest() { return InitEquipment(true, false, false); }
+    // Gear for a PLAYER (`.gear`, Playerbot_GearPlayer): only the slots in
+    // slotMask (bit n is EQUIPMENT_SLOT n), no enchants, no bot AI needed. An
+    // old item is destroyed only when its slot gets a new one.
+    void EquipGearForPlayer(uint32 slotMask) { playerSlotMask = slotMask; InitEquipment(false, false); playerSlotMask = 0; }
     void AddReagents() { return InitReagents(); }
     void AddPotions() { return InitPotions(); }
     void AddConsumes() { return AddConsumables(); }
@@ -136,6 +140,9 @@ private:
 private:
     uint32 level;
     uint32 itemQuality;
+    // Non-zero only inside EquipGearForPlayer. The player has no PlayerbotAI,
+    // so `ai` is null there.
+    uint32 playerSlotMask = 0;
     static uint32 tradeSkills[];
     static TaxiNodeLevelContainer overworldTaxiNodeLevelsA;
     static TaxiNodeLevelContainer overworldTaxiNodeLevelsH;

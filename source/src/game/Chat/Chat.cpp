@@ -1063,7 +1063,9 @@ ChatCommand * ChatHandler::getCommandTable()
         { "explorecheat",   SEC_DEVELOPER,       false, &ChatHandler::HandleExploreCheatCommand,        "", nullptr },
         { "hover",          SEC_ADMINISTRATOR,   false, &ChatHandler::HandleHoverCommand,               "", nullptr },
         { "levelup",        SEC_DEVELOPER,       false, &ChatHandler::HandleLevelUpCommand,             "", nullptr },
-        { "setlevel",       SEC_DEVELOPER,       false, &ComfyCommands::HandleSetLevelCommand,          "", nullptr },
+        { "setlevel",       SEC_DEVELOPER,       true,  &ComfyCommands::HandleSetLevelCommand,          "", nullptr },
+        { "gear",           SEC_DEVELOPER,       true,  &ComfyCommands::HandleGearCommand,              "", nullptr },
+        { "setspeed",       SEC_DEVELOPER,       true,  &ComfyCommands::HandleSetSpeedCommand,          "", nullptr },
         { "levelcap",       SEC_DEVELOPER,       true, &ComfyCommands::HandleLevelCapCommand,          "Syntax: .levelcap [level]\r\nShows the level cap, or sets it. 0 is no cap.", nullptr },
         { "flightmode",     SEC_DEVELOPER,       false, &ComfyCommands::HandleFlightModeCommand,        "", nullptr },
         { "showarea",       SEC_ADMINISTRATOR,   false, &ChatHandler::HandleShowAreaCommand,            "", nullptr },
@@ -1154,17 +1156,20 @@ ChatCommand * ChatHandler::getCommandTable()
         { "cleaninventory", SEC_DEVELOPER,       false, &ChatHandler::HandleCleanInventoryCommand,      "", nullptr},
         { "showborders",    SEC_DEVELOPER,       false, &ChatHandler::HandleShowBordersCommand,         "", nullptr },
         { "queststatuses",  SEC_PLAYER,           false, &ChatHandler::HandleQuestStatusesCommand,       "", nullptr},
-        // Bot module commands. .rndbot is SEC_PLAYER so a single human can
-        // manage their own random-bot pool without keeping a GM alt logged in;
-        // a server operator who wants tighter control can raise it.
-        { "bot",            SEC_PLAYER,           false, &ChatHandler::HandlePlayerbotCommand,           "", nullptr },
+        // Bot module commands. GM only: players order their companions with
+        // plain words in party chat. A player's party chat and whispers run on
+        // the AsyncPackets thread, so `.bot` from a player changed a companion
+        // while its map thread updated it, and `.rndbot reset` cleared a cache
+        // every bot reads (docs/ai/content/companion-crash-audit.md).
+        { "bot",            SEC_DEVELOPER,        false, &ChatHandler::HandlePlayerbotCommand,           "", nullptr },
         { "npcbot",         SEC_DEVELOPER,        true,  &ComfyCommands::HandleNpcBotCommand,            "", nullptr },
         { "obj",            SEC_DEVELOPER,        true,  &ComfyCommands::HandleObjCommand,               "", nullptr },
         { "add_dressing_room", SEC_DEVELOPER,    false, &ComfyCommands::HandleAddDressingRoomCommand,   "", nullptr },
         { "comfyhelp",      SEC_PLAYER,           true,  &ComfyCommands::HandleComfyHelpCommand,         "", nullptr },
         { "comfynpcs",      SEC_PLAYER,           false, &ComfyCommands::HandleComfyNpcsCommand,         "", nullptr },
         { "companions",     SEC_PLAYER,           false, &ComfyCommands::HandleCompanionsCommand,        "", nullptr },
-        { "rndbot",         SEC_PLAYER,          true,  &ChatHandler::HandleRandomPlayerbotCommand,     "", nullptr },
+        { "ccdebug",        SEC_PLAYER,           true,  &ComfyCommands::HandleCompanionDebugCommand,    "", nullptr },
+        { "rndbot",         SEC_DEVELOPER,       true,  &ChatHandler::HandleRandomPlayerbotCommand,     "", nullptr },
         { "ahbot",          SEC_MODERATOR,       true,  &ChatHandler::HandleAhBotCommand,               "", nullptr },
         { "perfmon",        SEC_MODERATOR,       true,  &ChatHandler::HandlePerfMonCommand,             "", nullptr },
         { nullptr,          0,                   false, nullptr,                                        "", nullptr }

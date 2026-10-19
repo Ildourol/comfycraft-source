@@ -11,6 +11,9 @@ Event Trigger::Check()
 {
 	if (triggered)
 	{
+		Player* owner = nullptr;
+		if (!FindOwner(owner))
+			return Event();
 		if (owner)
 			return Event(getName(), param, owner);
 		else
@@ -25,6 +28,31 @@ Event Trigger::Check()
 	}
 	Event event;
 	return event;
+}
+
+ObjectGuid Trigger::GuidOf(Player* player)
+{
+    return player ? player->GetObjectGuid() : ObjectGuid();
+}
+
+bool Trigger::FindOwner(Player*& owner)
+{
+    owner = nullptr;
+    if (ownerGuid.IsEmpty())
+        return true;
+
+    owner = sObjectAccessor.FindPlayerNotInWorld(ownerGuid);
+    if (!owner)
+    {
+        triggered = false;
+        return false;
+    }
+    if (!owner->IsInWorld())
+    {
+        owner = nullptr;
+        return false;
+    }
+    return true;
 }
 
 Value<Unit*>* Trigger::GetTargetValue()

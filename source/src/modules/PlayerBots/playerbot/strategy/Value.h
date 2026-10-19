@@ -270,8 +270,10 @@ namespace ai
             // cmangos has CreatureData::id; Penqle has creature_id[] array.
             // CreatureInfo's display name is `name` (lowercase) in Penqle, `Name` in cmangos.
             // GetCreatureTemplate is non-static in Penqle's ObjectMgr; access via singleton.
+            if (!creatureDataPair)
+                return "<none>";
             CreatureInfo const* bmTemplate = sObjectMgr.GetCreatureTemplate(creatureDataPair->second.creature_id[0]);
-            return creatureDataPair ? bmTemplate->name.c_str() : "<none>";
+            return bmTemplate ? bmTemplate->name.c_str() : "<none>";
         }
     };
 
@@ -288,7 +290,8 @@ namespace ai
             for (std::list<CreatureDataPair const*>::iterator i = cdPairs.begin(); i != cdPairs.end(); ++i)
             {
                 CreatureDataPair const* cdPair = *i;
-                out << cdPair->first << ",";
+                if (cdPair)
+                    out << cdPair->first << ",";
             }
             out << "}";
             return out.str();

@@ -401,14 +401,14 @@ void AccountMgr::Update(uint32 diff)
 void AccountMgr::LoadIPBanList(bool silent)
 {
     std::unique_ptr<QueryResult> banresult(LoginDatabase.PQuery("SELECT `ip`, `unbandate`, `bandate` FROM `ip_banned` WHERE (`unbandate` > UNIX_TIMESTAMP() OR `bandate` = `unbandate`)"));
-    
-    if (!banresult)
-    {
-        return;
-    }
 
+    // Clear before the empty check: an empty table must also forget the last ban
     std::unique_lock lock(m_ipBannedMutex);
     m_ipBanned.clear();
+
+    if (!banresult)
+        return;
+
     do
     {
         Field* fields = banresult->Fetch();

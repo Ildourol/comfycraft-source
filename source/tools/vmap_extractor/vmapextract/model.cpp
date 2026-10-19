@@ -44,7 +44,35 @@ bool Model::open(StringSet& failedPaths)
 
     _unload();
 
+    if (f.getSize() < sizeof(ModelHeader))
+    {
+        f.close();
+        return false;
+    }
     memcpy(&header, f.getBuffer(), sizeof(ModelHeader));
+
+    // Some Turtle models have bounding data that does not fit the file, or
+    // indices past the vertex list. Merged into a WMO group, they made the
+    // assembler read out of range and crash. Such a model gets no collision.
+    if (header.nBoundingTriangles > 0)
+    {
+        uint64 vertEnd = uint64(header.ofsBoundingVertices) + uint64(header.nBoundingVertices) * sizeof(ModelBoundingVertex);
+        uint64 triEnd = uint64(header.ofsBoundingTriangles) + uint64(header.nBoundingTriangles) * sizeof(uint16);
+        bool bad = vertEnd > f.getSize() || triEnd > f.getSize();
+        if (!bad)
+        {
+            uint16* tri = (uint16*)(f.getBuffer() + header.ofsBoundingTriangles);
+            for (uint32 i = 0; i < header.nBoundingTriangles && !bad; ++i)
+                bad = tri[i] >= header.nBoundingVertices;
+        }
+        if (bad)
+        {
+            printf("Bad bounding data in model %s: no collision\n", filename.c_str());
+            f.close();
+            return false;
+        }
+    }
+
     if (header.nBoundingTriangles > 0)
     {
         ModelBoundingVertex* boundingVertices = (ModelBoundingVertex*)(f.getBuffer() + header.ofsBoundingVertices);
@@ -58,6 +86,10 @@ bool Model::open(StringSet& failedPaths)
         nIndices = header.nBoundingTriangles; // refers to the number of int16's, not the number of triangles
         indices = new uint16[nIndices];
         memcpy(indices, triangles, nIndices * 2);
+        // A Turtle model has a count that is not a multiple of 3. A WMO group
+        // counts whole triangles but wrote every index, so its INDX block was
+        // longer than its header and the assembler stopped. Drop the partial one.
+        nIndices -= nIndices % 3;
 
         f.close();
     }
@@ -119,7 +151,7 @@ bool Model::ConvertToVMAPModel(const char* outfilename)
     fwrite(&wsize, sizeof(int), 1, output);
     fwrite(&branches, sizeof(branches), 1, output);
 
-    uint32 nIndexes = header.nBoundingTriangles;
+    uint32 nIndexes = uint32(nIndices);
     fwrite(&nIndexes, sizeof(uint32), 1, output);
     fwrite("INDX", 4, 1, output);
     wsize = sizeof(uint32) + sizeof(unsigned short) * nIndexes;
@@ -210,6 +242,7 @@ ModelInstance::ModelInstance(MPQFile& f, const char* ModelInstName, uint32 mapID
         flags |= MOD_WORLDSPAWN;
     if (!ModelLOSMgr::IsLOSEnabled(id, ModelInstName))
         flags |= MOD_NO_BREAK_LOS;
+    uint32 spawnId = UniqueSpawnId(mapID, id, ModelInstName, pos.x, pos.y, pos.z);
 
     //write mapID, tileX, tileY, Flags, ID, Pos, Rot, Scale, name
     fwrite(&mapID, sizeof(uint32), 1, pDirfile);
@@ -217,7 +250,7 @@ ModelInstance::ModelInstance(MPQFile& f, const char* ModelInstName, uint32 mapID
     fwrite(&tileY, sizeof(uint32), 1, pDirfile);
     fwrite(&flags, sizeof(uint32), 1, pDirfile);
     fwrite(&adtId, sizeof(uint16), 1, pDirfile);
-    fwrite(&id, sizeof(uint32), 1, pDirfile);
+    fwrite(&spawnId, sizeof(uint32), 1, pDirfile);
     fwrite(&pos, sizeof(float), 3, pDirfile);
     fwrite(&rot, sizeof(float), 3, pDirfile);
     fwrite(&sc, sizeof(float), 1, pDirfile);

@@ -282,8 +282,17 @@ bool PossibleAttackTargetsValue::IsTapped(Unit* target, Player* player)
 
 bool PossibleAttackTargetsValue::IsValid(Unit* target, Player* player, float range, bool ignoreCC, bool checkAttackerValid)
 {
+    // AN ORDERED TARGET NEED NOT BE FIGHTING YET (2026-10-19). `attack` sets the
+    // bot's "attack target" to the owner's selection, and the line below that
+    // accepts it was never reached: AttackersValue::IsValid wants the mob in
+    // combat with the bot, which a mob only targeted is not. The next tick called
+    // the target invalid, "select new target" dropped it ("charge no target") and
+    // the companion never went. For that target the in-combat test is skipped;
+    // friendly, evading and the other checks still apply.
+    const bool ordered = target && GetBotAI(player) && target->GetObjectGuid() == PAI_VALUE(ObjectGuid, "attack target");
+
     // Check for the valid attackers value
-    if (checkAttackerValid && !AttackersValue::IsValid(target, player))
+    if (checkAttackerValid && !AttackersValue::IsValid(target, player, nullptr, !ordered))
     {
         return false;
     }

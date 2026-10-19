@@ -11,13 +11,17 @@ namespace ai
         virtual void ExternalEvent(std::string param, Player* owner = NULL) override
         {
             this->param = param;
-            this->owner = owner;
+            this->ownerGuid = GuidOf(owner);
             triggered = true;
         }
 
         virtual Event Check() override
         {
             if (!triggered)
+                return Event();
+
+            Player* owner = nullptr;
+            if (!FindOwner(owner))
                 return Event();
 
             return Event(getName(), param, owner);

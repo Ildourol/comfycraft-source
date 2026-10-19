@@ -318,27 +318,23 @@ private:
     std::mutex m_botPacketMutex;
 };
 
+// The sender is kept by guid: a command can wait seconds (`time`), and a
+// sender who logs out in that time leaves a pointer to a freed Player.
 class ChatCommandHolder
 {
 public:
-    ChatCommandHolder(std::string command, Player* owner = NULL, uint32 type = CHAT_MSG_WHISPER, time_t time = 0) : command(command), owner(owner), type(type), time(time) {}
-    ChatCommandHolder(ChatCommandHolder const& other)
-    {
-        this->command = other.command;
-        this->owner = other.owner;
-        this->type = other.type;
-        this->time = other.time;
-    }
+    ChatCommandHolder(std::string command, Player* owner = NULL, uint32 type = CHAT_MSG_WHISPER, time_t time = 0)
+        : command(command), ownerGuid(owner ? owner->GetObjectGuid() : ObjectGuid()), type(type), time(time) {}
 
 public:
     std::string GetCommand() { return command; }
-    Player* GetOwner() { return owner; }
+    ObjectGuid GetOwnerGuid() { return ownerGuid; }
     uint32 GetType() { return type; }
     time_t GetTime() { return time; }
 
 private:
     std::string command;
-    Player* owner;
+    ObjectGuid ownerGuid;
     uint32 type;
     time_t time;
 };
@@ -376,6 +372,9 @@ public:
     // Safe from any thread: a line from anybody but the bot waits for the
     // bot's own UpdateAI (see the comment above HandleCommand in the .cpp).
     void HandleCommand(uint32 type, const std::string& text, Player& fromPlayer, const uint32 lang = LANG_UNIVERSAL);
+    // A command the bot gives itself, queued from any thread and run by its
+    // own UpdateAI. It passes the companion order filter (`.ccdebug`).
+    void QueueOwnCommand(const std::string& text);
     void QueueChatResponse(uint32 msgType, ObjectGuid guid1, ObjectGuid guid2, std::string message, std::string chanName, std::string name, bool noDelay = false);
 	void HandleBotOutgoingPacket(const WorldPacket& packet);
     void HandleMasterIncomingPacket(const WorldPacket& packet);
@@ -854,6 +853,12 @@ protected:
     std::mutex commandInboxMutex;
     void RunCommand(uint32 type, const std::string& text, Player& fromPlayer, const uint32 lang);
     void DrainCommandInbox();
+    // Chat packets the bot received, from the sender's thread. UpdateAI
+    // parses them on the bot's map thread.
+    std::vector<WorldPacket> chatInbox;
+    std::mutex chatInboxMutex;
+    void DrainChatInbox();
+    void HandleChatPacket(const WorldPacket& packet);
     std::queue<ChatQueuedReply> chatReplies;
     std::mutex chatRepliesMutex;
     PacketHandlingHelper botOutgoingPacketHandlers;
@@ -879,6 +884,11 @@ protected:
     bool tightFollow = false;
     time_t ownerMapAwaySince = 0; // a companion on another map than its owner, 0 = same map
     time_t underOwnerSince = 0;   // a companion fallen below its owner, 0 = not
+    time_t farFromOwnerSince = 0; // a companion past CompanionTeleportDistance, 0 = not
+    uint32 farStopSentMs = 0;     // when its stop went out before that teleport, 0 = not yet
+    bool hiddenRide = false;      // picked up while its owner rides: invisible, no actions
+    bool showAfterRide = false;   // put down by the owner: show once the teleport has landed
+    time_t hiddenMoveAt = 0;      // when it was last moved to the owner unseen
     uint32 passiveFadeDurationMs = 0;
     uint32 lootingSinceMs = 0; // when the loot watchdog first saw UNIT_FLAG_LOOTING, 0 = not looting
     uint32 faceTargetUpdateDelay;

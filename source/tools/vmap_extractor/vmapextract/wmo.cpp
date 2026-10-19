@@ -689,6 +689,7 @@ WMOInstance::WMOInstance(MPQFile& f, const char* WmoInstName, uint32 mapID, uint
     if (tileX == 65 && tileY == 65) flags |= MOD_WORLDSPAWN;
     if (!ModelLOSMgr::IsLOSEnabled(id, WmoInstName))
         flags |= MOD_NO_BREAK_LOS;
+    uint32 spawnId = UniqueSpawnId(mapID, id, WmoInstName, pos.x, pos.y, pos.z);
 
     //write mapID, tileX, tileY, Flags, ID, Pos, Rot, Scale, Bound_lo, Bound_hi, name
     fwrite(&mapID, sizeof(uint32), 1, pDirfile);
@@ -696,7 +697,7 @@ WMOInstance::WMOInstance(MPQFile& f, const char* WmoInstName, uint32 mapID, uint
     fwrite(&tileY, sizeof(uint32), 1, pDirfile);
     fwrite(&flags, sizeof(uint32), 1, pDirfile);
     fwrite(&adtId, sizeof(uint16), 1, pDirfile);
-    fwrite(&id, sizeof(uint32), 1, pDirfile);
+    fwrite(&spawnId, sizeof(uint32), 1, pDirfile);
     fwrite(&pos, sizeof(float), 3, pDirfile);
     fwrite(&rot, sizeof(float), 3, pDirfile);
     fwrite(&scale, sizeof(float), 1, pDirfile);

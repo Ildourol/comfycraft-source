@@ -9,6 +9,7 @@
 #include "WorldPosition.h"
 #include <map>
 #include <list>
+#include <mutex>
 
 class WorldPacket;
 class Player;
@@ -282,6 +283,10 @@ public:
         std::map<uint32, std::map<uint32, std::vector<std::pair<ObjectGuid, WorldLocation>> > > innCacheLevel;
         std::map<Team, std::map<BattleGroundTypeId, std::list<uint32> > > BattleMastersCache;
         std::map<uint32, std::map<std::string, CachedEvent> > eventCache;
+        // Every map thread reads and writes eventCache (IsRandomBot, the
+        // talent value, a hire), so every access holds this. Never held across
+        // a call: GetEventValue takes it itself.
+        std::mutex eventCacheLock;
         BarGoLink* loginProgressBar;
         std::list<uint32> currentBots;
         std::list<uint32> arenaTeamMembers;

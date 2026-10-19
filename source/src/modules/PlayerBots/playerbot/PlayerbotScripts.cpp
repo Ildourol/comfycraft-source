@@ -58,6 +58,15 @@ class PlayerbotWorldScript : public WorldScript
             DrainDeferredBotWork();
             auctionbot.Update();
         }
+
+        // First in World::Shutdown, before KickAll. The last tick drained after
+        // its maps, so this normally finds nothing.
+        void OnShutdown() override
+        {
+            if (!sPlayerbotAIConfig.enabled)
+                return;
+            DrainDeferredBotWork();
+        }
 };
 
 // Removing a companion from your party dismisses it.
@@ -156,6 +165,17 @@ class PlayerbotServerScript : public ServerScript
             if (!player)
                 return;
 
+            // A player's party chat and the query opcodes (item, creature,
+            // quest, name) run on AsyncPackets while the maps update, and
+            // HandleMasterIncomingPacket walks playerBots, which other threads
+            // change. No bot has a handler for either, so they stop here.
+            const uint16 opcode = packet.GetOpcode();
+            if (opcode == CMSG_MESSAGECHAT)
+                return;
+            if (OpcodeHandler const* handler = opcodeTable.LookupOpcode(opcode))
+                if (handler->packetProcessing == PACKET_PROCESS_DB_QUERY)
+                    return;
+
             if (PlayerbotMgr* mgr = GetBotMgr(player))
                 mgr->HandleMasterIncomingPacket(packet);
         }
@@ -253,7 +273,7 @@ class PlayerbotPlayerScript : public PlayerScript
                 return;
 
             if (PlayerbotMgr* mgr = GetBotMgr(master))
-                mgr->HandleCommand(type, msg, lang, to);
+                mgr->QueueCommand(type, msg, lang, to);
         }
 
         // Was the CreatePlayerbotMgr() call in HandlePlayerLogin. Only a person

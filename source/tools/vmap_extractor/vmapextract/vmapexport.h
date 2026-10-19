@@ -66,4 +66,8 @@ bool ExtractSingleModel(std::string& origPath, std::string& fixedName, StringSet
 
 void ExtractGameobjectModels();
 
+// The id a placement is written with: its own, or a new one when another
+// placement on the map already has it (vmapexport.cpp).
+uint32 UniqueSpawnId(uint32 mapID, uint32 id, const char* name, float x, float y, float z);
+
 #endif

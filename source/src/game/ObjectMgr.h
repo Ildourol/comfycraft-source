@@ -1770,7 +1770,7 @@ class ObjectMgr
         ObjectGuidGenerator<HIGHGUID_GAMEOBJECT>  m_StaticGameObjectGuids;
 
         // first free low guid for selected guid type
-        ObjectGuidGenerator<HIGHGUID_PLAYER>     m_CharGuids;
+        ObjectSafeGuidGenerator<HIGHGUID_PLAYER> m_CharGuids;   // companion hires create characters on map threads
         ObjectSafeGuidGenerator<HIGHGUID_ITEM>   m_ItemGuids;   // Needs to be thread safe
         ObjectSafeGuidGenerator<HIGHGUID_ITEM>   m_ItemTextIds;
         ObjectGuidGenerator<HIGHGUID_CORPSE>     m_CorpseGuids;

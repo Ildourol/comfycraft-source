@@ -1,5 +1,6 @@
 #pragma once
 
+#include <mutex>
 #include <unordered_set>
 #include "Config/Config.h"
 #include "Talentspec.h"
@@ -175,6 +176,10 @@ public:
     // way out for a stuck companion, not a teleport to use in play.
     uint32 companionSummonCooldown;
     float looseFollowDistance;
+    float companionTeleportDistance;
+    // `.ccdebug` for a companion's owner on any account, not only a GM. Debug
+    // writes a log file per companion on the server, so the deploy sets it to 0.
+    bool companionDebugForOwner;
 
     uint32 openGoSpell;
     bool randomBotAutologin;
@@ -188,6 +193,11 @@ public:
     std::list<uint32> randomBotQuestIds;
     std::list<uint32> immuneSpellIds;
     std::list<std::pair<uint32, uint32>> freeAltBots;
+    // freeAltBots is written from map threads (a hire, a parked companion's
+    // restore, a bot NPC placed) and walked on the world thread (LoginFreeBots).
+    // Every access holds this. Recursive because LoginFreeBots holds it across
+    // its whole pass, and that pass reaches IsFreeAltBot and the hire path.
+    std::recursive_mutex freeAltBotsLock;
     std::list<std::string> toggleAlwaysOnlineAccounts;
     std::list<std::string> toggleAlwaysOnlineChars;
     bool enableRandomTeleports;

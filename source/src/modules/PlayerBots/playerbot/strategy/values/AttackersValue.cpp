@@ -277,6 +277,18 @@ static const uint32 APPROACH_GRACE_MS = 1500;
 void AttackersValue::HoldApproaching(std::list<ObjectGuid>& result)
 {
     holdingApproach = false;
+
+    // ONE HOLD STATE FOR THE BOT (2026-10-19). "attackers" and "attackers" with
+    // qualifier 1 (the dps target's list) are two instances, and each kept its
+    // own: the first released a mob when the player hit it, the second first saw
+    // it a moment later, out of the player's melee reach, and held it. A mage
+    // never joined. The unqualified instance owns the state.
+    AttackersValue* owner = this;
+    if (!qualifier.empty())
+        if (AttackersValue* full = dynamic_cast<AttackersValue*>(context->GetValue<std::list<ObjectGuid>>("attackers")))
+            owner = full;
+    std::map<ObjectGuid, Approach>& approaching = owner->approaching;
+
     if (!ai->HasRealPlayerMaster())
     {
         approaching.clear();
@@ -372,8 +384,13 @@ void AttackersValue::HoldApproaching(std::list<ObjectGuid>& result)
         ++it;
     }
 
-    // Keep only what is still on the list, so the map cannot grow.
-    approaching.swap(seen);
+    // Keep only what is still on the list, so the map cannot grow. Only the full
+    // list prunes: the qualified one holds a single target.
+    if (owner == this)
+        approaching.swap(seen);
+    else
+        for (const auto& entry : seen)
+            approaching[entry.first] = entry.second;
 }
 
 void AttackersValue::AddTargetsOf(Group* group, std::set<Unit*>& targets, std::set<ObjectGuid>& invalidTargets, bool getOne)
@@ -480,11 +497,16 @@ void AttackersValue::AddTargetsOf(Player* player, std::set<Unit*>& targets, std:
             if (victim && player->CanReachWithMeleeAutoAttack(victim))
                 units.insert(victim);
 
+            // By guid, not getUnitTarget(): the spell keeps that pointer until
+            // the player's own next update, and a target deleted in between
+            // (a totem or an add a companion killed mid-cast) leaves it freed.
             for (uint32 i = CURRENT_FIRST_NON_MELEE_SPELL; i < CURRENT_MAX_SPELL; ++i)
             {
                 Spell* spell = player->GetCurrentSpell(CurrentSpellTypes(i));
-                if (spell && spell->m_targets.getUnitTarget())
-                    units.insert(spell->m_targets.getUnitTarget());
+                if (!spell)
+                    continue;
+                if (Unit* target = ai->GetUnit(spell->m_targets.getUnitTargetGuid()))
+                    units.insert(target);
             }
         }
 

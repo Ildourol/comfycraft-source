@@ -32,7 +32,7 @@ namespace ai
         virtual void ExternalEventForce(std::string param, Player* owner = NULL)
         {
             this->param = param;
-            this->owner = owner;
+            this->ownerGuid = GuidOf(owner);
             this->triggered = true;
         }
         virtual bool IsActive() { return false; }
@@ -63,11 +63,19 @@ namespace ai
 #endif
 
     protected:
+        static ObjectGuid GuidOf(Player* player);
+        // The sender of an external event, looked up when the trigger is
+        // checked. False when there was a sender and it cannot be used now:
+        // logged out (the trigger is cleared) or between maps (it waits).
+        bool FindOwner(Player*& owner);
+
 		int checkInterval;
 		time_t lastCheckTime;
         std::string param;
         bool triggered;
-        Player* owner = nullptr;
+        // By guid: a trigger can stay set for ticks, and the sender can log
+        // out in that time.
+        ObjectGuid ownerGuid;
 	};
 
 

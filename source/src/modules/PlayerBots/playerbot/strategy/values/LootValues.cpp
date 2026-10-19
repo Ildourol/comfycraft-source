@@ -2,6 +2,9 @@
 #include "SharedValueContext.h"
 #include "LootValues.h"
 #include "playerbot/strategy/actions/LootAction.h"
+#include "playerbot/CompanionOwnership.h"
+#include "playerbot/PlayerbotAIConfig.h"
+#include "Group/Group.h"
 
 using namespace ai;
 
@@ -479,6 +482,40 @@ bool ShouldLootObject::Calculate()
 	// LootAccess wraps a Loot* now.
 	if (!objLoot2)
 		return false;
+
+	// A companion that takes nothing opens a corpse only when the opening does
+	// something for the group. Each reason clears after one open, so it does not
+	// come back to the same corpse. Coin is handled above. Free for all locks
+	// nothing and starts no rolls, so there a companion opens only for coin.
+	// - It is the round-robin looter: nobody else sees the items until it opens
+	//   and releases. A wolf (no coin) stayed locked to a companion (2026-10-19).
+	// - Nobody has opened it yet and an item is at the group's threshold: the
+	//   first open starts the rolls.
+	if (object->IsCreature() && !sPlayerbotAIConfig.companionTakesLoot && CompanionOwnership::IsCompanion(bot->GetGUIDLow()))
+	{
+		Creature* creature = static_cast<Creature*>(object);
+		if (objLoot2->roundRobinPlayer == bot->GetGUID())
+			return true;
+
+		Group* group = creature->GetGroupLootRecipient();
+		if (!group || creature->lootForBody)
+			return false;
+
+		if (group->GetLootMethod() != GROUP_LOOT && group->GetLootMethod() != NEED_BEFORE_GREED)
+			return false;
+
+		for (LootItem const& item : objLoot2->items)
+		{
+			if (item.is_looted)
+				continue;
+
+			ItemPrototype const* proto = sObjectMgr.GetItemPrototype(item.itemid);
+			if (proto && proto->Quality >= uint32(group->GetLootThreshold()))
+				return true;
+		}
+
+		return false;
+	}
 
 	LootAccess lootAccess(objLoot2);
 

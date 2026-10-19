@@ -122,6 +122,7 @@ namespace HttpApi
 
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <regex>
 #include <unordered_map>
 #include <string>
@@ -129,6 +130,17 @@ namespace HttpApi
 #include <iostream>
 
 #include <chrono>
+
+namespace
+{
+    // Held by ProcessAsyncPackets for each pass over m_sessions. World::Update
+    // clears m_canProcessAsyncPackets and then takes it to stop that thread:
+    // the flag alone stopped it only between sessions, so the session in
+    // progress ran on into UpdateSessions, which erases from m_sessions, and
+    // into the bot drain, which frees bot Players that party chat reaches.
+    // World::Shutdown holds it too, for KickAll.
+    std::mutex s_asyncPacketsLock;
+}
 
 volatile bool World::m_stopEvent = false;
 uint8 World::m_ExitCode = SHUTDOWN_EXIT_CODE;
@@ -220,6 +232,12 @@ uint32 World::GetCurrentMSTime() const
 
 void World::Shutdown()
 {
+    // The shutdown hooks log bots out, and KickAll and UpdateSessions erase the
+    // sessions the AsyncPackets thread walks. IsStopped is already set, so that
+    // thread exits once it gets the lock after this function returns.
+    m_canProcessAsyncPackets = false;
+    std::lock_guard<std::mutex> asyncPause(s_asyncPacketsLock);
+
     ScriptRegistry<WorldScript>::ForEachEnabledHook(WORLDHOOK_ON_SHUTDOWN, [](WorldScript* script)
     {
         script->OnShutdown();
@@ -244,9 +262,9 @@ AccountDataWrapper::~AccountDataWrapper()
 
 void World::InternalShutdown()
 {
-	// ProcessAsyncPackets() iterates m_sessions on its own thread with no lock,
-	// so it must be joined before the deletion loop below starts erasing entries
-	// out from under it.
+	// ProcessAsyncPackets() iterates m_sessions on its own thread, so it must be
+	// joined before the deletion loop below starts erasing entries out from
+	// under it. s_asyncPacketsLock does not cover this loop.
 	if (m_asyncPacketsThread.joinable())
 	    m_asyncPacketsThread.join();
 
@@ -2676,6 +2694,10 @@ void World::ProcessAsyncPackets()
         if (sWorld.IsStopped())
             break;
 
+        std::lock_guard<std::mutex> pass(s_asyncPacketsLock);
+        if (!m_canProcessAsyncPackets || sWorld.IsStopped())
+            continue;
+
         for (auto const& itr : m_sessions)
         {
             WorldSession* pSession = itr.second;
@@ -2780,6 +2802,17 @@ void World::Update(uint32 diff)
 {
     XScopeStatTimer ScopeStatTimer(sPerfMonitor.WorldTick);
 
+    // Runs `work` with the AsyncPackets thread stopped. For the steps that log
+    // players in, run console commands or run the bot drain: party chat on
+    // that thread walks groups and reaches bot Players these steps add or free.
+    auto withAsyncPacketsStopped = [this](auto&& work)
+    {
+        m_canProcessAsyncPackets = false;
+        std::lock_guard<std::mutex> pause(s_asyncPacketsLock);
+        work();
+        m_canProcessAsyncPackets = true;
+    };
+
     ///- Update the different timers
     for (auto& timer : m_timers)
     {
@@ -2811,6 +2844,7 @@ void World::Update(uint32 diff)
     }
 
     m_canProcessAsyncPackets = false;
+    std::unique_lock<std::mutex> asyncPause(s_asyncPacketsLock);
 
     if (m_timers[WUPDATE_COMMANDS].Passed())
     {
@@ -2821,6 +2855,7 @@ void World::Update(uint32 diff)
     /// <li> Handle session updates
     UpdateSessions(diff);
     m_canProcessAsyncPackets = true;
+    asyncPause.unlock();
 
     /// <li> Update uptime table
     if (m_timers[WUPDATE_UPTIME].Passed())
@@ -2892,7 +2927,7 @@ void World::Update(uint32 diff)
 
     // execute callbacks from sql queries that were queued recently
     uint32 asyncQueriesTime = WorldTimer::getMSTime();
-    UpdateResultQueue();
+    withAsyncPacketsStopped([this]() { UpdateResultQueue(); });
     asyncQueriesTime = WorldTimer::getMSTimeDiffToNow(asyncQueriesTime);
     if (getConfig(CONFIG_UINT32_PERFLOG_SLOW_ASYNC_QUERIES) && asyncQueriesTime > getConfig(CONFIG_UINT32_PERFLOG_SLOW_ASYNC_QUERIES))
         sLog.out(LOG_PERFORMANCE, "Update async queries: %ums", asyncQueriesTime);
@@ -3164,7 +3199,7 @@ void World::Update(uint32 diff)
         m_dynamicRespawnRatio = 1.f;
 
     // And last, but not least handle the issued cli commands
-    ProcessCliCommands();
+    withAsyncPacketsStopped([this]() { ProcessCliCommands(); });
 
     //cleanup unused GridMap objects as well as VMaps
     if (getConfig(CONFIG_BOOL_CLEANUP_TERRAIN))
@@ -3191,9 +3226,12 @@ void World::Update(uint32 diff)
     // acted before UpdateSessions, sMapMgr, sBattleGroundMgr and sLFTMgr had
     // run, so it saw the previous tick. This is where AzerothCore fires it, and
     // where the bot tick used to sit.
-    ScriptRegistry<WorldScript>::ForEachEnabledHook(WORLDHOOK_ON_UPDATE, [&](WorldScript* script)
+    withAsyncPacketsStopped([&]()
     {
-        script->OnUpdate(diff);
+        ScriptRegistry<WorldScript>::ForEachEnabledHook(WORLDHOOK_ON_UPDATE, [&](WorldScript* script)
+        {
+            script->OnUpdate(diff);
+        });
     });
 }
 

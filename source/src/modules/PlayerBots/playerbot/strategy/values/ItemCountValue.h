@@ -11,11 +11,23 @@ namespace ai
         virtual uint32 Calculate() override;
 	};
 
+    // The list is cached for up to a second, and an item can be destroyed in
+    // that second: a potion's last charge, a stack sold or traded. Get and
+    // LazyGet hand back only the items the bot still holds.
     class InventoryItemValue : public CalculatedValue<std::list<Item*> >, public Qualified
     {
     public:
         InventoryItemValue(PlayerbotAI* ai, std::string name = "inventory items") : CalculatedValue<std::list<Item*> >(ai, name), Qualified() {}
         virtual std::list<Item*> Calculate() override;
+        virtual std::list<Item*> Get() override;
+        virtual std::list<Item*> LazyGet() override;
+
+    private:
+        std::list<Item*> StillHeld() const;
+
+        // What Calculate found, with each item's guid: a freed item's address
+        // can be reused by a new item.
+        std::vector<std::pair<Item*, ObjectGuid>> found;
     };
 
     class InventoryItemIdValue : public CalculatedValue<std::list<uint32> >, public Qualified

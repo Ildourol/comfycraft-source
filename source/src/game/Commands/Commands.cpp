@@ -3685,6 +3685,232 @@ bool ComfyCommands::HandleSetLevelCommand(ChatHandler* handler, char* args)
     return true;
 }
 
+// PlayerbotMgr.cpp, stubbed in PlayerbotStubs.cpp. The bots' item pick, run on
+// a player for the slots in slotMask.
+extern bool Playerbot_GearPlayer(Player* player, uint32 slotMask, uint32 quality, std::string& error);
+
+// .gear <replace | fill | bags> <any | green | blue | epic> [$playername]
+//
+// Random gear for the character's level, chosen the way `.bot gear` chooses a
+// bot's (class, spec, level), on an ONLINE player. The three modes differ only
+// in what happens to the gear already worn:
+//   replace  a slot that gets a new item loses the old one; a slot with no
+//            pick keeps what it had
+//   fill     only empty slots get an item
+//   bags     every worn item goes to the bags first, by mail when they are
+//            full (AutoUnequipItemFromSlot), then every slot gets an item
+// The shirt and the tabard are never touched. `any` is the bots' quality mix
+// for the level; a colour is that quality only.
+bool ComfyCommands::HandleGearCommand(ChatHandler* handler, char* args)
+{
+    char* modeArg = handler->ExtractLiteralArg(&args);
+    char* qualityArg = handler->ExtractLiteralArg(&args);
+    if (!modeArg || !qualityArg)
+        return false;
+
+    std::string const mode = modeArg;
+    if (mode != "replace" && mode != "fill" && mode != "bags")
+        return false;
+
+    std::string const q = qualityArg;
+    uint32 quality;
+    if (q == "any")
+        quality = 0;
+    else if (q == "green")
+        quality = ITEM_QUALITY_UNCOMMON;
+    else if (q == "blue")
+        quality = ITEM_QUALITY_RARE;
+    else if (q == "epic")
+        quality = ITEM_QUALITY_EPIC;
+    else
+        return false;
+
+    Player* target = nullptr;
+    if (*args)
+    {
+        ObjectGuid targetGuid;
+        std::string targetName;
+        if (!handler->ExtractPlayerTarget(&args, &target, &targetGuid, &targetName))
+            return false;
+        if (!target)
+        {
+            handler->PSendSysMessage("%s is offline. Gear needs the character online.", targetName.c_str());
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+    }
+    else
+    {
+        target = handler->GetSelectedPlayer();
+        if (!target && handler->m_session)
+            target = handler->m_session->GetPlayer();
+        if (!target)
+        {
+            handler->SendSysMessage(LANG_NO_CHAR_SELECTED);
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+    }
+
+    if (handler->HasLowerSecurity(target))
+        return false;
+
+    // Checked here as well as in the module, so `bags` never empties the
+    // slots of a character that then gets nothing.
+    if (target->GetLevel() < 5)
+    {
+        handler->PSendSysMessage("%s is below level 5. Gear needs level 5.", target->GetName());
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+
+    uint32 const allSlots = ((1u << EQUIPMENT_SLOT_END) - 1) & ~(1u << EQUIPMENT_SLOT_BODY) & ~(1u << EQUIPMENT_SLOT_TABARD);
+    uint32 mask = allSlots;
+    uint32 bagged = 0;
+    uint32 mailed = 0;
+
+    if (mode == "fill")
+    {
+        mask = 0;
+        for (uint32 slot = 0; slot < EQUIPMENT_SLOT_END; ++slot)
+            if ((allSlots & (1u << slot)) && !target->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+                mask |= 1u << slot;
+        // A two-hand weapon fills the off hand too.
+        if (target->IsTwoHandUsed())
+            mask &= ~(1u << EQUIPMENT_SLOT_OFFHAND);
+        if (!mask)
+        {
+            handler->PSendSysMessage("%s has no empty slots.", target->GetName());
+            return true;
+        }
+    }
+    else if (mode == "bags")
+    {
+        for (uint32 slot = 0; slot < EQUIPMENT_SLOT_END; ++slot)
+        {
+            if (!(allSlots & (1u << slot)))
+                continue;
+            Item* item = target->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+            if (!item)
+                continue;
+            ItemPosCountVec dest;
+            bool const fits = target->CanStoreItem(NULL_BAG, NULL_SLOT, dest, item, false) == EQUIP_ERR_OK;
+            target->AutoUnequipItemFromSlot(slot, true);
+            if (fits)
+                ++bagged;
+            else
+                ++mailed;
+        }
+    }
+
+    ObjectGuid before[EQUIPMENT_SLOT_END];
+    for (uint32 slot = 0; slot < EQUIPMENT_SLOT_END; ++slot)
+    {
+        Item* item = target->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+        before[slot] = item ? item->GetObjectGuid() : ObjectGuid();
+    }
+
+    std::string error;
+    if (!Playerbot_GearPlayer(target, mask, quality, error))
+    {
+        handler->PSendSysMessage("%s: %s.", target->GetName(), error.c_str());
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+
+    uint32 added = 0;
+    for (uint32 slot = 0; slot < EQUIPMENT_SLOT_END; ++slot)
+    {
+        Item* item = target->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+        if (item && item->GetObjectGuid() != before[slot])
+            ++added;
+    }
+
+    std::ostringstream msg;
+    msg << target->GetName() << ": " << added << (added == 1 ? " new item" : " new items");
+    if (bagged)
+        msg << ", " << bagged << " moved to the bags";
+    if (mailed)
+        msg << ", " << mailed << " sent by mail";
+    msg << ".";
+    handler->SendSysMessage(msg.str().c_str());
+    if (handler->needReportToTarget(target))
+        ChatHandler(target).SendSysMessage("A GM gave you new gear.");
+    return true;
+}
+
+// .setspeed <rate> [$playername]
+//
+// `.modify speed` by name, so the console and the website's GM page can use
+// it: walk, run and swim at <rate> times normal, 1 is normal. Online only, and
+// not saved: the rate lasts until the next login. Unlike `.modify speed` it
+// also sets the kept rate (Unit::SetSpeedRatePersistance), which nothing set
+// before, so a mount or a slow does not put it back to 1.
+bool ComfyCommands::HandleSetSpeedCommand(ChatHandler* handler, char* args)
+{
+    float rate;
+    if (!handler->ExtractFloat(&args, rate))
+        return false;
+
+    if (rate < 0.1f || rate > 10.0f)
+    {
+        handler->SendSysMessage("The rate is 0.1 to 10. 1 is normal.");
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+
+    Player* target = nullptr;
+    if (*args)
+    {
+        ObjectGuid targetGuid;
+        std::string targetName;
+        if (!handler->ExtractPlayerTarget(&args, &target, &targetGuid, &targetName))
+            return false;
+        if (!target)
+        {
+            handler->PSendSysMessage("%s is offline. Speed needs the character online.", targetName.c_str());
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+    }
+    else
+    {
+        target = handler->GetSelectedPlayer();
+        if (!target && handler->m_session)
+            target = handler->m_session->GetPlayer();
+        if (!target)
+        {
+            handler->SendSysMessage(LANG_NO_CHAR_SELECTED);
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+    }
+
+    if (handler->HasLowerSecurity(target))
+        return false;
+
+    if (target->IsTaxiFlying())
+    {
+        handler->PSendSysMessage(LANG_CHAR_IN_FLIGHT, target->GetName());
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+
+    // The kept rate is what every speed aura passes back to UpdateSpeed, so
+    // the rate outlives a mount, Sprint or a slow. Unit members are not
+    // saved: a login is back to 1.
+    for (UnitMoveType mtype : { MOVE_WALK, MOVE_RUN, MOVE_SWIM })
+    {
+        target->SetSpeedRatePersistance(mtype, rate);
+        target->UpdateSpeed(mtype, false, rate);
+    }
+
+    handler->PSendSysMessage("%s moves at %.1fx speed.", target->GetName(), rate);
+    if (handler->needReportToTarget(target))
+        ChatHandler(target).PSendSysMessage("A GM set your speed to %.1fx.", rate);
+    return true;
+}
+
 // The level cap (Objects/LevelCap.h). With no argument it re-reads
 // tw_char.level_cap, which is what the website sends after it writes the row.
 // With a level it writes the row. 0, or MaxPlayerLevel and above, is no cap.
@@ -15042,9 +15268,12 @@ namespace
         { "house template",    ".house template | entrance | furniture ...   house building tools" },
         { "add_dressing_room", ".add_dressing_room <id>   a saved dressing room look, into your bags" },
         { "setlevel",          ".setlevel <level> [name]   set a level, up or down" },
+        { "gear",              ".gear replace | fill | bags  any | green | blue | epic [name]   random gear for the level" },
+        { "setspeed",          ".setspeed <rate> [name]   walk, run and swim speed, 1 is normal, until the next login" },
         { "levelcap",          ".levelcap [level]   the level XP stops at, or set it (0 is none)" },
         { "flightmode",        ".flightmode [on | off]   whether GM flight is on, or set it" },
         { "companions",        ".companions   name your companions" },
+        { "ccdebug",           ".ccdebug [name] on | off   a companion's debug log, server\\companion-logs (your target if no name)" },
         { "npcbot",            ".npcbot place | move | dress | menu | idle | emote | unplace | info <name>, .npcbot list" },
         { "obj",               ".obj list | info | near [all] | where | go | place (add) | select | unselect | move (drag) | turn | nudge | rotate | scale | remove (del)   Workshop objects by #id, any spawn by g<guid>" },
         { "scene",             ".scene <id>   run a scene, your target as the NPC" },

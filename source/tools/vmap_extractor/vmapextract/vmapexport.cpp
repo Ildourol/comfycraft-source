@@ -75,6 +75,56 @@ bool preciseVectorData = false;
 // not the hour every map takes.
 int onlyMapId = -1;
 
+// SPAWN IDS ARE NOT UNIQUE IN TURTLE'S DATA (2026-10-19).
+//
+// The assembler keeps one placement per (map, id), the first it reads. Turtle's
+// own placements reuse ids that other placements already have: on maps 0 and 1,
+// 10,005 placements (212 of them WMOs) were dropped, so the server had no
+// collision and no navmesh for them. Mediumtunnel.wmo in Dun Morogh shared
+// 5525455 with Westfallshed.m2, and its tiles loaded the shed instead.
+//
+// The first placement keeps its id. A different model or position under the same
+// id gets a new one from a range the client data does not use. The same placement
+// read from another ADT gets the same new id, so it stays one spawn.
+namespace
+{
+    struct SpawnKey
+    {
+        uint32 map, id;
+        std::string name;
+        float x, y, z;
+        bool operator<(SpawnKey const& o) const
+        {
+            if (map != o.map) return map < o.map;
+            if (id != o.id) return id < o.id;
+            if (name != o.name) return name < o.name;
+            if (x != o.x) return x < o.x;
+            if (y != o.y) return y < o.y;
+            return z < o.z;
+        }
+    };
+
+    std::map<std::pair<uint32, uint32>, SpawnKey> firstSpawn;
+    std::map<SpawnKey, uint32> movedSpawn;
+    uint32 nextSpawnId = 0xC0000000;
+}
+
+uint32 UniqueSpawnId(uint32 mapID, uint32 id, const char* name, float x, float y, float z)
+{
+    SpawnKey key = { mapID, id, name, x, y, z };
+    auto first = firstSpawn.emplace(std::make_pair(mapID, id), key);
+    if (first.second)
+        return id;
+    SpawnKey const& owner = first.first->second;
+    if (owner.name == key.name && owner.x == x && owner.y == y && owner.z == z)
+        return id;
+
+    auto moved = movedSpawn.emplace(key, nextSpawnId);
+    if (moved.second)
+        ++nextSpawnId;
+    return moved.first->second;
+}
+
 // Constants
 
 //static const char * szWorkDirMaps = ".\\Maps";

@@ -7,6 +7,9 @@
 #include "Database/DatabaseEnv.h"
 #include "SharedDefines.h"
 
+#include <mutex>
+#include <vector>
+
 
 class WorldPacket;
 class Player;
@@ -154,6 +157,11 @@ public:
     void HandleMasterIncomingPacket(const WorldPacket& packet);
     void HandleMasterOutgoingPacket(const WorldPacket& packet);
     void HandleCommand(uint32 type, const std::string& text, uint32 lang = LANG_UNIVERSAL, const std::string& to = "");
+    // From OnChatCommand, on the thread that ran the chat packet: AsyncPackets
+    // for party chat and whispers. HandleCommand walks playerBots, which other
+    // threads change, so the line waits for UpdateAIInternal on the master's
+    // map thread.
+    void QueueCommand(uint32 type, const std::string& text, uint32 lang, const std::string& to);
     void OnPlayerLogin(Player* player);
     void CancelLogout();
 
@@ -187,6 +195,16 @@ private:
     PlayerBotErrorMap errors;
     time_t lastErrorTell;
     bool restoredCompanions;
+
+    struct QueuedCommand
+    {
+        uint32 type;
+        std::string text;
+        uint32 lang;
+        std::string to;
+    };
+    std::vector<QueuedCommand> commandInbox;
+    std::mutex commandInboxMutex;
 };
 
 #endif

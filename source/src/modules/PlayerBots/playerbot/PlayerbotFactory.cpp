@@ -3054,7 +3054,8 @@ void PlayerbotFactory::InitEquipment(bool incremental, bool syncWithMaster, bool
         return;
     }
 
-    uint32 oldGS = ai->GetEquipGearScore(bot, false, false);
+    // `ai` is null for a player (EquipGearForPlayer): every use below is guarded.
+    uint32 oldGS = ai ? ai->GetEquipGearScore(bot, false, false) : 0;
     uint32 masterGS = 0;
     if(syncWithMaster && ai->GetMaster())
     {
@@ -3072,7 +3073,7 @@ void PlayerbotFactory::InitEquipment(bool incremental, bool syncWithMaster, bool
     }
 
     bool isRandomBot = sRandomPlayerbotMgr.IsRandomBot(bot) && GetBotAI(bot) && !GetBotAI(bot)->HasRealPlayerMaster() && !GetBotAI(bot)->IsInRealGuild();
-    if (!incremental)
+    if (!incremental && ai)
     {
         DestroyItemsVisitor visitor(bot);
         ai->InventoryIterateItems(&visitor, IterateItemsMask::ITERATE_ITEMS_IN_EQUIP);
@@ -3086,11 +3087,12 @@ void PlayerbotFactory::InitEquipment(bool incremental, bool syncWithMaster, bool
     if (bot->GetLevel() > 40 && (bot->getClass() == CLASS_PRIEST || bot->getClass() == CLASS_MAGE || bot->getClass() == CLASS_WARLOCK || specId == 20 || specId == 21 || specId == 22 || specId == 29 || specId == 31))
 #endif
     {
-        weaponType = sRandomPlayerbotMgr.GetValue(bot, "weaponType");
+        weaponType = ai ? sRandomPlayerbotMgr.GetValue(bot, "weaponType") : 0;
         if (!weaponType || !incremental)
         {
             weaponType = urand(0, 1) ? (uint32)INVTYPE_WEAPON : (uint32)INVTYPE_2HWEAPON;
-            sRandomPlayerbotMgr.SetValue(bot, "weaponType", weaponType);
+            if (ai)
+                sRandomPlayerbotMgr.SetValue(bot, "weaponType", weaponType);
         }
     }
 
@@ -3184,6 +3186,8 @@ void PlayerbotFactory::InitEquipment(bool incremental, bool syncWithMaster, bool
 
     for(uint8 slot = 0; slot < EQUIPMENT_SLOT_END; ++slot)
     {
+        if (playerSlotMask && !(playerSlotMask & (1u << slot)))
+            continue;
         if (slot == EQUIPMENT_SLOT_TABARD)
         {
             if (!sPlayerbotAIConfig.randomGearTabards || (urand(0, 100) < 100 * sPlayerbotAIConfig.randomGearTabardsChance))
@@ -3687,7 +3691,8 @@ void PlayerbotFactory::InitEquipment(bool incremental, bool syncWithMaster, bool
                                 bot->SetVisibleItemSlot(pItem->GetSlot(), pItem);
                             }
                             pItem->SetOwnerGuid(bot->GetObjectGuid());
-                            EnchantItem(pItem);
+                            if (!playerSlotMask)
+                                EnchantItem(pItem);
                             //AddGems(pItem);
                             found = true;
                         }
@@ -3786,11 +3791,15 @@ void PlayerbotFactory::InitEquipment(bool incremental, bool syncWithMaster, bool
 
     sLog.outDetail("Bot #%d %s:%d <%s>: InitEquipment done, GS %u -> %u",
         bot->GetGUIDLow(), bot->GetTeam() == ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName(),
-        oldGS, ai->GetEquipGearScore(bot, false, false));
+        oldGS, ai ? ai->GetEquipGearScore(bot, false, false) : 0);
 
-    // Update stats here so the bots will benefit from the new equipped items' stats
-    bot->InitStatsForLevel(true);
-    bot->UpdateAllStats();
+    // Update stats here so the bots will benefit from the new equipped items' stats.
+    // A player's EquipNewItem already applied the item mods.
+    if (!playerSlotMask)
+    {
+        bot->InitStatsForLevel(true);
+        bot->UpdateAllStats();
+    }
 
     if(syncWithMaster && ai->GetMaster())
     {
