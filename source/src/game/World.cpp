@@ -102,6 +102,8 @@
 #include <ace/OS_NS_dirent.h>
 #include "PerformanceMonitor.h"
 #include "LevelCap.h"
+#include "LootLuck.h"
+#include "DungeonRun.h"
 
 #include <filesystem>
 
@@ -2345,6 +2347,11 @@ void LoadPlayerEggLoot();
     sLog.outString("Loading the level cap...");
     if (uint32 cap = LevelCap::Load())
         sLog.outString(">> Level cap: %u.", cap);
+    sLog.outString("Loading loot luck...");
+    if (LootLuck::Load())
+        sLog.outString(">> Loot luck: PRD on quest drops is on.");
+    sLog.outString("Loading dungeon run tables...");
+    DungeonRun::Load();
     sLog.outString("Loading creature movement scripts...");
     sScriptMgr.LoadCreatureMovementScripts();
     sLog.outString("Loading waypoints...");

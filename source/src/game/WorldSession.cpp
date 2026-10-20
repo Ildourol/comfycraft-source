@@ -59,6 +59,7 @@
 #include "miscellaneous/feature_transmog.h"
 #include "Anticheat/Warden/Warden.hpp"
 #include "Logging/DatabaseLogger.hpp"
+#include "LootLuck.h"
 
 #ifdef USING_DISCORD_BOT
 #include "DiscordBot/Bot.hpp"
@@ -665,6 +666,7 @@ void WorldSession::LogoutPlayer(bool Save)
         sDBLogger.LogCharAction({ _player->GetGUIDLow(), GetAccountId(), LogCharAction::ActionLogout, {} });
         if (ObjectGuid lootGuid = GetPlayer()->GetLootGuid())
             DoLootRelease(lootGuid);
+        LootLuck::Forget(_player->GetGUIDLow());
 
         disabledSocials = _player->HasGMDisabledSocials();
 

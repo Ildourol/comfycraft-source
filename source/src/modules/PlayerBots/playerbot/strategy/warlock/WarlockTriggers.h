@@ -15,7 +15,7 @@ namespace ai
     class SpellstoneTrigger : public BuffTrigger
     {
     public:
-        SpellstoneTrigger(PlayerbotAI* ai) : BuffTrigger(ai, "spellstone") {}
+        SpellstoneTrigger(PlayerbotAI* ai) : BuffTrigger(ai, "spellstone") { checkSpellKnown = false; }
         virtual bool IsActive() override;
     };
 

@@ -326,6 +326,9 @@ namespace ai
 
     protected:
         bool checkIsOwner;
+        // False for a trigger whose name is not a spell the bot learns (an item, a
+        // "... on party" name). IsActive then skips the known-spell check.
+        bool checkSpellKnown = true;
     };
 
     class MyBuffTrigger : public BuffTrigger

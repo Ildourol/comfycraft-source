@@ -77,6 +77,7 @@
 #include "PerfStats.h"
 #include "AccountMgr.h"   // Leech restrictions: spotting RNDBOT accounts by name
 #include "Config/Config.h" // Death.XPLossPercent
+#include "DungeonRun.h"
 
 float baseMoveSpeed[MAX_MOVE_TYPE] =
 {
@@ -1557,6 +1558,8 @@ void Unit::Kill(Unit* pVictim, SpellEntry const *spellProto, bool durabilityLoss
 
         if (ZoneScript* pScript = pCreatureVictim->GetZoneScript())
             pScript->OnCreatureDeath(pCreatureVictim);
+
+        DungeonRun::OnCreatureKilled(pCreatureVictim);
 
         // Dungeon specific stuff, only applies to players killing creatures
         if (pCreatureVictim->GetInstanceId() && pCreatureVictim->GetMapId() > 1)
@@ -7928,6 +7931,20 @@ struct SetSpeedRateHelper
     bool forced;
 };
 
+// A BOT HAS NO CLIENT TO ACK A MOVEMENT CHANGE (2026-10-20). Its session has no
+// socket, so each speed or flag change waited for an ack that never came and
+// applied about 4 s later. A change made while the bot moved applied at once,
+// and the old one then overwrote it: a slow removed while a companion ran came
+// back with no aura, and the companion stayed slow. A unit with no client takes
+// the change at once, like an NPC.
+static bool WaitsForClientAck(Unit* unit)
+{
+    if (!unit->IsMovedByPlayer() || !unit->IsInWorld())
+        return false;
+    Player* mover = unit->GetPlayerMovingMe();
+    return mover && mover->GetSession()->GetSocket();
+}
+
 void Unit::SetSpeedRate(UnitMoveType mtype, float rate)
 {
     if (rate < 0)
@@ -7938,7 +7955,7 @@ void Unit::SetSpeedRate(UnitMoveType mtype, float rate)
     if (m_speed_rate[mtype] == rate && !HasPendingMovementChange(changeType))
         return;
 
-    if (IsMovedByPlayer() && IsInWorld())
+    if (WaitsForClientAck(this))
         MovementPacketSender::AddSpeedChangeToController(this, mtype, rate);
     else if (IsMovedByPlayer() && !IsInWorld()) // (1)
         SetSpeedRateReal(mtype, rate);
@@ -7972,7 +7989,7 @@ void Unit::SetRooted(bool apply)
     if (apply)
         StopMoving(); // @todo: this method needs a rework to work well with players.
 
-    if (IsMovedByPlayer() && IsInWorld())
+    if (WaitsForClientAck(this))
         MovementPacketSender::AddMovementFlagChangeToController(this, MOVEFLAG_ROOT, apply);
     else if (IsMovedByPlayer() && !IsInWorld())
         SetRootedReal(apply);
@@ -7996,7 +8013,7 @@ void Unit::SetWaterWalking(bool apply)
     if (apply == HasUnitMovementFlag(MOVEFLAG_WATERWALKING) && !HasPendingMovementChange(WATER_WALK))
         return;
 
-    if (IsMovedByPlayer() && IsInWorld())
+    if (WaitsForClientAck(this))
         MovementPacketSender::AddMovementFlagChangeToController(this, MOVEFLAG_WATERWALKING, apply);
     else if (IsMovedByPlayer() && !IsInWorld())
         SetWaterWalkingReal(apply);
@@ -8020,7 +8037,7 @@ void Unit::SetFeatherFall(bool apply)
     if (apply == HasUnitMovementFlag(MOVEFLAG_SAFE_FALL) && !HasPendingMovementChange(FEATHER_FALL))
         return;
 
-    if (IsMovedByPlayer() && IsInWorld())
+    if (WaitsForClientAck(this))
         MovementPacketSender::AddMovementFlagChangeToController(this, MOVEFLAG_SAFE_FALL, apply);
     else if (IsMovedByPlayer() && !IsInWorld())
         SetFeatherFallReal(apply);
@@ -8044,7 +8061,7 @@ void Unit::SetHover(bool apply)
     if (apply == HasUnitMovementFlag(MOVEFLAG_HOVER) && !HasPendingMovementChange(SET_HOVER))
         return;
 
-    if (IsMovedByPlayer() && IsInWorld())
+    if (WaitsForClientAck(this))
         MovementPacketSender::AddMovementFlagChangeToController(this, MOVEFLAG_HOVER, apply);
     else if (IsMovedByPlayer() && !IsInWorld())
         SetHoverReal(apply);

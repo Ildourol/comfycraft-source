@@ -40,6 +40,7 @@
 #include "DBCEnums.h"
 #include "MapPersistentStateMgr.h"
 #include "Housing/HouseMgr.h"
+#include "DungeonRun.h"
 #include "VMapFactory.h"
 #include "BattleGroundMgr.h"
 #include "DynamicTree.h"
@@ -2171,6 +2172,8 @@ bool DungeonMap::Add(Player *player)
     // way into a house passes through here, including a relog inside one,
     // which is the arrival no teleport hook would have seen.
     sHouseMgr.OnPlayerArrive(player);
+
+    DungeonRun::OnPlayerEnter(this, player);
 
     return true;
 }

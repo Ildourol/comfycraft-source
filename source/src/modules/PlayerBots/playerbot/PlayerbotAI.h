@@ -375,6 +375,8 @@ public:
     // A command the bot gives itself, queued from any thread and run by its
     // own UpdateAI. It passes the companion order filter (`.ccdebug`).
     void QueueOwnCommand(const std::string& text);
+    // `.ccdebug quiet`: the engine's debug lines go to the file only, not to chat.
+    void SetDebugQuiet(bool on) { debugQuiet = on; }
     void QueueChatResponse(uint32 msgType, ObjectGuid guid1, ObjectGuid guid2, std::string message, std::string chanName, std::string name, bool noDelay = false);
 	void HandleBotOutgoingPacket(const WorldPacket& packet);
     void HandleMasterIncomingPacket(const WorldPacket& packet);
@@ -882,6 +884,7 @@ protected:
     time_t lastBuffCast = 0;
     time_t lastHealCast = 0;
     bool tightFollow = false;
+    bool debugQuiet = false;
     time_t ownerMapAwaySince = 0; // a companion on another map than its owner, 0 = same map
     time_t underOwnerSince = 0;   // a companion fallen below its owner, 0 = not
     time_t farFromOwnerSince = 0; // a companion past CompanionTeleportDistance, 0 = not

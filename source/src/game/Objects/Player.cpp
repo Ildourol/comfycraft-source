@@ -58,6 +58,7 @@
 #include "Guild.h"
 #include "GuildMgr.h"
 #include "BotNpc.h"
+#include "DungeonRun.h"
 #include "Pet.h"
 #include "Util.h"
 #include "Transport.h"
@@ -5950,6 +5951,10 @@ void Player::DeleteFromDB(ObjectGuid playerguid, uint32 accountId, bool updateRe
                                        "winner = IF(winner = '%u', 0, winner) "
                                        "WHERE invader = '%u' OR defender = '%u'",
                                        lowguid, lowguid, lowguid, lowguid, lowguid);
+            // sql/custom/161. ZEROED, NOT DELETED, as above: the run belongs
+            // to the rest of the group too, and the name stays on the row.
+            if (DungeonRun::TablesPresent())
+                CharacterDatabase.PExecute("UPDATE dungeon_run_member SET guid = 0 WHERE guid = '%u'", lowguid);
             CharacterDatabase.PExecute("DELETE FROM ai_playerbot_db_store WHERE guid = '%u'", lowguid);
             // sql/custom/083, reshaped by 086. UNPLACED, NOT DELETED, and the
             // difference is the point: since 086 a row is a DESIGN -- a name, a

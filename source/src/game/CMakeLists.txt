@@ -158,6 +158,7 @@ set (game_SRCS
     MapNodes/AbstractPlayer.cpp
     MapNodes/MasterPlayer.cpp
     MapNodes/MasterPlayerChat.cpp
+    Maps/DungeonRun.cpp
     Maps/GridMap.cpp
     Maps/GridNotifiers.cpp
     Maps/GridSearchers.cpp
@@ -344,6 +345,8 @@ set (game_SRCS
     Mail/MassMailMgr.h
     Maps/Cell.h
     Maps/CellImpl.h
+    Maps/DungeonBosses.h
+    Maps/DungeonRun.h
     Maps/GridDefines.h
     Maps/GridMap.h
     Maps/GridMapDefines.h

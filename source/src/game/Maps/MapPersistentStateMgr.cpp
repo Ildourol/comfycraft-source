@@ -35,6 +35,7 @@
 #include "World.h"
 #include "Group.h"
 #include "InstanceData.h"
+#include "DungeonRun.h"
 
 typedef MaNGOS::ClassLevelLockable<MapPersistentStateManager, std::mutex> MapPersistanceStateManagerLock;
 INSTANTIATE_SINGLETON_2(MapPersistentStateManager, MapPersistanceStateManagerLock);
@@ -216,6 +217,7 @@ DungeonPersistentState::DungeonPersistentState(uint16 MapId, uint32 InstanceId, 
 DungeonPersistentState::~DungeonPersistentState()
 {
     UnbindThisState();
+    DungeonRun::OnInstanceGone(GetMapId(), GetInstanceId());
 }
 
 void DungeonPersistentState::UnbindThisState()

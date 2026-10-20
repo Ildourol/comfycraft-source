@@ -8,6 +8,8 @@
 #include <iomanip>
 #include <filesystem>
 #include <ctime>
+#include <mutex>
+#include <unordered_map>
 
 #include "playerbot/AiFactory.h"
 #include "playerbot/CompanionOwnership.h"
@@ -4298,6 +4300,124 @@ bool PlayerbotAI::Whisper(std::string msg, std::string receiverName, bool likePl
     return true;
 }
 
+// REPEATS IN THE DEBUG LOG ARE COLLAPSED (2026-10-20).
+//
+// The engine logs every trigger it tries, about 25 times a second, so a bot that
+// runs to catch up wrote "try: follow useless" on each tick. A line is now written
+// once. Each time it comes again within DebugLogRepeatMs it is only counted, and
+// the next line logged after that window writes the count as
+// "<line> (xN more since <time>)". The engine's lines (try:, do:, why:) go to chat
+// the same way, shorter: "12:28:31 try: follow useless (20) [out of free move range] x116".
+static constexpr uint32 DebugLogRepeatMs = 5000;
+
+struct DebugLogRepeat
+{
+    uint32 firstMs;
+    uint32 count;
+    std::string firstStamp;
+};
+
+// "(20.000)" becomes "(20)": the first number in brackets is the relevance.
+static std::string ShortRelevance(const std::string& text)
+{
+    const size_t open = text.find('(');
+    if (open == std::string::npos)
+        return text;
+
+    size_t pos = open + 1;
+    while (pos < text.size() && isdigit((unsigned char)text[pos]))
+        ++pos;
+    if (pos == open + 1 || pos >= text.size() || text[pos] != '.')
+        return text;
+
+    size_t end = pos + 1;
+    while (end < text.size() && isdigit((unsigned char)text[end]))
+        ++end;
+    if (end >= text.size() || text[end] != ')')
+        return text;
+
+    return text.substr(0, pos) + text.substr(end);
+}
+
+// Writes the file and returns the same lines in the chat form.
+static std::vector<std::string> WriteDebugLogLine(Player* bot, const std::string& text)
+{
+    static std::mutex lock;
+    static std::unordered_map<uint32, std::unordered_map<std::string, DebugLogRepeat>> repeats;
+    static bool madeDir = false;
+
+    std::lock_guard<std::mutex> guard(lock);
+
+    if (!madeDir)
+    {
+        std::error_code ignored;
+        std::filesystem::create_directories("companion-logs", ignored);
+        madeDir = true;
+    }
+
+    const uint32 nowMs = WorldTimer::getMSTime();
+    const time_t now = time(nullptr);
+    struct tm local;
+#ifdef _WIN32
+    localtime_s(&local, &now);
+#else
+    localtime_r(&now, &local);
+#endif
+    char clock[16];
+    std::strftime(clock, sizeof(clock), "%H:%M:%S", &local);
+    char stamp[24];
+    snprintf(stamp, sizeof(stamp), "%s.%03u", clock, nowMs % 1000);
+
+    std::unordered_map<std::string, DebugLogRepeat>& seen = repeats[bot->GetGUIDLow()];
+    std::vector<std::string> lines;
+    std::vector<std::string> chat;
+
+    for (auto it = seen.begin(); it != seen.end();)
+    {
+        if (WorldTimer::getMSTimeDiff(it->second.firstMs, nowMs) < DebugLogRepeatMs)
+        {
+            ++it;
+            continue;
+        }
+
+        if (it->second.count)
+        {
+            const std::string count = std::to_string(it->second.count);
+            lines.push_back(it->first + " (x" + count + " more since " + it->second.firstStamp + ")");
+            chat.push_back(std::string(clock) + " " + ShortRelevance(it->first) + " x" + count);
+        }
+        it = seen.erase(it);
+    }
+
+    auto found = seen.find(text);
+    if (found != seen.end())
+        ++found->second.count;
+    else
+    {
+        lines.push_back(text);
+        chat.push_back(std::string(clock) + " " + ShortRelevance(text));
+        seen.emplace(text, DebugLogRepeat{ nowMs, 0, stamp });
+    }
+
+    if (lines.empty())
+        return chat;
+
+    const std::string path = std::string("companion-logs/") + bot->GetName() + ".log";
+    if (FILE* file = fopen(path.c_str(), "a"))
+    {
+        for (const std::string& line : lines)
+            fprintf(file, "%s %s\n", stamp, line.c_str());
+        fclose(file);
+    }
+
+    return chat;
+}
+
+static bool IsEngineDebugLine(const std::string& text)
+{
+    return text.rfind("try: ", 0) == 0 || text.rfind("do: ", 0) == 0 || text.rfind("why: ", 0) == 0;
+}
+
 bool PlayerbotAI::TellPlayerNoFacing(Player* player, std::string text, PlayerbotSecurityLevel securityLevel, bool isPrivate, bool noRepeat, bool ignoreSilent)
 {
     if(!player)
@@ -4321,30 +4441,26 @@ bool PlayerbotAI::TellPlayerNoFacing(Player* player, std::string text, Playerbot
     // writing it after a disconnect and did not start again for a reload, a
     // relog or /chatlog. With `debug` on, every line this bot says is appended
     // to companion-logs/<name>.log beside mangosd, before the repeat filter.
-    if (HasStrategy("debug", BotState::BOT_STATE_NON_COMBAT))
+    //
+    // The engine's lines go to chat collapsed and in the short form. Any other
+    // line (a reply to a command) is said as it is, even when the file only
+    // counted it.
+    static thread_local bool sayingCollapsed = false;
+    if (!sayingCollapsed && HasStrategy("debug", BotState::BOT_STATE_NON_COMBAT))
     {
-        static bool madeDir = false;
-        if (!madeDir)
+        std::vector<std::string> chat = WriteDebugLogLine(bot, text);
+        if (IsEngineDebugLine(text))
         {
-            std::error_code ignored;
-            std::filesystem::create_directories("companion-logs", ignored);
-            madeDir = true;
-        }
+            // Quiet: the file only. The lines in chat dropped the owner's frame rate.
+            if (debugQuiet)
+                return true;
 
-        const std::string path = std::string("companion-logs/") + bot->GetName() + ".log";
-        if (FILE* file = fopen(path.c_str(), "a"))
-        {
-            const time_t now = time(nullptr);
-            struct tm local;
-#ifdef _WIN32
-            localtime_s(&local, &now);
-#else
-            localtime_r(&now, &local);
-#endif
-            char stamp[16];
-            std::strftime(stamp, sizeof(stamp), "%H:%M:%S", &local);
-            fprintf(file, "%s.%03u %s\n", stamp, (uint32)(WorldTimer::getMSTime() % 1000), text.c_str());
-            fclose(file);
+            bool said = false;
+            sayingCollapsed = true;
+            for (const std::string& line : chat)
+                said = TellPlayerNoFacing(player, line, securityLevel, isPrivate, false, ignoreSilent) || said;
+            sayingCollapsed = false;
+            return said;
         }
     }
 

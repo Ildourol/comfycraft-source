@@ -282,6 +282,12 @@ bool OutNumberedTrigger::IsActive()
 
 bool BuffTrigger::IsActive()
 {
+    // A BUFF THE BOT HAS NOT LEARNED (2026-10-20). A level 20 hunter on the
+    // Marksmanship strategy asked for Trueshot Aura, a 31-point talent, on each
+    // tick, and each cast was refused as not known. Inactive until it is learned.
+    if (checkSpellKnown && !AI_VALUE2(uint32, "spell id", spell))
+        return false;
+
     Unit* target = GetTarget();
 	return target && !ai->HasAura(spell, target, false, checkIsOwner) && target->IsAlive();
 }

@@ -1312,9 +1312,9 @@ bool Map::ScriptCommand_RecruitBot(const ScriptInfo& script, WorldObject* source
     // do-nothing version for BUILD_PLAYERBOTS=OFF builds. Declared here at the
     // call site because no core file includes a playerbot header - the same
     // seam BotActionLog_* uses from Unit.cpp.
-    extern bool Playerbot_RecruitBotForPlayer(Player* player, uint32 role, uint32 classId);
+    extern bool Playerbot_RecruitBotForPlayer(Player* player, uint32 role, uint32 classId, char const* spec);
 
-    Playerbot_RecruitBotForPlayer(pPlayer, script.recruitBot.role, script.recruitBot.classId);
+    Playerbot_RecruitBotForPlayer(pPlayer, script.recruitBot.role, script.recruitBot.classId, nullptr);
 
     // Finding nobody free is a normal outcome, not a script failure - the
     // player was already told. Never abort the rest of the gossip script.

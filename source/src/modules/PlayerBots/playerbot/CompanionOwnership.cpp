@@ -525,8 +525,10 @@ bool ComfyCommands::HandleCompanionsCommand(ChatHandler* handler, char* args)
     return true;
 }
 
-// `.ccdebug [name] on | off`: a bot's debug lines, which also go to
-// server\companion-logs\<name>.log (PlayerbotAI::TellPlayerNoFacing).
+// `.ccdebug [name] on | off | quiet`: a bot's debug lines, which also go to
+// server\companion-logs\<name>.log (PlayerbotAI::TellPlayerNoFacing). `quiet`
+// is on with the engine's lines kept out of chat, which dropped the owner's
+// frame rate (2026-10-20).
 //
 // The whisper `nc +debug` that ComfyUI used is a strategy toggle, and a
 // companion takes those from a GM only (PlayerbotAI::RunCommand), so on any
@@ -546,9 +548,11 @@ bool ComfyCommands::HandleCompanionDebugCommand(ChatHandler* handler, char* args
     }
 
     int turn = -1; // -1 toggle, 0 off, 1 on
-    if (!words.empty() && (words.back() == "on" || words.back() == "off"))
+    bool quiet = false;
+    if (!words.empty() && (words.back() == "on" || words.back() == "off" || words.back() == "quiet"))
     {
-        turn = words.back() == "on" ? 1 : 0;
+        quiet = words.back() == "quiet";
+        turn = words.back() == "off" ? 0 : 1;
         words.pop_back();
     }
 
@@ -580,9 +584,11 @@ bool ComfyCommands::HandleCompanionDebugCommand(ChatHandler* handler, char* args
     }
 
     bool on = turn < 0 ? !ai->HasStrategy("debug", BotState::BOT_STATE_NON_COMBAT) : turn == 1;
+    ai->SetDebugQuiet(on && quiet);
     ai->QueueOwnCommand(on ? "nc -silent,+debug,+debug action" : "nc +silent,-debug,-debug action");
     if (on)
-        handler->PSendSysMessage("Debug on for %s: server\\companion-logs\\%s.log", bot->GetName(), bot->GetName());
+        handler->PSendSysMessage("Debug on for %s%s: server\\companion-logs\\%s.log", bot->GetName(),
+            quiet ? ", file only" : "", bot->GetName());
     else
         handler->PSendSysMessage("Debug off for %s.", bot->GetName());
     return true;

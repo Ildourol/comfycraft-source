@@ -31,7 +31,7 @@ void BotActionLog_LogAuraRemove (Unit*, uint32, uint64)                        {
 
 // Backs SCRIPT_COMMAND_RECRUIT_BOT (93). With no bot module there is nobody to
 // recruit, so the gossip option simply does nothing.
-bool Playerbot_RecruitBotForPlayer(Player*, uint32, uint32) { return false; }
+bool Playerbot_RecruitBotForPlayer(Player*, uint32, uint32, char const*) { return false; }
 
 // Backs `reload bot_npc` re-wearing a design's outfit. With no bot module there
 // are no bot NPCs to dress, so this can only be reached by a stale row.

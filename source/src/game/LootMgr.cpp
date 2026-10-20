@@ -30,6 +30,12 @@
 #include "SpellAuraDefines.h"
 #include "SpellAuras.h"
 #include "Config/Config.h" // Rate.Drop.Item.UncommonGear
+#include "Database/DatabaseEnv.h"
+#include "LootLuck.h"
+
+#include <atomic>
+#include <mutex>
+#include <unordered_map>
 
 static eConfigFloatValues const qualityToRate[MAX_ITEM_QUALITY] =
 {
@@ -71,7 +77,7 @@ private:
     LootStoreItemList ExplicitlyChanced;                // Entries with chances defined in DB
     LootStoreItemList EqualChanced;                     // Zero chances - every entry takes the same chance
 
-    LootStoreItem const * Roll(Loot const& loot, bool rate, Player const* lootOwner) const; // Rolls an item from the group, returns nullptr if all miss their chances
+    LootStoreItem const * Roll(Loot const& loot, bool rate, Player const* lootOwner, bool skipQuestItems) const; // Rolls an item from the group, returns nullptr if all miss their chances
     bool hasConditionalEqualChancedItem;
 };
 
@@ -297,6 +303,249 @@ static bool IsGreenGear(uint32 itemId)
 static float GetGreenGearRate()
 {
     return std::max(sConfig.GetFloatDefault("Rate.Drop.Item.UncommonGear", 1.0f), 0.0f);
+}
+
+//
+// --------- Quest drops for each looter (LootLuck.h) ---------
+//
+
+namespace
+{
+    std::atomic<bool> s_prdOn{ false };
+    std::atomic<bool> s_prdLog{ false };
+
+    // Missed chance in percent, by player guid, then item. Maps update on
+    // several threads, so the counts and the step cache share a lock.
+    std::mutex s_luckLock;
+    std::unordered_map<uint32, std::unordered_map<uint32, float>> s_missed;
+    std::map<float, float> s_prdStep;
+
+    // The looters of the creature corpse that Loot::FillLoot is filling, set
+    // around LootTemplate::Process. Null for every other kind of loot.
+    thread_local std::vector<Player*> const* t_questLooters = nullptr;
+}
+
+// The average number of rolls for a drop when the n-th roll since the last
+// drop has the chance step * n.
+static double PrdExpectedRolls(double step)
+{
+    double expected = 0.0;
+    double alive = 1.0;
+    for (uint32 n = 1; alive > 1e-9; ++n)
+    {
+        expected += alive;
+        alive *= 1.0 - std::min(1.0, step * n / 100.0);
+    }
+    return expected;
+}
+
+// The step that keeps the average at the table chance: 100 / base rolls for a
+// drop. Cached for each chance. Called with s_luckLock held.
+static float PrdStep(float base)
+{
+    auto const itr = s_prdStep.find(base);
+    if (itr != s_prdStep.end())
+        return itr->second;
+
+    double lo = 0.0;
+    double hi = base;
+    double const target = 100.0 / base;
+    for (int i = 0; i < 40; ++i)
+    {
+        double const mid = (lo + hi) / 2.0;
+        if (PrdExpectedRolls(mid) > target)
+            lo = mid;
+        else
+            hi = mid;
+    }
+    float const step = float((lo + hi) / 2.0);
+    s_prdStep[base] = step;
+    return step;
+}
+
+// One looter's roll for a quest item at the chance `base`.
+static bool QuestRoll(Player const* looter, uint32 itemId, float base, Loot const& loot)
+{
+    if (base >= 100.0f)
+        return true;
+
+    bool const prd = s_prdOn.load(std::memory_order_relaxed);
+    float chance = base;
+    float missed = 0.0f;
+    bool hit;
+    if (prd)
+    {
+        std::lock_guard<std::mutex> guard(s_luckLock);
+        auto& counts = s_missed[looter->GetGUIDLow()];
+        float& count = counts[itemId];
+        missed = count;
+        // A miss on this mob counts as count / base misses of its own.
+        chance = PrdStep(base) * (count / base + 1.0f);
+        hit = roll_chance_f(chance);
+        if (hit)
+        {
+            counts.erase(itemId);
+            if (counts.empty())
+                s_missed.erase(looter->GetGUIDLow());
+        }
+        else
+            count += base;
+    }
+    else
+        hit = roll_chance_f(base);
+
+    if (s_prdLog.load(std::memory_order_relaxed))
+    {
+        WorldObject const* target = loot.GetLootTarget();
+        sLog.out(LOG_LOOTS, "Quest roll: %s, item %u from %u, table %.2f%%, rolled at %.2f%% (PRD %s, missed %.1f): %s",
+            looter->GetName(), itemId, target ? target->GetEntry() : 0, base, std::min(chance, 100.0f),
+            prd ? "on" : "off", missed, hit ? "drop" : "miss");
+    }
+    return hit;
+}
+
+// The chance a looter rolls at for an ungrouped row: the table chance with
+// the quality rate and the looter's gathering auras, as LootStoreItem::Roll.
+static float UngroupedQuestChance(LootStoreItem const& li, bool rate, Player const* looter)
+{
+    float qualityModifier = 1.0f;
+    if (rate)
+        if (ItemPrototype const* pProto = sObjectMgr.GetItemPrototype(li.itemid))
+            qualityModifier = IsGreenGear(li.itemid) ? GetGreenGearRate() : sWorld.getConfig(qualityToRate[pProto->Quality]);
+    return li.chance * qualityModifier * (100.0f + GetGatheringItemChanceMod(looter, li.itemid)) / 100.0f;
+}
+
+// The same for a grouped row, as LootGroup::Roll: no quality rate.
+static float GroupedQuestChance(LootStoreItem const& li, bool rate, Player const* looter)
+{
+    float chance = li.chance;
+    if (rate && IsGreenGear(li.itemid))
+        chance *= GetGreenGearRate();
+    return chance * (100.0f + GetGatheringItemChanceMod(looter, li.itemid)) / 100.0f;
+}
+
+// A copy of the item that only this looter sees: AllowedForPlayer checks
+// lootOwner, and needs_quest hides it once the quest has enough.
+static void AddPersonalCopy(Loot& loot, LootStoreItem const& li, Player const* looter)
+{
+    if (loot.m_questItems.size() >= MAX_NR_QUEST_ITEMS)
+        return;
+
+    ItemPrototype const* proto = sObjectMgr.GetItemPrototype(li.itemid);
+    if (proto && !proto->Discovered)
+        proto->Discovered = true;
+
+    LootItem item(li);
+    item.needs_quest = true;
+    item.freeforall = false;
+    item.lootOwner = looter->GetObjectGuid();
+    loot.m_questItems.push_back(item);
+}
+
+// Rolls a row once for each looter whose quest needs the item. Returns how
+// many looters needed it; at 0 the row rolls as it did before.
+static uint32 RollForQuestLooters(Loot& loot, LootStoreItem const& li, bool rate, bool grouped)
+{
+    std::vector<Player*> const* looters = t_questLooters;
+    if (!looters)
+        return 0;
+
+    uint32 needers = 0;
+    for (Player* looter : *looters)
+    {
+        if (!looter->HasQuestForItem(li.itemid))
+            continue;
+
+        ++needers;
+        float const base = grouped ? GroupedQuestChance(li, rate, looter) : UngroupedQuestChance(li, rate, looter);
+        if (QuestRoll(looter, li.itemid, base, loot))
+            AddPersonalCopy(loot, li, looter);
+    }
+    return needers;
+}
+
+bool LootLuck::Enabled()
+{
+    return s_prdOn.load(std::memory_order_relaxed);
+}
+
+// The table is probed first, as level_cap is: a SELECT on a missing table is
+// ASSERT(false) in HandleMySQLError. A missing table or row is PRD off.
+static bool LootLuckTablePresent()
+{
+    bool present = false;
+    if (QueryResult* probe = CharacterDatabase.Query(
+            "SELECT COUNT(*) FROM information_schema.tables "
+            "WHERE table_schema = DATABASE() AND table_name = 'loot_luck'"))
+    {
+        present = probe->Fetch()[0].GetUInt32() > 0;
+        delete probe;
+    }
+    return present;
+}
+
+bool LootLuck::Load()
+{
+    bool on = false;
+    if (!LootLuckTablePresent())
+        sLog.outString(">> Loot luck: off (`loot_luck` is missing; apply sql/custom/160_loot_luck.sql).");
+    else if (QueryResult* result = CharacterDatabase.Query("SELECT `prd` FROM `loot_luck` WHERE `id` = 1"))
+    {
+        on = result->Fetch()[0].GetUInt32() != 0;
+        delete result;
+    }
+    s_prdOn.store(on, std::memory_order_relaxed);
+    return on;
+}
+
+bool LootLuck::Set(bool on, char const* changedBy)
+{
+    if (!LootLuckTablePresent())
+        return false;
+
+    std::string by = changedBy ? changedBy : "";
+    CharacterDatabase.escape_string(by);
+    // Direct, so two changes a second apart cannot land in the wrong order.
+    CharacterDatabase.DirectPExecute(
+        "REPLACE INTO `loot_luck` (`id`, `prd`, `changed_at`, `changed_by`) VALUES (1, %u, NOW(), '%s')",
+        on ? 1 : 0, by.c_str());
+    s_prdOn.store(on, std::memory_order_relaxed);
+    return true;
+}
+
+bool LootLuck::Logging()
+{
+    return s_prdLog.load(std::memory_order_relaxed);
+}
+
+void LootLuck::SetLogging(bool on)
+{
+    s_prdLog.store(on, std::memory_order_relaxed);
+}
+
+void LootLuck::Counts(uint32& players, uint32& items)
+{
+    std::lock_guard<std::mutex> guard(s_luckLock);
+    players = uint32(s_missed.size());
+    items = 0;
+    for (auto const& itr : s_missed)
+        items += uint32(itr.second.size());
+}
+
+float LootLuck::Missed(uint32 playerGuidLow, uint32 itemId)
+{
+    std::lock_guard<std::mutex> guard(s_luckLock);
+    auto const player = s_missed.find(playerGuidLow);
+    if (player == s_missed.end())
+        return 0.0f;
+    auto const item = player->second.find(itemId);
+    return item == player->second.end() ? 0.0f : item->second;
+}
+
+void LootLuck::Forget(uint32 playerGuidLow)
+{
+    std::lock_guard<std::mutex> guard(s_luckLock);
+    s_missed.erase(playerGuidLow);
 }
 
 //
@@ -551,10 +800,28 @@ bool Loot::FillLoot(uint32 loot_id, LootStore const& store, Player* loot_owner, 
     items.reserve(MAX_NR_LOOT_ITEMS);
     m_questItems.reserve(MAX_NR_QUEST_ITEMS);
 
+    // At a creature kill, quest drops roll for each looter who needs them
+    // (LootLuck.h). The looters are the ones the group case below lets in.
+    Group* group = loot_owner->GetGroup();
+    std::vector<Player*> questLooters;
+    if (&store == &LootTemplates_Creature)
+    {
+        if (!personal && group)
+        {
+            for (GroupReference* itr = group->GetFirstMember(); itr != nullptr; itr = itr->next())
+                if (Player* pl = itr->getSource())
+                    if (!looted || (pl->IsInWorld() && pl->IsAtGroupRewardDistance(looted)))
+                        questLooters.push_back(pl);
+        }
+        else
+            questLooters.push_back(loot_owner);
+    }
+
+    t_questLooters = questLooters.empty() ? nullptr : &questLooters;
     tab->Process(*this, store, store.IsRatesAllowed(), loot_owner); // Processing is done there, callback via Loot::AddItem()
+    t_questLooters = nullptr;
 
     // Setting access rights for group loot case
-    Group* group = loot_owner->GetGroup();
     if (!personal && group)
     {
         roundRobinPlayer = loot_owner->GetGUID();
@@ -1166,7 +1433,7 @@ void LootTemplate::LootGroup::AddEntry(LootStoreItem& item)
 }
 
 // Rolls an item from the group, returns nullptr if all miss their chances
-LootStoreItem const * LootTemplate::LootGroup::Roll(Loot const& loot, bool rate, Player const* lootOwner) const
+LootStoreItem const * LootTemplate::LootGroup::Roll(Loot const& loot, bool rate, Player const* lootOwner, bool skipQuestItems) const
 {
     if (!ExplicitlyChanced.empty())                         // First explicitly chanced entries are checked
     {
@@ -1176,6 +1443,9 @@ LootStoreItem const * LootTemplate::LootGroup::Roll(Loot const& loot, bool rate,
         for (const auto& i : ExplicitlyChanced) //check each explicitly chanced entry in the template and modify its chance based on quality.
         {
             if (!i.AllowedForTeam(loot))
+                continue;
+
+            if (skipQuestItems && i.needs_quest)            // rolled for each looter in LootGroup::Process
                 continue;
 
             if (i.chance >= 100.0f)
@@ -1264,7 +1534,17 @@ bool LootTemplate::LootGroup::HasQuestDropForPlayer(Player const* player) const
 // Rolls an item from the group (if any takes its chance) and adds the item to the loot
 void LootTemplate::LootGroup::Process(Loot& loot, bool rate, Player const* lootOwner) const
 {
-    LootStoreItem const * item = Roll(loot, rate, lootOwner);
+    // At a creature kill, quest-only items leave the shared roll and roll for
+    // each looter who needs them, at their own chance (LootLuck.h). In the
+    // shared roll they took slices from each other: the Harvest Golem's
+    // Cracked Animation Rune (80%) left the Intact one (40%) only 20%.
+    bool const personal = t_questLooters != nullptr;
+    if (personal)
+        for (const auto& i : ExplicitlyChanced)
+            if (i.needs_quest && i.AllowedForTeam(loot))
+                RollForQuestLooters(loot, i, rate, true);
+
+    LootStoreItem const * item = Roll(loot, rate, lootOwner, personal);
     if (item != nullptr)
         loot.AddItem(*item);
 }
@@ -1362,6 +1642,18 @@ void LootTemplate::Process(Loot& loot, LootStore const& store, bool rate, Player
     // Rolling non-grouped items
     for (const auto& itr : Entries)
     {
+        // A row a looter's quest needs rolls for each such looter. A normal
+        // drop also rolls once for the looters who do not need it.
+        if (itr.mincountOrRef > 0)
+        {
+            if (uint32 needers = RollForQuestLooters(loot, itr, rate, false))
+            {
+                if (!itr.needs_quest && needers < t_questLooters->size() && itr.Roll(rate, lootOwner))
+                    loot.AddItem(itr);
+                continue;
+            }
+        }
+
         if (!itr.Roll(rate, lootOwner))
             continue;                                       // Bad luck for the entry
 

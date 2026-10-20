@@ -2800,6 +2800,7 @@ void PlayerbotHolder::CreateBot(Player* master, const std::string param, std::li
     BotRoles role = BotRoles::BOT_ROLE_NONE;
     std::string groupWith = master ? master->GetName() : "";
     std::string gear = "default";
+    std::string spec;
 
     std::vector<std::string> args = Qualified::getMultiQualifiers(param, " ");
     for (const auto& arg : args)
@@ -2840,6 +2841,8 @@ void PlayerbotHolder::CreateBot(Player* master, const std::string param, std::li
             temporary = (value == "1" || value == "true" || value == "yes");
         else if (key == "naked")
             naked = (value == "1" || value == "true" || value == "yes");
+        else if (key == "spec")
+            spec = value;
     }
 
     // A player may only have so many companions out. The party cap of 5 bounds
@@ -2946,6 +2949,15 @@ void PlayerbotHolder::CreateBot(Player* master, const std::string param, std::li
 
         uint32 botGuid = newBot->GetGUIDLow();
         guid = newBot->GetObjectGuid();
+
+        // A premade spec by name (spec=, from `.hire`), stored the way the
+        // `talents <name>` whisper stores it. AutoSelectTalents below and every
+        // level after continue it. Outside the level branch: a level 1 hire
+        // takes it at level 10.
+        if (!spec.empty())
+            for (TalentPath* path : ChangeTalentsAction::getPremadePaths(newBot->getClass(), spec, role))
+                if (path->name == spec)
+                    sRandomPlayerbotMgr.SetValue(botGuid, "specNo", path->id + 1);
 
         if (level > 1)
         {

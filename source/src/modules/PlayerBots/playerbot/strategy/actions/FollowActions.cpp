@@ -53,8 +53,14 @@ bool FollowAction::Execute(Event& event)
         // of sight: come right up, or the same spot would be out of reach again.
         const bool flatOnly = std::fabs(bot->GetPositionZ() - followTarget->GetPositionZ()) <= 4.0f &&
             bot->IsWithinLOSInMap(followTarget, true);
-        return MoveNear(followTarget, flatOnly ? std::max(sPlayerbotAIConfig.looseFollowDistance - 2.0f, sPlayerbotAIConfig.followDistance)
-                                               : sPlayerbotAIConfig.followDistance);
+        if (MoveNear(followTarget, flatOnly ? std::max(sPlayerbotAIConfig.looseFollowDistance - 2.0f, sPlayerbotAIConfig.followDistance)
+                                            : sPlayerbotAIConfig.followDistance))
+            return true;
+
+        // MoveNear only takes a spot the bot can see from where it stands. With
+        // the owner round a corner there is none, and the companion stood and
+        // waited (2026-10-20). The formation follow below finds a path; once the
+        // companion is near and in sight, isUseful stops it again.
     }
 
     // The Follow order ends when the companion has arrived.

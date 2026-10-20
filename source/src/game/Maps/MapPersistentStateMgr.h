@@ -91,6 +91,9 @@ class MapPersistentState
             return itr != m_creatureRespawnTimes.end() ? itr->second : 0;
         }
         void SaveCreatureRespawnTime(uint32 loguid, time_t t);
+        // A creature here has died and not yet respawned (the run timer's
+        // test for an instance played before a restart).
+        bool HasCreatureRespawnTimes() const { return !m_creatureRespawnTimes.empty(); }
         time_t GetGORespawnTime(uint32 loguid) const
         {
             RespawnTimes::const_iterator itr = m_goRespawnTimes.find(loguid);

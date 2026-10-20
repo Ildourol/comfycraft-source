@@ -92,7 +92,7 @@ namespace
 }
 
 // Returns true if the click did something.
-bool Playerbot_RecruitBotForPlayer(Player* player, uint32 role, uint32 classId)
+bool Playerbot_RecruitBotForPlayer(Player* player, uint32 role, uint32 classId, char const* spec)
 {
     if (!player || !sPlayerbotAIConfig.enabled)
         return false;
@@ -193,11 +193,40 @@ bool Playerbot_RecruitBotForPlayer(Player* player, uint32 role, uint32 classId)
         return false;
     }
 
+    // A spec by name, from `.hire`: a premade spec of the class and role whose
+    // name is the word, or the only one the word is part of. Anything else is
+    // refused with the specs there are.
+    std::string specName;
+    if (spec && *spec)
+    {
+        std::string word = spec;
+        strToLower(word);
+
+        const std::vector<TalentPath*> paths = ChangeTalentsAction::getPremadePaths(cls, word, wanted);
+        for (TalentPath* path : paths)
+            if (path->name == word)
+                specName = path->name;
+        if (specName.empty() && paths.size() == 1)
+            specName = paths[0]->name;
+
+        if (specName.empty())
+        {
+            std::string names;
+            for (TalentPath* path : ChangeTalentsAction::getPremadePaths(cls, "", wanted))
+                names += (names.empty() ? "" : ", ") + path->name;
+            chat.PSendSysMessage("Specs for a %s %s: %s.", ChatHelper::formatRole(wanted).c_str(),
+                                 ChatHelper::formatClass(cls).c_str(), names.c_str());
+            return false;
+        }
+    }
+
     std::ostringstream param;
     param << "level=" << uint32(player->GetLevel())
           << " class=" << ChatHelper::formatClass(cls)
           << " role="  << ChatHelper::formatRole(wanted)
           << " group=" << player->GetName();
+    if (!specName.empty())
+        param << " spec=" << specName;
 
     // Out of the starter kit before its first save, so it arrives in the gear
     // it rolls and never changes clothes in front of anyone

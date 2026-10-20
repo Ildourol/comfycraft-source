@@ -254,9 +254,16 @@ bool Engine::DoNextAction(Unit* unit, int depth, bool minimal, bool isStunned)
             }
             else
             {
+                // Why an action was not asked, for the debug line. Without it a held
+                // action logs "useless", the same as one with nothing to do.
+                const char* heldFor = nullptr;
+                if (isStunned && !action->isUsefulWhenStunned())
+                    heldFor = "stun";
+                else if (healerDrinking && !AllowedWhileHealerDrinks(action))
+                    heldFor = "meal";
+
                 bool isUseful = false;
-                if ((!isStunned || action->isUsefulWhenStunned()) &&
-                    (!healerDrinking || AllowedWhileHealerDrinks(action)))
+                if (!heldFor)
                 {
                     auto pmo2 = sPerformanceMonitor.start(PERF_MON_ACTION, "isUseful", ai);
                     isUseful = action->isUseful();
@@ -404,7 +411,10 @@ bool Engine::DoNextAction(Unit* unit, int depth, bool minimal, bool isStunned)
                         std::ostringstream out;
                         out << "try: ";
                         out << action->getName();
-                        out << " useless (";
+                        if (heldFor)
+                            out << " held for " << heldFor << " (";
+                        else
+                            out << " useless (";
 
                         out << std::fixed << std::setprecision(3);
                         out << action->getRelevance() << ")";

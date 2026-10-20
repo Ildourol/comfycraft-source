@@ -12,6 +12,7 @@
 #include "ComfyCommands.h"
 #include "CustomMerchantMgr.h"
 #include "LevelCap.h"
+#include "LootLuck.h"
 #include "BotNpc.h"
 #include "Common.h"
 #include "Config/Config.h"
@@ -3862,6 +3863,73 @@ bool ComfyCommands::HandleGearCommand(ChatHandler* handler, char* args)
     return true;
 }
 
+// RecruitBot.cpp, stubbed in PlayerbotStubs.cpp. The hire behind Elowen's
+// gossip (SCRIPT_COMMAND_RECRUIT_BOT); it sends its own answers to the player.
+extern bool Playerbot_RecruitBotForPlayer(Player* player, uint32 role, uint32 classId, char const* spec);
+
+// .hire tank | healer | dps [class [spec]], .hire dismiss
+//
+// Elowen's hire without the gossip: a companion of the role made at your level,
+// or every companion sent home. The same checks apply (party leader, room in
+// the party, two per player). Yourself only: a selected bot is not somebody to
+// hire for. GM only, like `.bot`, so it runs on the world thread. The spec is a
+// premade spec name from aiplayerbot.conf, and needs the class before it.
+bool ComfyCommands::HandleHireCommand(ChatHandler* handler, char* args)
+{
+    Player* player = handler->m_session ? handler->m_session->GetPlayer() : nullptr;
+    if (!player)
+        return false;
+
+    static struct { char const* name; uint32 role; } const ROLES[] =
+    {
+        { "tank", SO_RECRUIT_TANK }, { "healer", SO_RECRUIT_HEALER },
+        { "dps", SO_RECRUIT_DPS }, { "dismiss", SO_RECRUIT_DISMISS },
+    };
+    static struct { char const* name; uint32 id; } const CLASSES[] =
+    {
+        { "warrior", CLASS_WARRIOR }, { "paladin", CLASS_PALADIN }, { "hunter", CLASS_HUNTER },
+        { "rogue", CLASS_ROGUE }, { "priest", CLASS_PRIEST }, { "shaman", CLASS_SHAMAN },
+        { "mage", CLASS_MAGE }, { "warlock", CLASS_WARLOCK }, { "druid", CLASS_DRUID },
+    };
+
+    uint32 role = SO_RECRUIT_MAX;
+    for (auto const& r : ROLES)
+        if (handler->ExtractLiteralArg(&args, r.name))
+        {
+            role = r.role;
+            break;
+        }
+    if (role == SO_RECRUIT_MAX)
+        return false;
+
+    uint32 classId = 0;
+    char const* spec = nullptr;
+    if (*args)
+    {
+        if (role == SO_RECRUIT_DISMISS)
+            return false;
+        for (auto const& c : CLASSES)
+            if (handler->ExtractLiteralArg(&args, c.name))
+            {
+                classId = c.id;
+                break;
+            }
+        if (!classId)
+            return false;
+        if (*args)
+        {
+            spec = handler->ExtractArg(&args);
+            if (!spec || *args)
+                return false;
+        }
+    }
+
+    // A refusal is already said, in the hire's own words.
+    if (!Playerbot_RecruitBotForPlayer(player, role, classId, spec))
+        handler->SetSentErrorMessage(true);
+    return true;
+}
+
 // .setspeed <rate> [$playername]
 //
 // `.modify speed` by name, so the console and the website's GM page can use
@@ -3965,6 +4033,44 @@ bool ComfyCommands::HandleLevelCapCommand(ChatHandler* handler, char* args)
         handler->PSendSysMessage("Level cap: %u.", cap);
     else
         handler->PSendSysMessage("Level cap: none (%u).", cap);
+    return true;
+}
+
+// Bad-luck protection on quest drops (LootLuck.h). With no argument it
+// re-reads tw_char.loot_luck, which is what the website sends after it writes
+// the row. "on" and "off" write the row. "log on" and "log off" write a line
+// for each quest roll to the loot log, until the next restart.
+bool ComfyCommands::HandleLootLuckCommand(ChatHandler* handler, char* args)
+{
+    char* word = handler->ExtractLiteralArg(&args);
+    if (word && strcmp(word, "log") == 0)
+    {
+        char* state = handler->ExtractLiteralArg(&args);
+        if (!state || (strcmp(state, "on") != 0 && strcmp(state, "off") != 0))
+            return false;
+        LootLuck::SetLogging(strcmp(state, "on") == 0);
+    }
+    else if (word)
+    {
+        if (strcmp(word, "on") != 0 && strcmp(word, "off") != 0)
+            return false;
+
+        char const* by = handler->m_session ? handler->m_session->GetPlayerName() : "console";
+        if (!LootLuck::Set(strcmp(word, "on") == 0, by))
+        {
+            handler->SendSysMessage("No `loot_luck` table. Apply sql/custom/160_loot_luck.sql to tw_char.");
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+    }
+    else
+        LootLuck::Load();
+
+    uint32 players = 0;
+    uint32 items = 0;
+    LootLuck::Counts(players, items);
+    handler->PSendSysMessage("Loot luck: PRD %s, log %s. Miss counts: %u items, %u players.",
+        LootLuck::Enabled() ? "on" : "off", LootLuck::Logging() ? "on" : "off", items, players);
     return true;
 }
 
@@ -15294,9 +15400,11 @@ namespace
         { "gear",              ".gear replace | fill | bags  any | green | blue | epic [spec] [name]   random gear for the level" },
         { "setspeed",          ".setspeed <rate> [name]   walk, run and swim speed, 1 is normal, until the next login" },
         { "levelcap",          ".levelcap [level]   the level XP stops at, or set it (0 is none)" },
+        { "lootluck",          ".lootluck [on | off | log on | log off]   bad-luck protection on quest drops, or set it" },
         { "flightmode",        ".flightmode [on | off]   whether GM flight is on, or set it" },
         { "companions",        ".companions   name your companions" },
-        { "ccdebug",           ".ccdebug [name] on | off   a companion's debug log, server\\companion-logs (your target if no name)" },
+        { "hire",              ".hire tank | healer | dps [class [spec]], .hire dismiss   a companion at your level, as Elowen hires" },
+        { "ccdebug",           ".ccdebug [name] on | off | quiet   a companion's debug log, server\\companion-logs (your target if no name); quiet keeps it out of chat" },
         { "npcbot",            ".npcbot place | move | dress | menu | idle | emote | unplace | info <name>, .npcbot list" },
         { "obj",               ".obj list | info | near [all] | where | go | place (add) | select | unselect | move (drag) | turn | nudge | rotate | scale | remove (del)   Workshop objects by #id, any spawn by g<guid>" },
         { "scene",             ".scene <id>   run a scene, your target as the NPC" },

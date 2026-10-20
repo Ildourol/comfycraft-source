@@ -1067,6 +1067,7 @@ ChatCommand * ChatHandler::getCommandTable()
         { "gear",           SEC_DEVELOPER,       true,  &ComfyCommands::HandleGearCommand,              "", nullptr },
         { "setspeed",       SEC_DEVELOPER,       true,  &ComfyCommands::HandleSetSpeedCommand,          "", nullptr },
         { "levelcap",       SEC_DEVELOPER,       true, &ComfyCommands::HandleLevelCapCommand,          "Syntax: .levelcap [level]\r\nShows the level cap, or sets it. 0 is no cap.", nullptr },
+        { "lootluck",       SEC_DEVELOPER,       true,  &ComfyCommands::HandleLootLuckCommand,          "Syntax: .lootluck [on | off | log on | log off]\r\nShows bad-luck protection on quest drops, or sets it.", nullptr },
         { "flightmode",     SEC_DEVELOPER,       false, &ComfyCommands::HandleFlightModeCommand,        "", nullptr },
         { "showarea",       SEC_ADMINISTRATOR,   false, &ChatHandler::HandleShowAreaCommand,            "", nullptr },
         { "hidearea",       SEC_ADMINISTRATOR,   false, &ChatHandler::HandleHideAreaCommand,            "", nullptr },
@@ -1162,6 +1163,7 @@ ChatCommand * ChatHandler::getCommandTable()
         // while its map thread updated it, and `.rndbot reset` cleared a cache
         // every bot reads (docs/ai/content/companion-crash-audit.md).
         { "bot",            SEC_DEVELOPER,        false, &ChatHandler::HandlePlayerbotCommand,           "", nullptr },
+        { "hire",           SEC_DEVELOPER,        false, &ComfyCommands::HandleHireCommand,              "Syntax: .hire tank | healer | dps [class [spec]], .hire dismiss\r\nA companion of the role at your level, or every companion sent home. The spec is a premade spec name, such as marksmanship.", nullptr },
         { "npcbot",         SEC_DEVELOPER,        true,  &ComfyCommands::HandleNpcBotCommand,            "", nullptr },
         { "obj",            SEC_DEVELOPER,        true,  &ComfyCommands::HandleObjCommand,               "", nullptr },
         { "add_dressing_room", SEC_DEVELOPER,    false, &ComfyCommands::HandleAddDressingRoomCommand,   "", nullptr },
