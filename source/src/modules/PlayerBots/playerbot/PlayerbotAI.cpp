@@ -759,9 +759,11 @@ void PlayerbotAI::UpdateAI(uint32 elapsed, bool minimal)
     SC_PHASE("UpdateAI.UpdateAIReaction", bot ? bot->GetName() : "(null)");
     if(!UpdateAIReaction(elapsed, doMinimalReaction, bot->IsTaxiFlying()) && CanUpdateAIInternal())
     {
-        // Update the delay with the spell cast time
+        // Update the delay with the spell cast time. In this core a spell in its cast
+        // time is SPELL_STATE_PREPARING; CASTING is the channel state. The action's own
+        // delay ends a tick before the cast does, and a follow then cancels the cast.
         Spell* currentSpell = bot->GetCurrentSpell(CURRENT_GENERIC_SPELL);
-        if (currentSpell && (currentSpell->getState() == SPELL_STATE_CASTING) && (currentSpell->GetCastedTime() > 0U))
+        if (currentSpell && (currentSpell->getState() == SPELL_STATE_PREPARING || currentSpell->getState() == SPELL_STATE_CASTING) && (currentSpell->GetCastedTime() > 0U))
         {
             SetAIInternalUpdateDelay(currentSpell->GetCastedTime() + sPlayerbotAIConfig.reactDelay + sWorld.GetAverageDiff());
 
@@ -1138,6 +1140,8 @@ void PlayerbotAI::OnCombatStarted()
             StopMoving();
         }
 
+        // The one-target list reads the full one, so both are reset.
+        aiObjectContext->GetValue<std::list<ObjectGuid>>("attackers")->Reset();
         aiObjectContext->GetValue<std::list<ObjectGuid>>("attackers", 1)->Reset();
         aiObjectContext->GetValue<bool>("has attackers")->Reset();
 

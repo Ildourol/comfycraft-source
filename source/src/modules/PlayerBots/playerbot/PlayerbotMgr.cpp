@@ -3669,9 +3669,10 @@ std::string PlayerbotHolder::HandleBotGear(Player* bot, Player* master, const st
 // Backs `.gear` (ComfyCommands::HandleGearCommand) on a PLAYER: the bot gear
 // pick for the slots in slotMask. The player has no PlayerbotAI, which
 // EquipGearForPlayer allows for. quality is 0 for the bots' own mix by level,
-// or ITEM_QUALITY_UNCOMMON and up for that quality only. Returns false with
-// `error` set when it does nothing at all.
-bool Playerbot_GearPlayer(Player* player, uint32 slotMask, uint32 quality, std::string& error)
+// or ITEM_QUALITY_UNCOMMON and up for that quality only. spec is a weight
+// scale name ("feraldps"), or empty for the spec the talents give. Returns
+// false with `error` set when it does nothing at all.
+bool Playerbot_GearPlayer(Player* player, uint32 slotMask, uint32 quality, std::string const& spec, std::string& error)
 {
     // The same two refusals InitEquipment makes silently.
     if (player->GetLevel() < 5)
@@ -3679,7 +3680,17 @@ bool Playerbot_GearPlayer(Player* player, uint32 slotMask, uint32 quality, std::
         error = "gear needs level 5";
         return false;
     }
-    if (!sRandomItemMgr.GetPlayerSpecId(player))
+    uint32 specId = 0;
+    if (!spec.empty())
+    {
+        specId = sRandomItemMgr.GetSpecId(player->getClass(), spec);
+        if (!specId)
+        {
+            error = "no spec " + spec + " for this class";
+            return false;
+        }
+    }
+    else if (!sRandomItemMgr.GetPlayerSpecId(player))
     {
         error = "no spec found for this class";
         return false;
@@ -3690,7 +3701,7 @@ bool Playerbot_GearPlayer(Player* player, uint32 slotMask, uint32 quality, std::
         return true;
 
     PlayerbotFactory factory(player, player->GetLevel(), quality);
-    factory.EquipGearForPlayer(slotMask);
+    factory.EquipGearForPlayer(slotMask, specId);
     return true;
 }
 

@@ -3064,7 +3064,7 @@ void PlayerbotFactory::InitEquipment(bool incremental, bool syncWithMaster, bool
 
     // Check spec before wiping gear — a specId==0 result after DestroyItemsVisitor would
     // leave the bot naked.
-    uint32 specId = sRandomItemMgr.GetPlayerSpecId(bot);
+    uint32 specId = specOverride ? specOverride : sRandomItemMgr.GetPlayerSpecId(bot);
     if (specId == 0)
     {
         sLog.outDetail("Bot #%d <%s> lvl %d class %d: InitEquipment skipped (specId=0)",

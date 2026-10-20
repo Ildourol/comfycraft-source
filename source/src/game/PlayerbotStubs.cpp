@@ -39,7 +39,7 @@ bool BotNpc_Dress(Player*, std::string const&, std::string& error)
     { error = "playerbots not built"; return false; }
 
 // Backs `.gear`: the item pick is the bots' own.
-bool Playerbot_GearPlayer(Player*, uint32, uint32, std::string& error)
+bool Playerbot_GearPlayer(Player*, uint32, uint32, std::string const&, std::string& error)
     { error = "gear needs the playerbots module"; return false; }
 
 // ChatHandler bot-command stubs. Chat.cpp registers `.bot`, `.rndbot`,

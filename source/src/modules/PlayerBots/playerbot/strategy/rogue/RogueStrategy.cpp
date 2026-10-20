@@ -510,6 +510,10 @@ void RoguePoisonsRaidStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& tr
     triggers.push_back(new TriggerNode(
         "apply deadly poison off hand",
         NextAction::array(0, new NextAction("apply deadly poison off hand", ACTION_NORMAL), NULL)));
+
+    triggers.push_back(new TriggerNode(
+        "apply instant poison off hand no deadly",
+        NextAction::array(0, new NextAction("apply instant poison off hand", ACTION_NORMAL), NULL)));
 }
 
 #endif
@@ -953,6 +957,10 @@ void RoguePoisonsRaidStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& tr
     triggers.push_back(new TriggerNode(
         "apply deadly poison off hand",
         NextAction::array(0, new NextAction("apply deadly poison off hand", ACTION_NORMAL), NULL)));
+
+    triggers.push_back(new TriggerNode(
+        "apply instant poison off hand no deadly",
+        NextAction::array(0, new NextAction("apply instant poison off hand", ACTION_NORMAL), NULL)));
 }
 
 #endif
@@ -1400,6 +1408,10 @@ void RoguePoisonsRaidStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& tr
     triggers.push_back(new TriggerNode(
         "apply deadly poison off hand",
         NextAction::array(0, new NextAction("apply deadly poison off hand", ACTION_NORMAL), NULL)));
+
+    triggers.push_back(new TriggerNode(
+        "apply instant poison off hand no deadly",
+        NextAction::array(0, new NextAction("apply instant poison off hand", ACTION_NORMAL), NULL)));
 }
 
 #endif

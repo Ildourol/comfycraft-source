@@ -2885,13 +2885,19 @@ uint32 RandomItemMgr::GetPlayerSpecId(Player* player)
 {
     EnsureInit();
 
-    std::string specName = GetPlayerSpecName(player);
+    return GetSpecId(player->getClass(), GetPlayerSpecName(player));
+}
+
+uint32 RandomItemMgr::GetSpecId(uint8 playerClass, std::string const& specName)
+{
+    EnsureInit();
+
     if (specName.empty())
         return 0;
 
-    for (auto itr : m_weightScales)
+    for (auto const& itr : m_weightScales)
     {
-        if (itr.second.info.name == specName && itr.second.info.classId == player->getClass())
+        if (itr.second.info.name == specName && itr.second.info.classId == playerClass)
             return itr.second.info.id;
     }
     return 0;

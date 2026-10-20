@@ -3686,10 +3686,21 @@ bool ComfyCommands::HandleSetLevelCommand(ChatHandler* handler, char* args)
 }
 
 // PlayerbotMgr.cpp, stubbed in PlayerbotStubs.cpp. The bots' item pick, run on
-// a player for the slots in slotMask.
-extern bool Playerbot_GearPlayer(Player* player, uint32 slotMask, uint32 quality, std::string& error);
+// a player for the slots in slotMask, for a spec by name or, when spec is
+// empty, the spec the talents give.
+extern bool Playerbot_GearPlayer(Player* player, uint32 slotMask, uint32 quality, std::string const& spec, std::string& error);
 
-// .gear <replace | fill | bags> <any | green | blue | epic> [$playername]
+// The weight scale names in tw_world.ai_playerbot_weightscales. Only the word
+// is checked here; the module refuses a spec of another class.
+static char const* const GEAR_SPECS[] =
+{
+    "arms", "fury", "prot", "holy", "retrib", "beast", "marks", "surv",
+    "assas", "combat", "subtle", "disc", "shadow", "elem", "enhance", "resto",
+    "arcane", "fire", "frost", "afflic", "demo", "destro",
+    "balance", "feraltank", "feraldps",
+};
+
+// .gear <replace | fill | bags> <any | green | blue | epic> [spec] [$playername]
 //
 // Random gear for the character's level, chosen the way `.bot gear` chooses a
 // bot's (class, spec, level), on an ONLINE player. The three modes differ only
@@ -3700,7 +3711,8 @@ extern bool Playerbot_GearPlayer(Player* player, uint32 slotMask, uint32 quality
 //   bags     every worn item goes to the bags first, by mail when they are
 //            full (AutoUnequipItemFromSlot), then every slot gets an item
 // The shirt and the tabard are never touched. `any` is the bots' quality mix
-// for the level; a colour is that quality only.
+// for the level; a colour is that quality only. Without a spec the talents
+// pick it, and a druid with no talents counts as balance.
 bool ComfyCommands::HandleGearCommand(ChatHandler* handler, char* args)
 {
     char* modeArg = handler->ExtractLiteralArg(&args);
@@ -3724,6 +3736,17 @@ bool ComfyCommands::HandleGearCommand(ChatHandler* handler, char* args)
         quality = ITEM_QUALITY_EPIC;
     else
         return false;
+
+    // A literal match consumes nothing on a miss, so a name after it is safe.
+    std::string spec;
+    for (char const* name : GEAR_SPECS)
+    {
+        if (handler->ExtractLiteralArg(&args, name))
+        {
+            spec = name;
+            break;
+        }
+    }
 
     Player* target = nullptr;
     if (*args)
@@ -3811,7 +3834,7 @@ bool ComfyCommands::HandleGearCommand(ChatHandler* handler, char* args)
     }
 
     std::string error;
-    if (!Playerbot_GearPlayer(target, mask, quality, error))
+    if (!Playerbot_GearPlayer(target, mask, quality, spec, error))
     {
         handler->PSendSysMessage("%s: %s.", target->GetName(), error.c_str());
         handler->SetSentErrorMessage(true);
@@ -15268,7 +15291,7 @@ namespace
         { "house template",    ".house template | entrance | furniture ...   house building tools" },
         { "add_dressing_room", ".add_dressing_room <id>   a saved dressing room look, into your bags" },
         { "setlevel",          ".setlevel <level> [name]   set a level, up or down" },
-        { "gear",              ".gear replace | fill | bags  any | green | blue | epic [name]   random gear for the level" },
+        { "gear",              ".gear replace | fill | bags  any | green | blue | epic [spec] [name]   random gear for the level" },
         { "setspeed",          ".setspeed <rate> [name]   walk, run and swim speed, 1 is normal, until the next login" },
         { "levelcap",          ".levelcap [level]   the level XP stops at, or set it (0 is none)" },
         { "flightmode",        ".flightmode [on | off]   whether GM flight is on, or set it" },

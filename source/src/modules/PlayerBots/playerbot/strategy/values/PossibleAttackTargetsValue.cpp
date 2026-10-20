@@ -27,19 +27,12 @@ std::list<ObjectGuid> PossibleAttackTargetsValue::Calculate()
                 getOne = stoi(qualifier);
             }
 
-            if (getOne)
-            {
-                // Try to get one possible attack target
-                result = AI_VALUE2(std::list<ObjectGuid>, "attackers", 1);
-                RemoveNonThreating(result, getOne);
-            }
-
-            // If the one possible attack target failed, retry with multiple attackers
-            if (result.empty())
-            {
-                result = AI_VALUE(std::list<ObjectGuid>, "attackers");
-                RemoveNonThreating(result, getOne);
-            }
+            // One target is the first of the full list that is not under crowd
+            // control. It was filtered from "attackers" with qualifier 1, a list
+            // of one: when that one was a sheep, the last-resort bucket below
+            // gave it back, and a dps broke the sheep with other mobs alive.
+            result = AI_VALUE(std::list<ObjectGuid>, "attackers");
+            RemoveNonThreating(result, getOne);
         }
     }
 
@@ -117,6 +110,24 @@ void PossibleAttackTargetsValue::RemoveNonThreating(std::list<ObjectGuid>& targe
         }
         else if(!breakableCC.empty())
         {
+            // THE PLAYER BREAKS THE LAST SHEEP (2026-10-20, the owner's call).
+            //
+            // With the other mobs dead, the mage broke her own sheep at once,
+            // and the mob ran at her. A bot led by a real player now leaves a
+            // sheep, sap or shackle alone: the player breaks it with the first
+            // hit, or it wears off, and the mob is an ordinary target again.
+            // It is not cast again on a last enemy (CcTargetValue), so this
+            // cannot wait forever. Frozen and gouged mobs still come back: those
+            // are short, and are cast mid-fight.
+            if (ai->HasRealPlayerMaster())
+            {
+                breakableCC.remove_if([this](const ObjectGuid& guid)
+                {
+                    Unit* target = ai->GetUnit(guid);
+                    return target && (target->IsPolymorphed() || ai->HasAura("sap", target) || ai->HasAura("shackle undead", target));
+                });
+            }
+
             targets = breakableCC;
         }
     }

@@ -207,8 +207,6 @@ std::list<ObjectGuid> AttackersValue::Calculate()
     
     calculatePos = bot;
 
-    std::set<Unit*> targets;
-
     // Check if we only need one attacker
     bool getOne = false;
     if (!qualifier.empty())
@@ -216,30 +214,55 @@ std::list<ObjectGuid> AttackersValue::Calculate()
         getOne = stoi(qualifier);
     }
 
-    std::set<ObjectGuid> invalidTargets;
-
-    // Add the targets of the bot
-    AddTargetsOf(bot, targets, invalidTargets, getOne);
-
-    // Don't check for group member targets if we only need one
-    if (targets.empty() || !getOne)
+    // ONE TARGET IS THE FIRST OF THE FULL LIST, AFTER THE HOLD (2026-10-20).
+    //
+    // This stopped at the first valid target, and the bot's own came first. The
+    // hold then took that one off, and the list was empty: "has attackers" was
+    // false and the bot stayed out of combat. A mage sheeped an add, the sheep
+    // was the first target and was held (not in melee with the player), and she
+    // stood 55 s while the player fought the other mob. Any held mob could hide
+    // a real one the same way.
+    if (getOne)
     {
-        // Add the targets of the members of the group
-        Group* group = bot->GetGroup();
-        if (group && !bot->InBattleGround())
-        {
-            AddTargetsOf(group, targets, invalidTargets, getOne);
-        }
+        Value<std::list<ObjectGuid>>* full = context->GetValue<std::list<ObjectGuid>>("attackers");
+        const std::list<ObjectGuid> all = full->Get();
+        if (!all.empty())
+            result.push_back(all.front());
 
-        Player* master = GetMaster();
-        if (master && !bot->InBattleGround() && (!group || master->GetGroup() != group))
-            AddTargetsOf(master, targets, invalidTargets, getOne);
+        AttackersValue* fullValue = dynamic_cast<AttackersValue*>(full);
+        holdingApproach = fullValue && fullValue->IsHoldingApproach();
+        return result;
     }
 
-    // Convert the targets to guids
-    for (Unit* target : targets)
+    std::set<Unit*> targets;
+    std::set<ObjectGuid> invalidTargets;
+
+    // The bot's own targets first, then the group's, then the master's: the
+    // one-target list takes the front.
+    auto append = [&]()
     {
-        result.push_back(target->GetObjectGuid());
+        for (Unit* target : targets)
+            if (std::find(result.begin(), result.end(), target->GetObjectGuid()) == result.end())
+                result.push_back(target->GetObjectGuid());
+    };
+
+    // Add the targets of the bot
+    AddTargetsOf(bot, targets, invalidTargets, false);
+    append();
+
+    // Add the targets of the members of the group
+    Group* group = bot->GetGroup();
+    if (group && !bot->InBattleGround())
+    {
+        AddTargetsOf(group, targets, invalidTargets, false);
+        append();
+    }
+
+    Player* master = GetMaster();
+    if (master && !bot->InBattleGround() && (!group || master->GetGroup() != group))
+    {
+        AddTargetsOf(master, targets, invalidTargets, false);
+        append();
     }
 
     HoldApproaching(result);

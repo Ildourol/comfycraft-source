@@ -229,6 +229,7 @@ namespace ai
                 creators["apply instant poison off hand"] = [](PlayerbotAI* ai) { return new ApplyInstantPoisonTrigger(ai, false); };
                 creators["apply wound poison off hand"] = [](PlayerbotAI* ai) { return new ApplyWoundPoisonTrigger(ai, false); };
                 creators["apply anesthetic poison off hand"] = [](PlayerbotAI* ai) { return new ApplyAnestheticPoisonTrigger(ai, false); };
+                creators["apply instant poison off hand no deadly"] = [](PlayerbotAI* ai) { return new ApplyInstantPoisonNoDeadlyTrigger(ai, false); };
             }
         };
 

@@ -198,6 +198,8 @@ class RandomItemMgr
         std::vector<uint32> GetQuestIdsForItem(uint32 itemId);
         std::string GetPlayerSpecName(Player* player);
         uint32 GetPlayerSpecId(Player* player);
+        // The weight scale id for a class's spec by name ("feraldps"), 0 if none.
+        uint32 GetSpecId(uint8 playerClass, std::string const& specName);
         std::vector<uint32> GetGlyphs(uint8 playerClass) { return glyphCache.at(playerClass); }
     private:
         void BuildRandomItemCache();

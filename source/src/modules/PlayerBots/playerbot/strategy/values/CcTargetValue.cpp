@@ -287,6 +287,46 @@ bool ai::CcDefersToMage(PlayerbotAI* ai, std::string const& spell, Unit* marked)
 // It used to treat the mark as a preference and then guess for every unmarked
 // mob on the threat list, which made warlocks fear whatever was not being
 // tanked - and fear sends it running into the next pull.
+// Another enemy is in the fight besides the mark: on the attack list, running
+// at somebody in the group, or about to be pulled.
+static bool OtherEnemyInFight(PlayerbotAI* ai, Unit* marked)
+{
+    Player* bot = ai->GetBot();
+    AiObjectContext* context = ai->GetAiObjectContext();
+
+    if (PullStrategy::IsGroupPullRunning(ai))
+        return true;
+
+    if (PullStrategy* pull = PullStrategy::Get(ai))
+        if (pull->HasPullStarted())
+            return true;
+
+    const ObjectGuid markedGuid = marked->GetObjectGuid();
+
+    for (const ObjectGuid& guid : AI_VALUE(std::list<ObjectGuid>, "attackers"))
+        if (guid != markedGuid)
+            return true;
+
+    // The pull hold leaves a mob off the attack list while it runs in.
+    Player* master = ai->GetMaster();
+    for (const ObjectGuid& guid : AI_VALUE(std::list<ObjectGuid>, "possible targets no los"))
+    {
+        if (guid == markedGuid)
+            continue;
+
+        Unit* unit = ai->GetUnit(guid);
+        if (!unit || !unit->IsAlive())
+            continue;
+
+        Unit* victim = unit->GetVictim();
+        Player* victimPlayer = victim ? victim->GetCharmerOrOwnerPlayerOrPlayerItself() : nullptr;
+        if (victimPlayer && (victimPlayer == bot || victimPlayer == master || bot->IsInSameGroupWith(victimPlayer)))
+            return true;
+    }
+
+    return false;
+}
+
 Unit* CcTargetValue::Calculate()
 {
     std::list<ObjectGuid> possible = AI_VALUE(std::list<ObjectGuid>,"possible targets no los");
@@ -363,6 +403,15 @@ Unit* CcTargetValue::Calculate()
         return NULL;
 
     if (CcMarkIsTaken(ai, marked))
+        return NULL;
+
+    // THE LAST ENEMY IS KILLED, NOT CONTROLLED (2026-10-20).
+    //
+    // The moon mob was the only one left. The mage sheeped it, her damage
+    // target was the same mob, Arcane Missiles broke the sheep, and she sheeped
+    // it again: polymorph, missiles, polymorph, every 6 s. Crowd control is for
+    // holding one mob out while the group fights another.
+    if (!OtherEnemyInFight(ai, marked))
         return NULL;
 
     // Castability, but IGNORING RANGE - which also forgives line of sight.

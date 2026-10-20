@@ -1,6 +1,7 @@
 #pragma once
 #include "playerbot/strategy/actions/GenericActions.h"
 #include "playerbot/strategy/actions/UseItemAction.h"
+#include "RogueTriggers.h"
 
 namespace ai
 {
@@ -480,37 +481,37 @@ namespace ai
     class ApplyDeadlyPoisonAction : public ApplyPoisonAction
     {
     public:
-        ApplyDeadlyPoisonAction(PlayerbotAI* ai, bool inMainHand) : ApplyPoisonAction(ai, inMainHand, { 2892, 2893, 8984, 8985, 20844, 22053, 22054, 43232, 43233 }, "apply deadly poison") {}
+        ApplyDeadlyPoisonAction(PlayerbotAI* ai, bool inMainHand) : ApplyPoisonAction(ai, inMainHand, RoguePoisonItems::deadly, "apply deadly poison") {}
     };
 
     class ApplyCripplingPoisonAction : public ApplyPoisonAction
     {
     public:
-        ApplyCripplingPoisonAction(PlayerbotAI* ai, bool inMainHand) : ApplyPoisonAction(ai, inMainHand, { 3775, 3776 }, "apply crippling poison") {}
+        ApplyCripplingPoisonAction(PlayerbotAI* ai, bool inMainHand) : ApplyPoisonAction(ai, inMainHand, RoguePoisonItems::crippling, "apply crippling poison") {}
     };
 
     class ApplyMindPoisonAction : public ApplyPoisonAction
     {
     public:
-        ApplyMindPoisonAction(PlayerbotAI* ai, bool inMainHand) : ApplyPoisonAction(ai, inMainHand, { 5237, 6951, 9186 }, "apply mind poison") {}
+        ApplyMindPoisonAction(PlayerbotAI* ai, bool inMainHand) : ApplyPoisonAction(ai, inMainHand, RoguePoisonItems::mind, "apply mind poison") {}
     };
 
     class ApplyInstantPoisonAction : public ApplyPoisonAction
     {
     public:
-        ApplyInstantPoisonAction(PlayerbotAI* ai, bool inMainHand) : ApplyPoisonAction(ai, inMainHand, { 6947, 6949, 6950, 8926, 8927, 8928, 21927, 43230, 43231 }, "apply instant poison") {}
+        ApplyInstantPoisonAction(PlayerbotAI* ai, bool inMainHand) : ApplyPoisonAction(ai, inMainHand, RoguePoisonItems::instant, "apply instant poison") {}
     };
 
     class ApplyWoundPoisonAction : public ApplyPoisonAction
     {
     public:
-        ApplyWoundPoisonAction(PlayerbotAI* ai, bool inMainHand) : ApplyPoisonAction(ai, inMainHand, { 10918, 10920, 10921, 10922, 22055, 43234, 43235 }, "apply wound poison") {}
+        ApplyWoundPoisonAction(PlayerbotAI* ai, bool inMainHand) : ApplyPoisonAction(ai, inMainHand, RoguePoisonItems::wound, "apply wound poison") {}
     };
 
     class ApplyAnestheticPoisonAction : public ApplyPoisonAction
     {
     public:
-        ApplyAnestheticPoisonAction(PlayerbotAI* ai, bool inMainHand) : ApplyPoisonAction(ai, inMainHand, { 21835, 43237 }, "apply anesthetic poison") {}
+        ApplyAnestheticPoisonAction(PlayerbotAI* ai, bool inMainHand) : ApplyPoisonAction(ai, inMainHand, RoguePoisonItems::anesthetic, "apply anesthetic poison") {}
     };
 
     class UpdateRoguePveStrategiesAction : public UpdateStrategyDependenciesAction
