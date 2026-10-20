@@ -149,12 +149,22 @@ bool MovementAction::MoveNear(WorldObject* target, float distance)
              y = target->GetPositionY()+ sin(angle) * distance,
              z = target->GetPositionZ();
 #endif
+        // A spot well below the target is past an edge, not down a slope: on the
+        // Deadmines ship a spot a few yards off the deck took the floor 7 to 9 yd
+        // below as its height, and the companion walked off the deck to it.
+        if (z < target->GetPositionZ() - 4.0f)
+            continue;
         if (!bot->IsWithinLOS(x, y, z + bot->GetCollisionHeight(), true))
             continue;
         bool moved = MoveTo(target->GetMapId(), x, y, z);
         if (moved)
             return true;
     }
+
+    // No spot around the target passed: go to the target's own position.
+    if (bot->IsWithinLOSInMap(target, true) &&
+        MoveTo(target->GetMapId(), target->GetPositionX(), target->GetPositionY(), target->GetPositionZ()))
+        return true;
 
     //ai->TellError("All paths not in LOS");
     return false;
@@ -1089,11 +1099,21 @@ void MovementAction::DispatchMovement(TravelPath movePath, bool generatePath, bo
     {
         bool normalizeZ = true;
 
+        // A POINT JUST UNDER A ONE-SIDED FLOOR WENT TO THE GROUND BELOW IT
+        // (2026-10-19). UpdateAllowedPositionZ looks for the ground downward from
+        // the point. On the slanted Deadmines dock the navmesh path ran 0.4 yd
+        // under the planks, the search missed them and found the sea floor, and
+        // two points of a spline became z -2.0: the companion walked down through
+        // the deck. The search starts 1 yd above the point, and a result more than
+        // 2 yd from the path's own height is another level, so the path keeps it.
         for (auto& p : pointPath)
         {
             if (bot->GetTransport())
                 bot->GetTransport()->CalculatePassengerPosition(p.x, p.y, p.z);
-            bot->UpdateAllowedPositionZ(p.x, p.y, p.z);
+            float const pathZ = p.z;
+            float z = pathZ + 1.0f;
+            bot->UpdateAllowedPositionZ(p.x, p.y, z);
+            p.z = std::fabs(z - pathZ) > 2.0f ? pathZ : z;
             if (bot->GetTransport())
                 bot->GetTransport()->CalculatePassengerOffset(p.x, p.y, p.z);
         }

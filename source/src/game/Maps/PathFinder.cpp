@@ -500,6 +500,25 @@ void PathInfo::BuildPointPath(const float *startPoint, const float *endPoint, fl
             if (floor > INVALID_HEIGHT && point.z - floor < 2.5f && floor - point.z < 0.5f)
                 point.z = floor + 0.1f;
         }
+
+        // A straight leg between two points on the floor passes UNDER a convex
+        // edge: the top of the Deadmines ship's ramp. A follow re-planned there
+        // started below the surface, and the companion dropped through to the
+        // floor beneath. Where the floor at the middle of a leg is above the
+        // leg, a point goes on it; twice per leg at most.
+        for (int pass = 0; pass < 2; ++pass)
+        {
+            for (uint32 i = 1; i < m_pathPoints.size() && m_pathPoints.size() < MAX_POINT_PATH_LENGTH; ++i)
+            {
+                Vector3 const mid = (m_pathPoints[i - 1] + m_pathPoints[i]) * 0.5f;
+                float const floor = map->GetHeight(mid.x, mid.y, mid.z + 1.0f, true, 2.0f);
+                if (floor > INVALID_HEIGHT && floor > mid.z && floor - mid.z < 1.0f)
+                {
+                    m_pathPoints.insert(m_pathPoints.begin() + i, Vector3(mid.x, mid.y, floor + 0.1f));
+                    ++i;
+                }
+            }
+        }
         if (!m_pathPoints.empty())
             setActualEndPosition(m_pathPoints[m_pathPoints.size() - 1]);
     }

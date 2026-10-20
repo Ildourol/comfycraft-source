@@ -208,6 +208,10 @@ void PlayerbotTextMgr::AddLocalePriority(int32 locale)
 
 int32 PlayerbotTextMgr::GetLocalePriority()
 {
+    // ComfyCraft: bots always speak English. Upstream picks the locale with the most logins,
+    // but enUS is never counted, so one non-English client switched every bot on the server.
+    return -1;
+
     int32 topLocale = -1;
     uint32 tempCheck = 0;
 

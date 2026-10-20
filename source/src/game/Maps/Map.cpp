@@ -111,7 +111,11 @@ WorldSafeLocsEntry const* Map::GraveyardManagerStub::GetClosestGraveYard(float x
 
 void Map::LoadMapAndVMap(int gx, int gy)
 {
-    if (m_bLoadedGrids[gx][gx])
+    // [gx][gy], not [gx][gx] (upstream tortoise-wow 55d6df3a, 2026-10-19): with
+    // the wrong index a grid whose diagonal twin was loaded took no reference on
+    // its terrain and vmap data, which could then be unloaded under it or never
+    // loaded, and units fell through floors there.
+    if (m_bLoadedGrids[gx][gy])
         return;
 
     GridMap * pInfo = m_TerrainData->Load(gx, gy);
