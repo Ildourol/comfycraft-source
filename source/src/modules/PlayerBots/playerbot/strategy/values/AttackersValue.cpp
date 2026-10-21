@@ -6,6 +6,7 @@
 #include "PossibleTargetsValue.h"
 #include "EnemyPlayerValue.h"
 #include "playerbot/strategy/generic/PullStrategy.h"
+#include "playerbot/CompanionOwnership.h"
 
 using namespace ai;
 using namespace MaNGOS;
@@ -322,6 +323,24 @@ void AttackersValue::HoldApproaching(std::list<ObjectGuid>& result)
     const uint32 now = sWorld.GetCurrentMSTime();
     std::map<ObjectGuid, Approach> seen;
 
+    // AGGRO HOLDS NOTHING (2026-10-21, the owner's request). The hold suits a
+    // player who tanks. Out in the world the companions should go in on the
+    // player's first swing, cast or shot, which IsRealPlayerAttacking already
+    // lists. Every mob is marked released, so a switch to defend mid-fight
+    // does not hold one that is already being fought.
+    if (master && CompanionOwnership::IsAggro(master->GetGUIDLow()))
+    {
+        for (const ObjectGuid& guid : result)
+            seen[guid].held = false;
+
+        if (owner == this)
+            approaching.swap(seen);
+        else
+            for (const auto& entry : seen)
+                approaching[entry.first] = entry.second;
+        return;
+    }
+
     for (auto it = result.begin(); it != result.end();)
     {
         const ObjectGuid guid = *it;
@@ -515,9 +534,10 @@ void AttackersValue::AddTargetsOf(Player* player, std::set<Unit*>& targets, std:
         {
             // Auto attack sets the victim at any range, so a target with auto
             // attack on from thirty yards away is not a fight yet. It counts
-            // once the swing can land.
+            // once the swing can land, or at once in aggro (the same rule as
+            // IsRealPlayerAttacking).
             Unit* victim = player->GetVictim();
-            if (victim && player->CanReachWithMeleeAutoAttack(victim))
+            if (victim && (player->CanReachWithMeleeAutoAttack(victim) || CompanionOwnership::IsAggro(player->GetGUIDLow())))
                 units.insert(victim);
 
             // By guid, not getUnitTarget(): the spell keeps that pointer until
@@ -651,7 +671,11 @@ bool AttackersValue::IsRealPlayerAttacking(Unit* target, Player* player)
     if (!target || !player || GetBotAI(player))
         return false;
 
-    if (player->GetVictim() == target && player->CanReachWithMeleeAutoAttack(target))
+    // Auto attack sets the victim at any range. In defend it counts only in
+    // melee reach. In aggro it counts at once (2026-10-21, the owner's call):
+    // turning auto attack on is the order.
+    if (player->GetVictim() == target &&
+        (player->CanReachWithMeleeAutoAttack(target) || CompanionOwnership::IsAggro(player->GetGUIDLow())))
         return true;
 
     for (uint32 i = CURRENT_FIRST_NON_MELEE_SPELL; i < CURRENT_MAX_SPELL; ++i)

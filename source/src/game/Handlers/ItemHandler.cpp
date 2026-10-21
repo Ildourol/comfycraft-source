@@ -564,12 +564,37 @@ void WorldSession::HandleSellItemOpcode(WorldPacket & recv_data)
     if (!itemGuid || !GetPlayer()->IsInWorld() || IsSuspicious())
         return;
 
-    Creature *pCreature = GetPlayer()->GetNPCIfCanInteractWith(vendorGuid, UNIT_NPC_FLAG_VENDOR);
-    if (!pCreature)
+    /*
+     * A BOT NPC is a Player, so GetNPCIfCanInteractWith never finds it. The
+     * same four checks as the bot branch of SendListInventory: the window and
+     * the sale must agree about who is a vendor. `pCreature` stays nullptr for
+     * a bot, and the error packets below then carry an empty vendor guid.
+     */
+    Creature *pCreature = nullptr;
+
+    if (vendorGuid.IsPlayer())
     {
-        DEBUG_LOG("WORLD: HandleSellItemOpcode - %s not found or you can't interact with him.", vendorGuid.GetString().c_str());
-        _player->SendSellError(SELL_ERR_CANT_FIND_VENDOR, nullptr, itemGuid, 0);
-        return;
+        Player* pNpc = GetPlayer()->GetMap()->GetPlayer(vendorGuid);
+
+        if (!pNpc || pNpc == GetPlayer() || !pNpc->IsAlive() ||
+            !pNpc->HasFlag(UNIT_NPC_FLAGS, UNIT_NPC_FLAG_VENDOR) ||
+            !GetPlayer()->IsWithinDistInMap(pNpc, INTERACTION_DISTANCE) ||
+            pNpc->IsHostileTo(GetPlayer()))
+        {
+            DEBUG_LOG("WORLD: HandleSellItemOpcode - %s is not a reachable bot NPC vendor.", vendorGuid.GetString().c_str());
+            _player->SendSellError(SELL_ERR_CANT_FIND_VENDOR, nullptr, itemGuid, 0);
+            return;
+        }
+    }
+    else
+    {
+        pCreature = GetPlayer()->GetNPCIfCanInteractWith(vendorGuid, UNIT_NPC_FLAG_VENDOR);
+        if (!pCreature)
+        {
+            DEBUG_LOG("WORLD: HandleSellItemOpcode - %s not found or you can't interact with him.", vendorGuid.GetString().c_str());
+            _player->SendSellError(SELL_ERR_CANT_FIND_VENDOR, nullptr, itemGuid, 0);
+            return;
+        }
     }
 
     // remove fake death

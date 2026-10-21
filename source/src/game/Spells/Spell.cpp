@@ -3768,7 +3768,7 @@ void Spell::cancel()
 
 void Spell::cast(bool skipCheck)
 {
-    // BotActionLog hook: cast start. Logged BEFORE the MAX_SPELL_ID guard
+    // BotActionLog hook: cast start. Logged BEFORE the spell id guard
     // so even rejected casts show up.
     {
         extern void BotActionLog_LogCastStart(WorldObject* caster, uint32 spellId, uint64 targetGuidRaw, uint32 castTimeMs);
@@ -3777,7 +3777,11 @@ void Spell::cast(bool skipCheck)
         BotActionLog_LogCastStart(m_caster, m_spellInfo->Id, tgt.GetRawValue(), m_casttime);
     }
 
-    if (m_spellInfo->Id <= 0 || m_spellInfo->Id > MAX_SPELL_ID)
+    // No MAX_SPELL_ID (60000) cap here any more: our spells start at 100000
+    // (the reagent-free enchants are 100100-100139), and the cap stopped their
+    // casts at the end of the cast bar with no error. GetSpellEntry below is
+    // bounded by the spell table itself.
+    if (m_spellInfo->Id <= 0)
         return;
 
     SpellEntry const* spellInfo = sSpellMgr.GetSpellEntry(m_spellInfo->Id);

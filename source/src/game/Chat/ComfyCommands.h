@@ -21,6 +21,7 @@ struct ComfyCommands
     // Commands/Commands.cpp
     static bool HandleComfyHelpCommand(ChatHandler* handler, char* args);
     static bool HandleComfyNpcsCommand(ChatHandler* handler, char* args);
+    static bool HandleMoonstoneCommand(ChatHandler* handler, char* args);
     static bool HandleGuildHouseCommand(ChatHandler* handler, char* args);
     static bool HandleModifyNpcFlagCommand(ChatHandler* handler, char* args);
     static bool HandleSetLevelCommand(ChatHandler* handler, char* args);
@@ -41,6 +42,7 @@ struct ComfyCommands
     static bool HandleReloadCustomMerchantCommand(ChatHandler* handler, char* args);
     static bool HandleReloadDialogScenesCommand(ChatHandler* handler, char* args);
     static bool HandleReloadGameObjectTemplateCommand(ChatHandler* handler, char* args);
+    static bool HandleReloadMoonstonePayoutCommand(ChatHandler* handler, char* args);
     static bool HandleReloadRentedMountCommand(ChatHandler* handler, char* args);
     static bool HandleReloadStartZonesCommand(ChatHandler* handler, char* args);
     static bool HandleGMTicketRespondCommand(ChatHandler* handler, char* args);
@@ -118,4 +120,5 @@ struct ComfyCommands
     // playerbot/CompanionOwnership.cpp, also stubbed in PlayerbotStubs.cpp.
     static bool HandleCompanionsCommand(ChatHandler* handler, char* args);
     static bool HandleCompanionDebugCommand(ChatHandler* handler, char* args);
+    static bool HandleCompanionOrderCommand(ChatHandler* handler, char* args);
 };

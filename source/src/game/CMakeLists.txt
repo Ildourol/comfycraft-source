@@ -42,6 +42,10 @@ set (game_SRCS
     LootMgr.cpp
     LuaScene.cpp
     LuaScene.h
+    Moonstones.cpp
+    Moonstones.h
+    MountRental.cpp
+    MountRental.h
     ObjectAccessor.cpp
     ObjectGridLoader.cpp
     ObjectGuid.cpp

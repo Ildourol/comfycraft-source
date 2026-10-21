@@ -33,6 +33,7 @@
 #include "CreatureGroups.h"
 #include "InstanceData.h"
 #include "BotNpc.h"
+#include "MountRental.h"
 
 #include <algorithm>
 
@@ -843,6 +844,23 @@ void ScriptMgr::LoadScripts(ScriptMapMap& scripts, const char* tablename)
                 if (tmp.storyFlag.forget > 1)
                 {
                     sLog.outErrorDb("Table `%s` has datalong2 = %u in SCRIPT_COMMAND_SET_STORY_FLAG for script id %u, which is neither set (0) nor forget (1).", tablename, tmp.storyFlag.forget, tmp.id);
+                    continue;
+                }
+                break;
+            }
+            case SCRIPT_COMMAND_RENT_MOUNT:
+            {
+                // A spell that is not a mount would be cast on the player for
+                // free, and the clamp would put a timer on whatever it is.
+                SpellEntry const* spell = sSpellMgr.GetSpellEntry(tmp.rentMount.spellId);
+                if (!spell || !spell->HasAura(SPELL_AURA_MOUNTED))
+                {
+                    sLog.outErrorDb("Table `%s` has datalong = %u in SCRIPT_COMMAND_RENT_MOUNT for script id %u, which is not a mount spell.", tablename, tmp.rentMount.spellId, tmp.id);
+                    continue;
+                }
+                if (tmp.rentMount.minutes > MAX_RENT_MOUNT_MINUTES)
+                {
+                    sLog.outErrorDb("Table `%s` has datalong2 = %u in SCRIPT_COMMAND_RENT_MOUNT for script id %u, more than %u minutes.", tablename, tmp.rentMount.minutes, tmp.id, MAX_RENT_MOUNT_MINUTES);
                     continue;
                 }
                 break;

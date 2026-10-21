@@ -1,5 +1,6 @@
 #include "scriptPCH.h"
 #include "Chat.h"
+#include "MountRental.h"
 #include "Utilities/EventProcessor.h"
 #include <algorithm>
 
@@ -1888,13 +1889,6 @@ bool GossipSelect_rented_mount(Player* pPlayer, Creature* pCreature, uint32 /*ui
         return true;
     }
 
-    if (pPlayer->GetMoney() < rented->cost)
-    {
-        pPlayer->GetSession()->SendNotification("You don't have enough money!");
-        pPlayer->CLOSE_GOSSIP_MENU();
-        return true;
-    }
-
     // RENT THE ANIMAL THAT IS STANDING THERE, not the one in the row.
     //
     // Four renters wear several models -- Gadgetzan's Riding Tiger has four cat
@@ -1913,50 +1907,11 @@ bool GossipSelect_rented_mount(Player* pPlayer, Creature* pCreature, uint32 /*ui
             if (uint32 forThisModel = sObjectMgr.GetRentedMountSpellForDisplay(pCreature->GetDisplayId()))
                 spellId = forThisModel;
 
-    // INSTANT, or the clamp below never runs. 82 of the rows use a real mount
-    // spell with a 3 s cast time, and a triggered spell with a cast time waits
-    // for a later tick (Spell::prepare). GetSpellAuraHolder then found nothing,
-    // so the player got the mount 3 s late, free, permanent and at the skill
-    // speed. The no-cast-time flag makes Spell::prepare cast it now.
-    bool const hadNoCastTime = pPlayer->HasOption(PLAYER_CHEAT_NO_CAST_TIME);
-    pPlayer->EnableOption(PLAYER_CHEAT_NO_CAST_TIME);
-    pPlayer->CastSpell(pPlayer, spellId, true);
-    if (!hadNoCastTime)
-        pPlayer->RemoveOption(PLAYER_CHEAT_NO_CAST_TIME);
-
-    // THE MONEY COMES OUT AFTER THE CAST LANDS, not before. A mount spell has
-    // conditions of its own -- indoors, in combat, shapeshifted -- and the old
-    // code took the 50 copper whether or not the player ended up on a horse.
-    // spellId, NOT rented->spellId: miss that and the clamp silently finds no
-    // holder whenever the display index picked a different spell, which hands
-    // out a permanent 60% mount for 50 copper.
-    SpellAuraHolder* holder = pPlayer->GetSpellAuraHolder(spellId);
-    if (!holder)
-    {
-        pPlayer->CLOSE_GOSSIP_MENU();
-        return true;
-    }
-
-    if (rented->duration)
-    {
-        // SetAuraMaxDuration clears the permanent flag for us, which is what
-        // turns a real mount spell (duration index 21, -1) into a rental.
-        holder->SetAuraMaxDuration(rented->duration);
-        holder->SetAuraDuration(rented->duration);
-        holder->UpdateAuraDuration();
-    }
-
-    // The speed aura's handler gives a mount with a timer the rental speed by
-    // level. It ran during the cast, while a real mount spell was still
-    // permanent, so run it again now that the holder has a timer. The handler
-    // also calls UpdateSpeed. Which effect index carries the speed is not fixed
-    // across mount spells, so look rather than assume.
-    for (uint32 i = 0; i < MAX_EFFECT_INDEX; ++i)
-        if (Aura* aura = holder->GetAuraByEffectIndex(SpellEffectIndex(i)))
-            if (aura->GetModifier()->m_auraname == SPELL_AURA_MOD_INCREASE_MOUNTED_SPEED)
-                aura->HandleAuraModIncreaseMountedSpeed(true, true);
-
-    pPlayer->ModifyMoney(-int32(rented->cost));
+    // The cast, the clamp and the money are MountRental.cpp, shared with the
+    // dialog editor's "rents a mount" action. spellId, NOT rented->spellId:
+    // the clamp looks the holder up by the spell that was cast, and a miss
+    // hands out a permanent mount whenever the display index picked another.
+    RentMount(pPlayer, spellId, rented->duration, rented->cost);
     pPlayer->CLOSE_GOSSIP_MENU();
     return true;
 }

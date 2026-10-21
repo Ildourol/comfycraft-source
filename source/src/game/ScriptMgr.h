@@ -412,6 +412,20 @@ enum eScriptCommand
     SCRIPT_COMMAND_SET_STORY_FLAG           = 101,          // source = Player (from provided source or target)
                                                             // datalong = story_flag.id, 300000-300999
                                                             // datalong2 = 0 set, 1 forget
+    /*
+     * OURS. The dialog editor's "rents a mount". MountRental.cpp does the
+     * work, the same function the stables (rented_mount) call.
+     */
+    SCRIPT_COMMAND_RENT_MOUNT               = 102,          // source = Player (from provided source or target)
+                                                            // datalong = mount spell id
+                                                            // datalong2 = minutes, 0 = until they dismount
+                                                            // datalong3 = copper
+    /*
+     * OURS. The dialog editor's "trades gear for Rune Chips". Moonstones.h
+     * has the whole flow: this only remembers the NPC and puts ComfyUI in
+     * pick mode.
+     */
+    SCRIPT_COMMAND_MOONSTONE_TRADE          = 103,          // source = Player and the NPC, either way round
 
     SCRIPT_COMMAND_MAX,
 
@@ -1237,6 +1251,13 @@ struct ScriptInfo
             uint32 flagId;                                  // datalong: story_flag.id, 300000-300999
             uint32 forget;                                  // datalong2: 0 set, 1 forget
         } storyFlag;
+
+        struct                                              // SCRIPT_COMMAND_RENT_MOUNT (102)
+        {
+            uint32 spellId;                                 // datalong: a spell with SPELL_AURA_MOUNTED
+            uint32 minutes;                                 // datalong2: 0 = no timer
+            uint32 cost;                                    // datalong3: copper
+        } rentMount;
 
         struct
         {

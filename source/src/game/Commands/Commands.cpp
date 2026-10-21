@@ -11,6 +11,7 @@
 #include "Chat.h"
 #include "ComfyCommands.h"
 #include "CustomMerchantMgr.h"
+#include "Moonstones.h"
 #include "LevelCap.h"
 #include "LootLuck.h"
 #include "BotNpc.h"
@@ -15387,6 +15388,7 @@ namespace
     {
         { "comfyhelp",         ".comfyhelp   this list" },
         { "comfynpcs",         ".comfynpcs   send ComfyUI the bot NPC names (the addon sends this)" },
+        { "moonstone",         ".moonstone <bag> <slot>   trade one item for Rune Chips (the addon sends this)" },
         { "bug",               ".bug <text>   file a bug report to the website" },
         { "suggest",           ".suggest <text>   file a suggestion to the website" },
         { "house go",          ".house go | visit <name> | reset   your house, or somebody else's" },
@@ -15404,6 +15406,7 @@ namespace
         { "flightmode",        ".flightmode [on | off]   whether GM flight is on, or set it" },
         { "companions",        ".companions   name your companions" },
         { "hire",              ".hire tank | healer | dps [class [spec]], .hire dismiss   a companion at your level, as Elowen hires" },
+        { "cc",                ".cc attack | pull | follow | stay | flee | summon   an order to the companions in your group, with nothing in chat; .cc aggro | defend | mode   whether they wait for a pull to arrive" },
         { "ccdebug",           ".ccdebug [name] on | off | quiet   a companion's debug log, server\\companion-logs (your target if no name); quiet keeps it out of chat" },
         { "npcbot",            ".npcbot place | move | dress | menu | idle | emote | unplace | info <name>, .npcbot list" },
         { "obj",               ".obj list | info | near [all] | where | go | place (add) | select | unselect | move (drag) | turn | nudge | rotate | scale | remove (del)   Workshop objects by #id, any spawn by g<guid>" },
@@ -15417,7 +15420,7 @@ namespace
         { "ticket respond",    ".ticket respond <id> <text>   answer a GM ticket (\\n is a new line)" },
         { "send letter",       ".send letter <name> <copper> <item[:count]|-> <subject>|<text>   a GM letter (console)" },
         { "reload bot_npc",    "reload bot_npc | broadcast_text | custom_merchant | dialog_scenes | "
-                               "gameobject_template | rented_mount | start_zones   (console)" },
+                               "gameobject_template | moonstone_payout | rented_mount | start_zones   (console)" },
     };
 }
 
@@ -15426,6 +15429,19 @@ namespace
 bool ComfyCommands::HandleComfyNpcsCommand(ChatHandler* handler, char* /*args*/)
 {
     sBotNpcMgr.SendNamesTo(handler->m_session ? handler->m_session->GetPlayer() : nullptr);
+    return true;
+}
+
+// ComfyUI's pick mode sends one per click on a bag item (Moonstones.h). The
+// bag is the client's 0-4 and the slot counts from 1.
+bool ComfyCommands::HandleMoonstoneCommand(ChatHandler* handler, char* args)
+{
+    Player* player = handler->m_session ? handler->m_session->GetPlayer() : nullptr;
+    uint32 bag, slot;
+    if (!player || !handler->ExtractUInt32(&args, bag) || !handler->ExtractUInt32(&args, slot))
+        return false;
+
+    sMoonstoneMgr.Trade(player, bag, slot);
     return true;
 }
 
@@ -19851,6 +19867,14 @@ bool ComfyCommands::HandleReloadRentedMountCommand(ChatHandler* handler, char* /
     return true;
 }
 
+// The payout bands, and the list of items that shops sell (Moonstones.h).
+bool ComfyCommands::HandleReloadMoonstonePayoutCommand(ChatHandler* handler, char* /*args*/)
+{
+    sMoonstoneMgr.Load();
+    handler->SendSysMessage("DB table `moonstone_payout` reloaded.");
+    return true;
+}
+
 // The website's Start zones page writes the place columns of `playercreateinfo`
 // and sends this. It re-reads only map, zone, position and orientation. The
 // items, spells, actions and level stats in PlayerInfo stay as loaded, and a
@@ -20184,6 +20208,9 @@ bool ComfyCommands::HandleReloadCustomMerchantCommand(ChatHandler* handler, char
     sLog.outInfo("Re-Loading `custom_merchant` Table!");
     sCustomMerchantMgr.Load();
     handler->SendSysMessage("DB table `custom_merchant` reloaded.");
+
+    // An item a shop sells earns no Rune Chips (Moonstones.h).
+    sMoonstoneMgr.LoadShopItems();
     return true;
 }
 
@@ -20206,6 +20233,9 @@ bool ChatHandler::HandleReloadNpcVendorCommand(char* /*args*/)
     sLog.outInfo("Re-Loading `npc_vendor` Table!");
     sObjectMgr.LoadVendors();
     SendSysMessage("DB table `npc_vendor` reloaded.");
+
+    // An item a shop sells earns no Rune Chips (Moonstones.h).
+    sMoonstoneMgr.LoadShopItems();
     return true;
 }
 

@@ -5,6 +5,7 @@
 #include "Chat/Chat.h"
 #include "Chat/ComfyCommands.h"
 #include "Database/DatabaseEnv.h"
+#include "Group/Group.h"
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
 #include "Player.h"
@@ -49,6 +50,9 @@ namespace CompanionOwnership
 
         // Companions on their way back from a park. See MarkReturning.
         std::set<uint32> s_returning;
+
+        // Players whose companions are on aggro. See SetAggro.
+        std::set<uint32> s_aggro;
 
         // Guards every container above. Owners on different maps call in from
         // their own map threads at once: restores and dismissal drains after a
@@ -419,6 +423,21 @@ namespace CompanionOwnership
         return out;
     }
 
+    void SetAggro(uint32 playerGuid, bool on)
+    {
+        WriteLock lock(s_lock);
+        if (on)
+            s_aggro.insert(playerGuid);
+        else
+            s_aggro.erase(playerGuid);
+    }
+
+    bool IsAggro(uint32 playerGuid)
+    {
+        ReadLock lock(s_lock);
+        return s_aggro.count(playerGuid) != 0;
+    }
+
     std::vector<uint32> TakeQueuedDismissals(uint32 ownerGuid)
     {
         std::vector<uint32> out;
@@ -505,6 +524,7 @@ bool ComfyCommands::HandleCompanionsCommand(ChatHandler* handler, char* args)
     if (args && strcmp(args, "sync") == 0)
     {
         me->SendAddonMessage("CCOMP", list);
+        me->SendAddonMessage("CCMODE", CompanionOwnership::IsAggro(me->GetGUIDLow()) ? "aggro" : "defend");
         return true;
     }
 
@@ -591,5 +611,75 @@ bool ComfyCommands::HandleCompanionDebugCommand(ChatHandler* handler, char* args
             quiet ? ", file only" : "", bot->GetName());
     else
         handler->PSendSysMessage("Debug off for %s.", bot->GetName());
+    return true;
+}
+
+// `.cc <order>`: a companion order with nothing in chat (2026-10-21), for the
+// bar and for a macro. A party line reached only the companions led by the
+// player who said it. This goes to every companion in the group, through the
+// same gate in PlayerbotAI::RunCommand, and the replies are still whispers.
+// Solo, it goes to the target if that is a companion.
+//
+// `.cc aggro`, `.cc defend` and `.cc mode` (which swaps the two) set the
+// caller's companion mode instead (CompanionOwnership::SetAggro). Each answers
+// with one line and on the CCMODE addon prefix, for the bar's button.
+bool ComfyCommands::HandleCompanionOrderCommand(ChatHandler* handler, char* args)
+{
+    Player* me = handler->m_session ? handler->m_session->GetPlayer() : nullptr;
+    if (!me)
+    {
+        handler->SendSysMessage("In game only.");
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+
+    std::string order = args ? args : "";
+    order.erase(0, order.find_first_not_of(" \t"));
+    order.erase(order.find_last_not_of(" \t") + 1);
+    if (order.empty())
+    {
+        handler->SendSysMessage("Syntax: .cc attack | pull | follow | stay | flee | summon | aggro | defend | mode");
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+
+    std::string word = order;
+    std::transform(word.begin(), word.end(), word.begin(), ::tolower);
+    if (word == "aggro" || word == "defend" || word == "mode")
+    {
+        const bool aggro = word == "mode" ? !CompanionOwnership::IsAggro(me->GetGUIDLow()) : word == "aggro";
+        CompanionOwnership::SetAggro(me->GetGUIDLow(), aggro);
+        me->SendAddonMessage("CCMODE", aggro ? "aggro" : "defend");
+        handler->SendSysMessage(aggro ? "Aggro: companions attack when you do." :
+            "Defend: companions wait until a mob reaches the group.");
+        return true;
+    }
+
+    std::vector<Player*> to;
+    Group* group = me->GetGroup();
+    if (group)
+    {
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->getSource();
+            if (member && member != me && GetBotAI(member) && CompanionOwnership::IsCompanion(member->GetGUIDLow()))
+                to.push_back(member);
+        }
+    }
+    else if (Player* target = handler->GetSelectedPlayer())
+    {
+        if (target != me && GetBotAI(target) && CompanionOwnership::IsCompanion(target->GetGUIDLow()))
+            to.push_back(target);
+    }
+
+    if (to.empty())
+    {
+        handler->SendSysMessage(group ? "No companion in your group." : "Target a companion, or group with one.");
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+
+    for (Player* bot : to)
+        GetBotAI(bot)->HandleCommand(group ? CHAT_MSG_PARTY : CHAT_MSG_WHISPER, order, *me, LANG_UNIVERSAL);
     return true;
 }

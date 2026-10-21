@@ -1088,6 +1088,8 @@ class Map : public GridRefManager<NGridType>
         bool ScriptCommand_TakeMoney(ScriptInfo const& script, WorldObject* source, WorldObject* target);
         bool ScriptCommand_TeleportRandom(ScriptInfo const& script, WorldObject* source, WorldObject* target);
         bool ScriptCommand_SetStoryFlag(ScriptInfo const& script, WorldObject* source, WorldObject* target);
+        bool ScriptCommand_RentMount(ScriptInfo const& script, WorldObject* source, WorldObject* target);
+        bool ScriptCommand_MoonstoneTrade(ScriptInfo const& script, WorldObject* source, WorldObject* target);
 
         // Add any new script command functions to the array.
         const ScriptCommandFunction m_ScriptCommands[SCRIPT_COMMAND_MAX] =
@@ -1194,6 +1196,8 @@ class Map : public GridRefManager<NGridType>
             &Map::ScriptCommand_TakeMoney,              // 99
             &Map::ScriptCommand_TeleportRandom,         // 100
             &Map::ScriptCommand_SetStoryFlag,           // 101
+            &Map::ScriptCommand_RentMount,              // 102
+            &Map::ScriptCommand_MoonstoneTrade,         // 103
         };
 
     public:

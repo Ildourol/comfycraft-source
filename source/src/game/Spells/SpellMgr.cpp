@@ -3480,6 +3480,61 @@ static void ClearComfyOutdoorsOnly(SpellEntryMap& spells)
             spells[id]->Attributes &= ~SPELL_ATTR_OUTDOORS_ONLY;
 }
 
+// ComfyCraft: reagent-free copies of enchants, cast by the Rune Chip scrolls
+// (sql/custom/168). The client checks reagents and the rod from its own
+// Spell.dbc before it sends the cast, so patches/build-patch-v.js
+// (REAGENT_FREE) makes the same copies in the client's copy. Keep the two
+// lists the same. Made after spell_extra, so a copy carries its patches.
+static void AddComfyReagentFreeCopies(SpellEntryMap& spells)
+{
+    static uint32 const pairs[][2] =
+    {
+        // { copy, the real enchant }
+        { 100100,  7788 }, { 100101,  7786 }, { 100102, 13503 },            // Weapon
+        { 100103, 45071 }, { 100104,  7745 }, { 100105,  7793 },            // 2H Weapon
+        { 100106, 13380 }, { 100107, 13529 },
+        { 100108,  7420 }, { 100109,  7443 }, { 100110,  7426 },            // Chest
+        { 100111,  7748 }, { 100112,  7776 }, { 100113,  7857 },
+        { 100114, 13538 }, { 100115, 13607 }, { 100116, 13626 },
+        { 100117,  7428 }, { 100118,  7457 }, { 100119,  7766 },            // Bracer
+        { 100120,  7779 }, { 100121,  7782 }, { 100122,  7859 },
+        { 100123, 13501 }, { 100124, 13536 }, { 100125, 13622 },
+        { 100126,  7454 }, { 100127,  7771 }, { 100128, 13419 },            // Cloak
+        { 100129, 13421 }, { 100130,  7861 }, { 100131, 13522 },
+        { 100132,  7863 }, { 100133,  7867 },                               // Boots
+        { 100134, 13612 }, { 100135, 13617 }, { 100136, 13620 },            // Gloves
+        { 100137, 13378 }, { 100138, 13464 }, { 100139, 13485 },            // Shield
+    };
+
+    uint32 made = 0;
+    for (auto const& pair : pairs)
+    {
+        uint32 const copyId = pair[0], realId = pair[1];
+        if (realId >= spells.size() || !spells[realId])
+        {
+            sLog.outError("Reagent-free enchant %u: spell %u does not exist.", copyId, realId);
+            continue;
+        }
+
+        std::unique_ptr<SpellEntry> copy = std::make_unique<SpellEntry>(*spells[realId]);
+        copy->Id = copyId;
+        for (uint32 i = 0; i < MAX_SPELL_TOTEMS; ++i)
+            copy->Totem[i] = 0;
+        for (uint32 i = 0; i < MAX_SPELL_REAGENTS; ++i)
+        {
+            copy->Reagent[i] = 0;
+            copy->ReagentCount[i] = 0;
+        }
+        copy->InitCachedValues();
+
+        if (copyId >= spells.size())
+            spells.resize(copyId + 1);
+        spells[copyId] = std::move(copy);
+        ++made;
+    }
+    sLog.outString("Made %u reagent-free enchant spells.", made);
+}
+
 void SpellMgr::LoadSpells()
 {
     mSpellEntryMap.clear();
@@ -3586,6 +3641,7 @@ void SpellMgr::LoadSpells()
 
     ClearComfyOutdoorsOnly(mSpellEntryMap);
     LoadSpellExtra();
+    AddComfyReagentFreeCopies(mSpellEntryMap);
 }
 
 void SpellMgr::LoadSpellExtra()
@@ -3901,4 +3957,5 @@ void SpellMgr::LoadSpellsFromSpellTemplate()
     }
 
     ClearComfyOutdoorsOnly(mSpellEntryMap);
+    AddComfyReagentFreeCopies(mSpellEntryMap);
 }

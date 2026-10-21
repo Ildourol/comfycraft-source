@@ -18,6 +18,8 @@
 
 #include "Map.h"
 #include "LuaScene.h"
+#include "MountRental.h"
+#include "Moonstones.h"
 #include "BotNpc.h"
 #include "ScriptMgr.h"
 #include "GridSearchers.h"
@@ -1654,6 +1656,64 @@ bool Map::ScriptCommand_SetStoryFlag(ScriptInfo const& script, WorldObject* sour
     }
 
     pPlayer->SetStoryFlag(script.storyFlag.flagId, script.storyFlag.forget == 0);
+    return false;
+}
+
+/*
+ * SCRIPT_COMMAND_RENT_MOUNT (102)
+ *
+ * The dialog editor's "rents a mount": `datalong` a mount spell, `datalong2`
+ * minutes (0 = until they dismount), `datalong3` copper. RentMount does the
+ * cast, the timer, the speed and the money, the same function the stables
+ * call, and tells the player when it refuses.
+ *
+ * THE PLAYER, FROM EITHER SIDE, AND NEVER A BOT NPC, for the reason
+ * SET_STORY_FLAG gives above: a bot NPC is a Player, and it would ride off.
+ *
+ * A REFUSAL DOES NOT ABORT THE SCRIPT. The rest of the button still runs, the
+ * same as a give with a full bag.
+ */
+bool Map::ScriptCommand_RentMount(ScriptInfo const& script, WorldObject* source, WorldObject* target)
+{
+    Player* pPlayer = ToPlayer(target);
+    if (!pPlayer || pPlayer->IsBotNpc())
+        pPlayer = ToPlayer(source);
+
+    if (!pPlayer || pPlayer->IsBotNpc())
+    {
+        sLog.outError("SCRIPT_COMMAND_RENT_MOUNT (script id %u) call for a nullptr or non-player source and target (TypeIdSource: %u)(TypeIdTarget: %u), skipping.", script.id, source ? source->GetTypeId() : 0, target ? target->GetTypeId() : 0);
+        return ShouldAbortScript(script);
+    }
+
+    RentMount(pPlayer, script.rentMount.spellId, script.rentMount.minutes * MINUTE * IN_MILLISECONDS, script.rentMount.cost);
+    return false;
+}
+
+/*
+ * SCRIPT_COMMAND_MOONSTONE_TRADE (103)
+ *
+ * The dialog editor's "trades gear for Rune Chips". The player is whichever
+ * side is a real player; the NPC is the other side, a creature or a bot NPC.
+ * The trade itself happens later, one `.moonstone` per click (Moonstones.h).
+ */
+bool Map::ScriptCommand_MoonstoneTrade(ScriptInfo const& script, WorldObject* source, WorldObject* target)
+{
+    Player* pPlayer = ToPlayer(target);
+    WorldObject* other = source;
+    if (!pPlayer || pPlayer->IsBotNpc())
+    {
+        pPlayer = ToPlayer(source);
+        other = target;
+    }
+
+    Unit* npc = other ? other->ToUnit() : nullptr;
+    if (!pPlayer || pPlayer->IsBotNpc() || !npc)
+    {
+        sLog.outError("SCRIPT_COMMAND_MOONSTONE_TRADE (script id %u) needs a player and an NPC (TypeIdSource: %u)(TypeIdTarget: %u), skipping.", script.id, source ? source->GetTypeId() : 0, target ? target->GetTypeId() : 0);
+        return ShouldAbortScript(script);
+    }
+
+    sMoonstoneMgr.StartTrade(pPlayer, npc);
     return false;
 }
 

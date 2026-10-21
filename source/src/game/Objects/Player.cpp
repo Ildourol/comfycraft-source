@@ -7454,6 +7454,60 @@ void Player::UpdateSkillsForLevel()
     }
 }
 
+// Class spells the SkillLineAbility walk in LearnClassSpellsForLevel does not find:
+// the hunter's pet spells are SpellFamilyName 0, not the hunter's 9, and a class quest
+// teaches most of them. Felsteed and Dreadsteed are family 0 too. Each level is the
+// spell's own spellLevel, so UnlearnSpellsAboveLevel judges a row as the walk would.
+// Bots get the whole list because they never do the class quests.
+struct QuestOnlySpell { uint8 cls; uint32 level; uint32 spell; };
+static QuestOnlySpell const sQuestOnlySpells[] =
+{
+    { CLASS_HUNTER,  10,   883 },   // Call Pet           (Taming the Beast, 1579)
+    { CLASS_HUNTER,  10,  2641 },   // Dismiss Pet        (Taming the Beast, 1579)
+    { CLASS_HUNTER,  10,  1515 },   // Tame Beast         (Taming the Beast, 1579)
+    { CLASS_HUNTER,  10,  5149 },   // Beast Training     (Training the Beast, 5300)
+    { CLASS_HUNTER,  10,  6991 },   // Feed Pet           (Training the Beast, 5300)
+    { CLASS_HUNTER,  10,   982 },   // Revive Pet         (Training the Beast, 5300)
+    { CLASS_HUNTER,  24,  1462 },   // Beast Lore         (trainer)
+    { CLASS_WARLOCK,  1,   688 },   // Summon Imp         (7763)
+    { CLASS_WARLOCK, 10,   697 },   // Summon Voidwalker  (11520)
+    { CLASS_WARLOCK, 20,   712 },   // Summon Succubus    (11519)
+    { CLASS_WARLOCK, 30,   691 },   // Summon Felhunter   (1373)
+    { CLASS_WARLOCK, 40,  5784 },   // Summon Felsteed    (1710)
+    { CLASS_WARLOCK, 60, 18540 },   // Ritual of Doom     (20700)
+    { CLASS_WARLOCK, 60, 23161 },   // Summon Dreadsteed  (23160)
+};
+
+static bool IsQuestOnlySpell(uint8 cls, uint32 spellId)
+{
+    for (QuestOnlySpell const& s : sQuestOnlySpells)
+        if (s.cls == cls && s.spell == spellId)
+            return true;
+    return false;
+}
+
+// Teaches what sQuestOnlySpells allows at this level. Idempotent. Called by .setlevel
+// and .levelup through LearnClassSpellsForLevel, and by the bot factory on every
+// companion login. A bot never gets Tame Beast: with it, the bot's `no pet` trigger can
+// tame a random beast in the middle of a fight.
+void Player::LearnQuestOnlySpells()
+{
+    std::string const& addr = GetSession()->GetRemoteAddress();
+    bool const isBot = addr == "<BOT>" || addr == "disconnected/bot";
+
+    for (QuestOnlySpell const& s : sQuestOnlySpells)
+    {
+        if (s.cls != GetClass() || s.level > GetLevel() || HasSpell(s.spell))
+            continue;
+
+        if (isBot && s.spell == 1515)
+            continue;
+
+        if (sSpellMgr.GetSpellEntry(s.spell))
+            LearnSpell(s.spell, false);
+    }
+}
+
 // A spell the level decides: a class spell with a level of its own that was not bought
 // with talent points. Recipes, proficiencies, racials, mounts and toys all fall outside
 // it (spellLevel 0, or a family that is not the class's), and so does every talent and
@@ -7485,7 +7539,8 @@ void Player::UpdateSpellsForLevel(uint32 oldLevel)
         UnlearnSpellsAboveLevel();
 }
 
-// Unlearns every level-bound class spell the current level does not allow, dependent
+// Unlearns every level-bound class spell and every sQuestOnlySpells row the current
+// level does not allow, dependent
 // ranks included: once the top rank goes, the one under it is the top. Anything still
 // carrying the old disabled flag goes too, whatever its level, so that a row left by
 // the hide-not-unlearn days cannot shadow a fresh learn.
@@ -7502,7 +7557,7 @@ void Player::UnlearnSpellsAboveLevel()
             continue;
 
         SpellEntry const* spellInfo = sSpellMgr.GetSpellEntry(itr.first);
-        if (!IsLevelBoundClassSpell(spellInfo))
+        if (!IsLevelBoundClassSpell(spellInfo) && !(spellInfo && IsQuestOnlySpell(GetClass(), itr.first)))
             continue;
 
         if (spellInfo->spellLevel > level || itr.second.disabled)
@@ -7555,6 +7610,8 @@ void Player::LearnClassSpellsForLevel()
 
         LearnSpell(spellInfo->Id, false);
     }
+
+    LearnQuestOnlySpells();
 
     // LearnSpell re-enables any disabled higher rank it can reach. Nothing should be
     // disabled by now, but the sweep is cheap and keeps the promise.

@@ -721,6 +721,7 @@ ChatCommand * ChatHandler::getCommandTable()
         { "mangos_string",               SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadMangosStringCommand,            "", nullptr },
         { "module_string",               SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadModuleStringCommand,            "", nullptr },
         { "module_string_locale",        SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadModuleStringCommand,            "", nullptr },
+        { "moonstone_payout",            SEC_ADMINISTRATOR, true,  &ComfyCommands::HandleReloadMoonstonePayoutCommand,       "", nullptr },
         { "npc_gossip",                  SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadNpcGossipCommand,               "", nullptr },
         { "npc_text",                    SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadNpcTextCommand,                 "", nullptr },
         { "npc_trainer",                 SEC_ADMINISTRATOR, true,  &ChatHandler::HandleReloadNpcTrainerCommand,              "", nullptr },
@@ -1169,7 +1170,10 @@ ChatCommand * ChatHandler::getCommandTable()
         { "add_dressing_room", SEC_DEVELOPER,    false, &ComfyCommands::HandleAddDressingRoomCommand,   "", nullptr },
         { "comfyhelp",      SEC_PLAYER,           true,  &ComfyCommands::HandleComfyHelpCommand,         "", nullptr },
         { "comfynpcs",      SEC_PLAYER,           false, &ComfyCommands::HandleComfyNpcsCommand,         "", nullptr },
+        { "moonstone",      SEC_PLAYER,           false, &ComfyCommands::HandleMoonstoneCommand,         "", nullptr },
         { "companions",     SEC_PLAYER,           false, &ComfyCommands::HandleCompanionsCommand,        "", nullptr },
+        // Before "ccdebug": the first row that `.cc` abbreviates wins.
+        { "cc",             SEC_PLAYER,           false, &ComfyCommands::HandleCompanionOrderCommand,    "", nullptr },
         { "ccdebug",        SEC_PLAYER,           true,  &ComfyCommands::HandleCompanionDebugCommand,    "", nullptr },
         { "rndbot",         SEC_DEVELOPER,       true,  &ChatHandler::HandleRandomPlayerbotCommand,     "", nullptr },
         { "ahbot",          SEC_MODERATOR,       true,  &ChatHandler::HandleAhBotCommand,               "", nullptr },

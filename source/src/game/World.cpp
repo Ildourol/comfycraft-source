@@ -27,6 +27,7 @@
 #include "Database/DatabaseEnv.h"
 #include "Config/Config.h"
 #include "CustomMerchantMgr.h"
+#include "Moonstones.h"
 #include "Platform/Define.h"
 #include "SystemConfig.h"
 #include "Log.h"
@@ -2338,6 +2339,8 @@ void LoadPlayerEggLoot();
     sObjectMgr.LoadVendors();                               // must be after load CreatureTemplate, VendorTemplate, and ItemTemplate
     sLog.outString("Loading custom merchants...");
     sCustomMerchantMgr.Load();
+    sLog.outString("Loading Moonstone payouts...");
+    sMoonstoneMgr.Load();                                   // must be after both vendor tables and custom_merchant
     sLog.outString("Loading trainer templates...");
     sObjectMgr.LoadTrainerTemplates();                      // must be after load CreatureTemplate
     sLog.outString("Loading trainers...");

@@ -982,7 +982,7 @@ void PlayerbotHolder::OnBotLogin(Player * const bot)
 
         // On every login, not only on hire: a companion hired before
         // 2026-10-18 has no Call Pet, and this is what gives it one.
-        PlayerbotFactory::LearnQuestOnlySpells(bot);
+        bot->LearnQuestOnlySpells();
     }
 
     // Clear intro cinematic state — bots never watch it but HandlePlayerLogin sets

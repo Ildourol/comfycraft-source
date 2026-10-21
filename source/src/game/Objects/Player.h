@@ -2063,6 +2063,7 @@ class Player final: public Unit
         bool IsLevelBoundClassSpell(SpellEntry const* spellInfo) const;
         void UnlearnSpellsAboveLevel();
         void LearnClassSpellsForLevel();
+        void LearnQuestOnlySpells();
         void MaxLevelDependentSkills();
     private:
         SkillStatusMap mSkillStatus;

@@ -101,6 +101,13 @@ namespace CompanionOwnership
     // Unpark both clear an entry.
     std::vector<Parked> ParkedOf(uint32 ownerGuid);
 
+    // The companion mode of the player who leads them (2026-10-21). Defend
+    // holds a mob that runs at the group until it arrives
+    // (AttackersValue::HoldApproaching); aggro fights it at once. In memory
+    // only: a restart puts every player back on defend.
+    void     SetAggro(uint32 playerGuid, bool on);
+    bool     IsAggro(uint32 playerGuid);
+
     // True if the account is one of ours, used to keep the pool out of the
     // random-bot machinery and to spot a stale character at startup.
     bool     IsCompanionAccount(uint32 accountId);

@@ -56,6 +56,8 @@ bool ComfyCommands::HandleCompanionsCommand(ChatHandler* handler, char*)
     { handler->SendSysMessage("No companions out."); return true; }
 bool ComfyCommands::HandleCompanionDebugCommand(ChatHandler* handler, char*)
     { handler->SendSysMessage("Companions need the playerbots module (BUILD_PLAYERBOTS=OFF)."); return true; }
+bool ComfyCommands::HandleCompanionOrderCommand(ChatHandler* handler, char*)
+    { handler->SendSysMessage("Companions need the playerbots module (BUILD_PLAYERBOTS=OFF)."); return true; }
 bool ChatHandler::HandleRandomPlayerbotCommand(char*)
     { SendSysMessage("Random playerbots not built (BUILD_PLAYERBOTS=OFF)."); return true; }
 bool ChatHandler::HandleAhBotCommand(char*)
