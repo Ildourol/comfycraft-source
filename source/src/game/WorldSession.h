@@ -591,6 +591,16 @@ class WorldSession
         void SendMeetingstoneFailed(uint8 status);
         void SendMeetingstoneSetqueue(uint32 areaid, uint8 status);
 
+        // ComfyUI's stone window (addon/ComfyUI/StoneWindow.lua). The addon
+        // sends `.stone ready` when it enters the world, and from then a stone
+        // click opens the window instead of the group finder's role check. The
+        // guid is the stone the window was opened from: a hire needs the
+        // player still able to use it.
+        void SetStoneWindowReady() { m_stoneWindowReady = true; }
+        bool HasStoneWindow() const { return m_stoneWindowReady; }
+        void SetStoneWindowGuid(ObjectGuid guid) { m_stoneWindowGuid = guid; }
+        ObjectGuid GetStoneWindowGuid() const { return m_stoneWindowGuid; }
+
         // Group
         void BuildPartyMemberStatsChangedPacket(Player *player, WorldPacket *data);
         void BuildPartyMemberStatsPacket(Player* player, WorldPacket* data, uint32 updateMask, bool sendAllAuras);
@@ -1093,6 +1103,10 @@ class WorldSession
         uint32     m_openVendorTemplate;
         ObjectGuid m_openMerchantGUID;
         uint32     m_openMerchantEntry;
+
+        // See SetStoneWindowReady.
+        bool       m_stoneWindowReady = false;
+        ObjectGuid m_stoneWindowGuid;
 
         bool VerifyMovementInfo(MovementInfo const& movementInfo) const;
         void HandleMoverRelocation(Unit* pMover, MovementInfo& movementInfo);

@@ -267,28 +267,45 @@ namespace ai
         float range;
     };
 
-    class MeleeLightAoeTrigger : public AoeTrigger
+    // Counts the attackers the bot can hit with a melee swing from where it
+    // stands: the core's melee reach test (both combat reaches), not a flat
+    // distance from the bot centre, so a large mob the bot is hitting counts.
+    // AoeTrigger's density search is not used here: it counts every mob near
+    // the first one in range, so a mob 10 yards behind the target counted.
+    // A mob held by damage-breakable crowd control is not counted.
+    class MeleeAoeTrigger : public AttackerCountTrigger
     {
     public:
-        MeleeLightAoeTrigger(PlayerbotAI* ai) : AoeTrigger(ai, 2, 5.0f) {}
+        MeleeAoeTrigger(PlayerbotAI* ai, int amount) : AttackerCountTrigger(ai, amount) {}
+        std::string getName() override { return "melee aoe"; }
+        bool IsActive() override;
+
+        // reachBonus widens the reach by that many yards.
+        static uint32 CountAttackersInMeleeReach(PlayerbotAI* ai, float reachBonus = 0.0f);
     };
 
-    class MeleeMediumAoeTrigger : public AoeTrigger
+    class MeleeLightAoeTrigger : public MeleeAoeTrigger
     {
     public:
-        MeleeMediumAoeTrigger(PlayerbotAI* ai) : AoeTrigger(ai, 3, 5.0f) {}
+        MeleeLightAoeTrigger(PlayerbotAI* ai) : MeleeAoeTrigger(ai, 2) {}
     };
 
-    class MeleeHighAoeTrigger : public AoeTrigger
+    class MeleeMediumAoeTrigger : public MeleeAoeTrigger
     {
     public:
-        MeleeHighAoeTrigger(PlayerbotAI* ai) : AoeTrigger(ai, 6, 5.0f) {}
+        MeleeMediumAoeTrigger(PlayerbotAI* ai) : MeleeAoeTrigger(ai, 3) {}
     };
 
-    class MeleeVeryHighAoeTrigger : public AoeTrigger
+    class MeleeHighAoeTrigger : public MeleeAoeTrigger
     {
     public:
-        MeleeVeryHighAoeTrigger(PlayerbotAI* ai) : AoeTrigger(ai, 10, 5.0f) {}
+        MeleeHighAoeTrigger(PlayerbotAI* ai) : MeleeAoeTrigger(ai, 6) {}
+    };
+
+    class MeleeVeryHighAoeTrigger : public MeleeAoeTrigger
+    {
+    public:
+        MeleeVeryHighAoeTrigger(PlayerbotAI* ai) : MeleeAoeTrigger(ai, 10) {}
     };
 
     class RangedLightAoeTrigger : public AoeTrigger
@@ -650,15 +667,20 @@ namespace ai
         virtual std::string getName() override { return "outnumbered"; }
     END_TRIGGER()
 
+	// Checked every 2 s. At 30 s the check fell mostly on the meal after a
+	// fight: the summon was held for the meal and dropped, and the next check
+	// came after the next pull had started. A warlock companion in a dungeon
+	// then went from fight to fight with no demon.
 	class NoPetTrigger : public Trigger
 	{
 	public:
-		NoPetTrigger(PlayerbotAI* ai) : Trigger(ai, "no pet", 30) {}
+		NoPetTrigger(PlayerbotAI* ai) : Trigger(ai, "no pet", 2) {}
 
-		virtual bool IsActive() override
-        {
-			return !AI_VALUE(Unit*, "pet target") && !AI_VALUE2(bool, "mounted", "self target");
-		}
+		virtual bool IsActive() override;
+
+	private:
+		// The last state told under `debug`, so each change is one line.
+		std::string lastDebugState;
 	};
 
 	class ItemCountTrigger : public Trigger 

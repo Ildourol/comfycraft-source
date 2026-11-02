@@ -917,6 +917,281 @@ bool PlayerbotAI::IsImmuneToSpell(uint32 spellId) const
     return false;
 }
 
+// AN IMMUNE TARGET IS NOT ASKED AGAIN (bug #128, 2026-11-01).
+//
+// A hunter companion in Gnomeregan cast Serpent Sting on mechanical mobs until
+// its mana ran out. The core makes a mechanical or elemental creature immune
+// to the poison and disease dispel types (Creature.cpp, the type immunities),
+// so the sting never lands, the "no sting" trigger stays on, and CanCastSpell
+// let it through: its immunity check skipped every spell with a damage effect.
+//
+// That skip protects a real case. IsImmuneToSpellEffect asks about ONE effect,
+// and a damage spell often carries a second one the target can refuse while
+// the damage still lands: Frostbolt's slow on a boss immune to snares. So the
+// per-effect test below refuses a damage spell only when EVERY effect is
+// immune. The whole-spell tests are the two the core itself runs in
+// WorldObject::SpellHitResult before anything lands; when either says immune,
+// the whole cast misses.
+//
+// Only a spell aimed at one target is judged. An area or chain spell aimed at
+// an immune mob still hits the others.
+static bool IsSingleTargetHarmfulSpell(SpellEntry const* spellInfo)
+{
+    if (spellInfo->IsPositiveSpell())
+        return false;
+
+    for (uint32 i = 0; i < MAX_EFFECT_INDEX; ++i)
+    {
+        if (!spellInfo->Effect[i])
+            continue;
+
+        if (spellInfo->EffectRadiusIndex[i] || spellInfo->EffectChainTarget[i] > 1)
+            return false;
+    }
+
+    return true;
+}
+
+// A creature's immunity comes from its template and does not change, so it is
+// kept for the fight. A player's comes from an aura (Divine Shield, Ice Block),
+// which the whole-spell tests already see while it lasts.
+time_t PlayerbotAI::SpellImmuneMemory(ObjectGuid target)
+{
+    return target.IsPlayer() ? 30 : 180;
+}
+
+PlayerbotAI::SpellImmuneKey PlayerbotAI::MakeSpellImmuneKey(uint32 spellId, ObjectGuid target) const
+{
+    // Every rank shares one entry: a bot that learns a new rank mid-fight does
+    // not try the new rank on the same mob.
+    const uint32 firstRank = sSpellMgr.GetFirstSpellInChain(spellId);
+    return SpellImmuneKey(firstRank ? firstRank : spellId, target.GetRawValue());
+}
+
+void PlayerbotAI::PruneSpellImmuneNotes(bool all)
+{
+    if (all)
+    {
+        spellImmuneNotes.clear();
+        return;
+    }
+
+    if (spellImmuneNotes.empty())
+        return;
+
+    // Once a second is enough: CanCastSpell asks many times each tick.
+    const time_t now = time(nullptr);
+    if (now == spellImmunePruneTime)
+        return;
+
+    spellImmunePruneTime = now;
+    for (auto itr = spellImmuneNotes.begin(); itr != spellImmuneNotes.end();)
+    {
+        Unit* target = GetUnit(ObjectGuid(itr->first.second));
+        if (itr->second.until <= now || !target || !target->IsAlive())
+            itr = spellImmuneNotes.erase(itr);
+        else
+            ++itr;
+    }
+}
+
+void PlayerbotAI::NoteSpellImmune(uint32 spellId, ObjectGuid target)
+{
+    if (!spellId || !target || target == bot->GetObjectGuid())
+        return;
+
+    SpellEntry const* spellInfo = sServerFacade.LookupSpellInfo(spellId);
+    if (!spellInfo || !IsSingleTargetHarmfulSpell(spellInfo))
+        return;
+
+    SpellImmuneNote& note = spellImmuneNotes[MakeSpellImmuneKey(spellId, target)];
+    note.remembered = true;
+    note.until = time(nullptr) + SpellImmuneMemory(target);
+}
+
+bool PlayerbotAI::IsTargetImmuneToSpell(uint32 spellId, Unit* target)
+{
+    if (!spellId)
+        return false;
+
+    return IsTargetImmuneToSpell(sServerFacade.LookupSpellInfo(spellId), target);
+}
+
+bool PlayerbotAI::IsTargetImmuneToSpell(SpellEntry const* spellInfo, Unit* target)
+{
+    if (!spellInfo || !target || target == bot)
+        return false;
+
+    if (!IsSingleTargetHarmfulSpell(spellInfo) || spellInfo->IsPositiveSpell(bot, target))
+        return false;
+
+    // An Immune result the core sent on an earlier cast.
+    PruneSpellImmuneNotes(false);
+    if (!spellImmuneNotes.empty())
+    {
+        auto itr = spellImmuneNotes.find(MakeSpellImmuneKey(spellInfo->Id, target->GetObjectGuid()));
+        if (itr != spellImmuneNotes.end() && itr->second.remembered && itr->second.until > time(nullptr))
+            return true;
+    }
+
+    // School, dispel type (a poison on a mechanical mob) and the spell's own
+    // mechanic: the core's first test in SpellHitResult.
+    if (!spellInfo->HasAttribute(SPELL_ATTR_UNAFFECTED_BY_INVULNERABILITY) && target->IsImmuneToSpell(spellInfo, false))
+        return true;
+
+    // Damage immunity by school: its second test, for every harmful spell.
+    if (target->IsImmuneToDamage(spellInfo->GetSpellSchoolMask(), spellInfo))
+        return true;
+
+    // Each effect: immune only when no effect would land.
+    bool anyEffect = false;
+    for (uint32 i = 0; i < MAX_EFFECT_INDEX; ++i)
+    {
+        if (!spellInfo->Effect[i])
+            continue;
+
+        anyEffect = true;
+        if (!target->IsImmuneToSpellEffect(spellInfo, SpellEffectIndex(i), false))
+            return false;
+    }
+
+    return anyEffect;
+}
+
+bool PlayerbotAI::FirstImmuneNotice(uint32 spellId, Unit* target)
+{
+    if (!spellId || !target)
+        return false;
+
+    SpellImmuneNote& note = spellImmuneNotes[MakeSpellImmuneKey(spellId, target->GetObjectGuid())];
+    if (!note.until)
+        note.until = time(nullptr) + SpellImmuneMemory(target->GetObjectGuid());
+
+    if (note.told)
+        return false;
+
+    note.told = true;
+    return true;
+}
+
+// Reads a packed guid from raw packet bytes without copying the packet. Every
+// bot gets the SMSG_SPELL_GO of every cast it can see, and only its own matter.
+static bool PeekPackedGuid(const WorldPacket& packet, size_t& pos, uint64& guid)
+{
+    const size_t size = packet.size();
+    if (pos >= size)
+        return false;
+
+    const uint8* data = packet.contents();
+    const uint8 mask = data[pos++];
+    guid = 0;
+    for (uint8 i = 0; i < 8; ++i)
+    {
+        if (mask & (1 << i))
+        {
+            if (pos >= size)
+                return false;
+
+            guid |= uint64(data[pos++]) << (i * 8);
+        }
+    }
+
+    return true;
+}
+
+// SMSG_SPELL_GO: packed cast item or caster, packed caster, spell id, uint16
+// flags, uint8 hit count and the hit guids, uint8 miss count and for each miss
+// the guid, the miss reason, and one more byte for a reflect (Spell::
+// WriteSpellGoTargets). An instant spell's Immune is in this packet.
+void PlayerbotAI::ReadSpellGoMisses(const WorldPacket& packet)
+{
+    size_t pos = 0;
+    uint64 itemOrCasterRaw = 0, casterRaw = 0;
+    if (!PeekPackedGuid(packet, pos, itemOrCasterRaw) || !PeekPackedGuid(packet, pos, casterRaw) ||
+        casterRaw != bot->GetObjectGuid().GetRawValue())
+        return;
+
+    try
+    {
+        WorldPacket p(packet);
+        p.rpos(0);
+
+        ObjectGuid itemOrCaster, caster;
+        p >> itemOrCaster.ReadAsPacked();
+        p >> caster.ReadAsPacked();
+        if (caster != bot->GetObjectGuid())
+            return;
+
+        uint32 spellId;
+        uint16 castFlags;
+        uint8 hitCount;
+        p >> spellId >> castFlags >> hitCount;
+        p.rpos(p.rpos() + hitCount * sizeof(uint64));
+
+        uint8 missCount;
+        p >> missCount;
+        for (uint8 i = 0; i < missCount; ++i)
+        {
+            ObjectGuid target;
+            uint8 missInfo;
+            p >> target >> missInfo;
+            if (missInfo == SPELL_MISS_REFLECT)
+            {
+                uint8 reflectResult;
+                p >> reflectResult;
+            }
+
+            if (missInfo == SPELL_MISS_IMMUNE || missInfo == SPELL_MISS_IMMUNE2)
+                NoteSpellImmune(spellId, target);
+        }
+    }
+    catch (ByteBufferException&)
+    {
+    }
+}
+
+// SMSG_SPELLLOGMISS: spell id, caster guid, uint8, uint32 target count, and
+// for each target its guid and the miss reason. A spell with a travel time
+// that meets an immunity on arrival sends this (Spell::DoSpellHitOnUnit).
+void PlayerbotAI::ReadSpellLogMiss(const WorldPacket& packet)
+{
+    // Spell id, then the caster's full guid.
+    if (packet.size() < 12)
+        return;
+
+    uint64 casterRaw = 0;
+    memcpy(&casterRaw, packet.contents() + 4, sizeof(casterRaw));
+    if (casterRaw != bot->GetObjectGuid().GetRawValue())
+        return;
+
+    try
+    {
+        WorldPacket p(packet);
+        p.rpos(0);
+
+        uint32 spellId;
+        ObjectGuid caster;
+        uint8 unk;
+        uint32 count;
+        p >> spellId >> caster;
+        if (caster != bot->GetObjectGuid())
+            return;
+
+        p >> unk >> count;
+        for (uint32 i = 0; i < count && i < 64; ++i)
+        {
+            ObjectGuid target;
+            uint8 missInfo;
+            p >> target >> missInfo;
+            if (missInfo == SPELL_MISS_IMMUNE || missInfo == SPELL_MISS_IMMUNE2)
+                NoteSpellImmune(spellId, target);
+        }
+    }
+    catch (ByteBufferException&)
+    {
+    }
+}
+
 bool PlayerbotAI::IsInPve()
 {
     return !IsInPvp() && !IsInRaid();
@@ -1192,6 +1467,9 @@ void PlayerbotAI::OnCombatEnded()
         {
             StopMoving();
         }
+
+        // The fight is over: forget which targets were immune to what.
+        PruneSpellImmuneNotes(true);
 
         ChangeEngine(BotState::BOT_STATE_NON_COMBAT);
     }
@@ -2358,6 +2636,13 @@ void PlayerbotAI::HandleBotOutgoingPacket(const WorldPacket& packet)
 		SpellInterrupted(spellId);
 		return;
 	}
+	// The bot's own casts that came back Immune (IsTargetImmuneToSpell).
+	case SMSG_SPELL_GO:
+		ReadSpellGoMisses(packet);
+		return;
+	case SMSG_SPELLLOGMISS:
+		ReadSpellLogMiss(packet);
+		return;
 	case SMSG_SPELL_DELAYED:
 	{
 		WorldPacket p(packet);
@@ -2589,6 +2874,79 @@ void PlayerbotAI::ChangeEngine(BotState type)
 }
 
 
+// A COMPANION FOLLOWS THE LEADER, OR ITS OWNER (2026-11-01).
+//
+// For a grouped companion out of a battleground. A test-harness login keeps
+// the master the harness gave it.
+static bool IsCompanionMasterManaged(Player* bot, PlayerbotAI* ai)
+{
+    return bot->GetGroup() && !bot->InBattleGround() && !ai->IsRealPlayer() &&
+        CompanionOwnership::IsCompanion(bot->GetGUIDLow()) &&
+        !sRandomPlayerbotMgr.IsExternallyManaged(bot->GetGUIDLow());
+}
+
+// The party leader when a real player leads, else the owner. A leader that is
+// a bot (a companion, a random bot) is never followed. A leader who is not
+// loaded at all (logged out) cannot be followed either, so the owner is.
+// FindPlayerNotInWorld, not FindPlayer: a leader in a loading screen is not in
+// world, and is still the one to follow.
+ObjectGuid PlayerbotAI::CompanionMasterGuid()
+{
+    const ObjectGuid ownerGuid(HIGHGUID_PLAYER, CompanionOwnership::GetOwner(bot->GetGUIDLow()));
+    Group* group = bot->GetGroup();
+    if (!group)
+        return ownerGuid;
+
+    const ObjectGuid leaderGuid = group->GetLeaderGuid();
+    if (!leaderGuid || leaderGuid == ownerGuid || leaderGuid == bot->GetObjectGuid() ||
+        CompanionOwnership::IsCompanion(leaderGuid.GetCounter()))
+        return ownerGuid;
+
+    Player* leader = sObjectAccessor.FindPlayerNotInWorld(leaderGuid);
+    if (!leader)
+        return ownerGuid;
+
+    PlayerbotAI* leaderAi = GetBotAI(leader);
+    if (leaderAi && !leaderAi->IsRealPlayer())
+        return ownerGuid;
+
+    return leaderGuid;
+}
+
+// UpdateAI drops a master that is not in world (FindPlayer), so during the
+// player's loading screen the companion has none. The stock pick in
+// DoNextAction then takes the first other real member in world, for good, and
+// every teleport to the master goes to that player.
+//
+// The companion waits with no master while its player is not in world,
+// and takes them back on the first tick they are. That re-take is silent and
+// keeps the strategies: a loading screen must not cause chat, and a companion
+// on stay or guard stays there (ResetStrategies drops both for a companion).
+// A companion on any other player moves to its player the same way.
+void PlayerbotAI::UpdateCompanionMaster()
+{
+    if (!IsCompanionMasterManaged(bot, this))
+        return;
+
+    const ObjectGuid wanted = CompanionMasterGuid();
+    Player* live = wanted ? sObjectAccessor.FindPlayer(wanted) : nullptr;
+
+    if (master == live)
+        return;
+
+    if (master && master != live)
+        sLog.outString("Companion %s: %s is not the one to follow, %s is", bot->GetName(), master->GetName(),
+            live ? live->GetName() : "away");
+
+    SetMaster(live);
+
+    if (live && companionFollowGuid != wanted)
+    {
+        companionFollowGuid = wanted;
+        sLog.outString("Companion %s: follows %s", bot->GetName(), live->GetName());
+    }
+}
+
 void PlayerbotAI::DoNextAction(bool min)
 {
     SC_PHASE("DoNextAction.entry", bot ? bot->GetName() : "(null)");
@@ -2609,6 +2967,10 @@ void PlayerbotAI::DoNextAction(bool min)
             Reset();
         }
     }
+
+    // A companion picks its master here, before the activity check and the
+    // engine, so neither runs a tick on the wrong player.
+    UpdateCompanionMaster();
 
     bool minimal = !AllowActivity();
 
@@ -2664,8 +3026,13 @@ void PlayerbotAI::DoNextAction(bool min)
     bool const externallyManagedMaster =
         sRandomPlayerbotMgr.IsExternallyManaged(bot->GetGUIDLow());
 
+    // A grouped companion took its master in UpdateCompanionMaster above. The
+    // two blocks below give a masterless bot to the first real member in world:
+    // a companion whose owner was in a loading screen went to another player.
+    bool const companionMasterSet = group && IsCompanionMasterManaged(bot, this);
+
     //Remove bot masters not in our group.
-    if (!externallyManagedMaster && master && master != bot && !HasActivePlayerMaster() && (!group || group->GetLeaderGuid() != master->GetObjectGuid()))
+    if (!companionMasterSet && !externallyManagedMaster && master && master != bot && !HasActivePlayerMaster() && (!group || group->GetLeaderGuid() != master->GetObjectGuid()))
     {
         master = IsRealPlayer() ? bot : nullptr;
         SetMaster(master);
@@ -2673,7 +3040,7 @@ void PlayerbotAI::DoNextAction(bool min)
     }
 
     // test BG master set
-    if (!externallyManagedMaster && (!master || !HasActivePlayerMaster()) && group && !IsRealPlayer())
+    if (!companionMasterSet && !externallyManagedMaster && (!master || !HasActivePlayerMaster()) && group && !IsRealPlayer())
     {
         //Ideally we want to have the leader as master.
         Player* newMaster = GetGroupMaster();
@@ -5335,6 +5702,18 @@ bool PlayerbotAI::CanCastSpell(uint32 spellid, Unit* target, uint8 effectMask, b
             }
         }
 
+        // A target that cannot take this spell at all (bug #128). The test
+        // below it stays for spells with no damage effect.
+        if (IsTargetImmuneToSpell(spellInfo, target))
+        {
+            if (checkResult)
+            {
+                *checkResult = SPELL_FAILED_IMMUNE;
+            }
+
+            return false;
+        }
+
         bool damage = false;
         for (int32 i = EFFECT_INDEX_0; i <= EFFECT_INDEX_2; i++)
         {
@@ -7124,6 +7503,12 @@ ActivePiorityType PlayerbotAI::GetPriorityType()
 {
     //First priority - priorities disabled or has player master. Always active.
     if (sPlayerbotAIConfig.disableActivityPriorities || HasRealPlayerMaster())
+        return ActivePiorityType::HAS_REAL_PLAYER_MASTER;
+
+    // A companion is always active, also while it waits with no master for its
+    // player's loading screen. Throttled, it ran DoNextAction's minimal branch:
+    // the AFK flag, and the next tick PassiveDelay (10 s) away.
+    if (CompanionOwnership::IsCompanion(bot->GetGUIDLow()))
         return ActivePiorityType::HAS_REAL_PLAYER_MASTER;
 
     //Self bot in a group with a bot master.

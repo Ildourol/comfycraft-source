@@ -18,7 +18,7 @@ namespace ai
         bool ShouldReactionInterruptCast() const override { return true; }
 
         bool HasReachAction() { return !GetReachActionName().empty(); }
-        bool RefusedAsUnknownSpell() const override { return notKnown; }
+        bool RefusedQuietly() const override { return notKnown || immune; }
 
     protected:
         const uint32& GetSpellID() const { return spellId; }
@@ -35,6 +35,11 @@ namespace ai
     protected:
 		float range;
         bool notKnown = false;
+        // The target is immune to the spell (PlayerbotAI::IsTargetImmuneToSpell).
+        bool immune = false;
+
+        // Says so once under `debug action`, and sets `immune`.
+        void RefuseAsImmune(Unit* target);
 
     private:
         std::string spellName;

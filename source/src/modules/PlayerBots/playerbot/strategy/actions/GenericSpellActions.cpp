@@ -178,8 +178,27 @@ bool CastSpellAction::Execute(Event& event)
     return executed;
 }
 
+// AN IMMUNE TARGET GETS ONE LINE (bug #128). The trigger for a DoT or a sting
+// stays on while the target lacks the aura, and an immune target never gets
+// it, so this refusal comes on every tick. Under `debug action` it writes
+// "why: <spell> immune on <target>" once for each spell and target, and the
+// engine writes no "try:" line for it (RefusedQuietly).
+void CastSpellAction::RefuseAsImmune(Unit* target)
+{
+    immune = true;
+    if (!target || !ai->GetMaster() || !ai->HasStrategy("debug action", BotState::BOT_STATE_NON_COMBAT))
+        return;
+
+    if (ai->FirstImmuneNotice(AI_VALUE2(uint32, "spell id", spellName), target))
+    {
+        ai->TellPlayerNoFacing(ai->GetMaster(), "why: " + spellName + " immune on " + target->GetName(),
+            PlayerbotSecurityLevel::PLAYERBOT_SECURITY_ALLOW_ALL, true, false);
+    }
+}
+
 bool CastSpellAction::isPossible()
 {
+    immune = false;
     if (spellName == "mount")
     {
         if (!bot->IsMounted() && !bot->IsInCombat())
@@ -280,6 +299,12 @@ bool CastSpellAction::isPossible()
     // Check if the spell can be casted
     SpellCastResult result = SPELL_CAST_OK;
     const bool possible = ai->CanCastSpell(spellName, spellTarget, 0, nullptr, true, false, false, &result);
+    if (!possible && result == SPELL_FAILED_IMMUNE)
+    {
+        RefuseAsImmune(spellTarget);
+        return false;
+    }
+
     if (!possible)
         why("refused on " + std::string(spellTarget->GetName()) + ", cast result " + std::to_string((uint32)result));
 
@@ -308,6 +333,7 @@ bool CastSpellAction::isPossible()
 
 bool CastSpellAction::isUseful()
 {
+    immune = false;
     if (ai->IsInVehicle() && !ai->IsInVehicle(false, false, true))
         return false;
 
@@ -320,6 +346,15 @@ bool CastSpellAction::isUseful()
 
     if (!spellTarget->IsInWorld() || spellTarget->GetMapId() != bot->GetMapId())
         return false;
+
+    // Asked here, before the reach prerequisite is pushed, so the bot does not
+    // walk into range of a mob it will not cast at. The engine then takes the
+    // next action in the queue (Arcane Shot, Auto Shot, Shadow Bolt).
+    if (ai->IsTargetImmuneToSpell(AI_VALUE2(uint32, "spell id", spellName), spellTarget))
+    {
+        RefuseAsImmune(spellTarget);
+        return false;
+    }
 
     if (LandsOnBreakableCc(bot, GetSpellID(), spellTarget))
         return false;

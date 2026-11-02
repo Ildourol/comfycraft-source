@@ -389,6 +389,11 @@ public:
 	void HandleTeleportAck();
     void ChangeEngine(BotState type);
     void DoNextAction(bool minimal = false);
+    // The player a companion follows: the party leader when a real player
+    // leads, else its owner. UpdateCompanionMaster takes that player as master
+    // when it is in world, and none while it is not (see DoNextAction).
+    ObjectGuid CompanionMasterGuid();
+    void UpdateCompanionMaster();
     bool CanDoSpecificAction(const std::string& name, bool isUseful = true, bool isPossible = true);
     virtual bool DoSpecificAction(const std::string& name, Event event = Event(), bool silent = false);
     void ChangeStrategy(const std::string& name, BotState type);
@@ -779,6 +784,16 @@ public:
 
     bool IsImmuneToSpell(uint32 spellId) const;
 
+    // True when the target cannot take this harmful spell from the bot: the
+    // core would answer Immune for the whole cast, or an earlier cast of this
+    // spell on this target came back Immune. docs/ai/content/companion-commands.md,
+    // the "Immune targets" section.
+    bool IsTargetImmuneToSpell(uint32 spellId, Unit* target);
+    bool IsTargetImmuneToSpell(SpellEntry const* spellInfo, Unit* target);
+    // True the first time it is asked for a spell and a target, false after.
+    // The debug line for an immune target is written once.
+    bool FirstImmuneNotice(uint32 spellId, Unit* target);
+
     bool IsInPve();
     bool IsInPvp();
     bool IsInRaid();
@@ -834,6 +849,25 @@ public:
 private:
     bool UpdateAIReaction(uint32 elapsed, bool minimal, bool isStunned);
     void UpdateFaceTarget(uint32 elapsed, bool minimal);
+
+    // Immune results the bot saw on its own casts, by first rank of the spell
+    // and target guid. "remembered" is set by a real Immune result; an entry
+    // with only "told" set records that the debug line was written.
+    struct SpellImmuneNote
+    {
+        time_t until = 0;
+        bool remembered = false;
+        bool told = false;
+    };
+    typedef std::pair<uint32, uint64> SpellImmuneKey;
+    std::map<SpellImmuneKey, SpellImmuneNote> spellImmuneNotes;
+    time_t spellImmunePruneTime = 0;
+    SpellImmuneKey MakeSpellImmuneKey(uint32 spellId, ObjectGuid target) const;
+    static time_t SpellImmuneMemory(ObjectGuid target);
+    void PruneSpellImmuneNotes(bool all);
+    void NoteSpellImmune(uint32 spellId, ObjectGuid target);
+    void ReadSpellGoMisses(const WorldPacket& packet);
+    void ReadSpellLogMiss(const WorldPacket& packet);
 
 protected:
 	Player* bot;
@@ -904,6 +938,7 @@ protected:
     time_t farFromOwnerSince = 0; // a companion past CompanionTeleportDistance, 0 = not
     uint32 farStopSentMs = 0;     // when its stop went out before that teleport, 0 = not yet
     bool hiddenRide = false;      // picked up while its owner rides: invisible, no actions
+    ObjectGuid companionFollowGuid; // the player a companion last took as master
     bool showAfterRide = false;   // put down by the owner: show once the teleport has landed
     time_t hiddenMoveAt = 0;      // when it was last moved to the owner unseen
     uint32 passiveFadeDurationMs = 0;

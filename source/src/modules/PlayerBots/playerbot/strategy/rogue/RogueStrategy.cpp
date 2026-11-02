@@ -85,11 +85,21 @@ void RogueStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
     triggers.push_back(new TriggerNode(
         "sprint",
         NextAction::array(0, new NextAction("sprint", ACTION_HIGH + 1), NULL)));
+
+    // Blade Flurry is a toggle on this server. Every rogue spec cancels it
+    // when fewer than two attackers are in melee reach, in and out of combat.
+    triggers.push_back(new TriggerNode(
+        "blade flurry no aoe",
+        NextAction::array(0, new NextAction("remove blade flurry", ACTION_HIGH + 4), NULL)));
 }
 
 void RogueStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
 {
     ClassStrategy::InitNonCombatTriggers(triggers);
+
+    triggers.push_back(new TriggerNode(
+        "blade flurry no aoe",
+        NextAction::array(0, new NextAction("remove blade flurry", ACTION_HIGH + 4), NULL)));
 }
 
 void RogueStrategy::InitReactionTriggers(std::list<TriggerNode*>& triggers)

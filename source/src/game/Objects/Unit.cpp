@@ -197,6 +197,7 @@ Unit::Unit()
     m_attacking = nullptr;
     m_modMeleeHitChance = 0.0f;
     m_modRangedHitChance = 0.0f;
+    m_modOffhandHitChance = 0.0f;
     m_modSpellHitChance = 0.0f;
     m_baseSpellCritChance = 5;
 
@@ -3043,6 +3044,9 @@ float Unit::MeleeMissChanceCalc(Unit const* pVictim, WeaponAttackType attType) c
         hitChance = m_modRangedHitChance;
     else
         hitChance = m_modMeleeHitChance;
+
+    if (attType == OFF_ATTACK)
+        hitChance += m_modOffhandHitChance;
 
     if (IsPet())
     {

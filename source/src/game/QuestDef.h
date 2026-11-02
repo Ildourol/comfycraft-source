@@ -32,7 +32,12 @@ class Player;
 
 class ObjectMgr;
 
-#define MAX_QUEST_LOG_SIZE 20
+// The quest log holds 25 quests. Slots 0-19 are PLAYER_QUEST_LOG_1_1, as in stock 1.12.
+// Slots 20-24 are the first 15 fields of PLAYER_FIELD_COMBAT_RATING_1, because the OctoWoW
+// 1.18.1 WoW.exe (its .octoql section) reads them there. Player::GetQuestSlotField maps a
+// slot to its field. docs/ai/content/quests.md, the quest log size section.
+#define MAX_QUEST_LOG_SIZE 25
+#define QUEST_LOG_FIRST_BLOCK_SIZE 20
 
 #define QUEST_OBJECTIVES_COUNT 4
 #define QUEST_ITEM_OBJECTIVES_COUNT QUEST_OBJECTIVES_COUNT

@@ -193,9 +193,9 @@ namespace ai
                         SpellCastResult result = SPELL_CAST_OK;
                         if (!spellName.empty() && !ai->CanCastSpell(spellName, target, true, nullptr, true, true, true, &result))
                         {
-                            // A spell the bot does not know: no debug line, see
-                            // CastSpellAction::isPossible.
-                            notKnown = result == SPELL_FAILED_NOT_KNOWN;
+                            // A spell the bot does not know, or a target immune
+                            // to it: no debug line, see CastSpellAction::isPossible.
+                            notKnown = result == SPELL_FAILED_NOT_KNOWN || result == SPELL_FAILED_IMMUNE;
                             return false;
                         }
 
@@ -216,7 +216,7 @@ namespace ai
 
         virtual std::string GetTargetName() override { return "current target"; }
         std::string GetSpellName() const { return spellName; }
-        bool RefusedAsUnknownSpell() const override { return notKnown; }
+        bool RefusedQuietly() const override { return notKnown; }
 
         virtual Unit* GetTarget() override
         {

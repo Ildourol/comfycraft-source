@@ -844,6 +844,10 @@ void Object::BuildValuesUpdate(uint8 updatetype, ByteBuffer * data, UpdateMask *
                     // friendly and refuse the attack.
                     else if (FactionlessWar::AtWar(target, static_cast<Unit const*>(this)))
                         faction = FactionlessWar::ViewerFactionTemplate;
+                    // ComfyCraft: a hostile creature at peace with whoever holds
+                    // its quest, so the client draws it green and offers its gossip.
+                    else if (FactionlessWar::AtPeace(target, static_cast<Unit const*>(this)))
+                        faction = FactionlessWar::PeaceFactionTemplate;
 
                     *data << uint32(faction);
                 }
@@ -3698,6 +3702,14 @@ ReputationRank WorldObject::GetReactionTo(WorldObject const* target) const
                 return *repRank;
     }
 
+    // ComfyCraft: a hostile creature at peace with whoever holds its quest
+    // (FactionlessWar.h), in both directions: the player cannot attack it,
+    // and it does not aggro on the player.
+    if (selfPlayerOwner && FactionlessWar::AtPeace(selfPlayerOwner, target))
+        return REP_FRIENDLY;
+    if (!selfPlayerOwner && targetPlayerOwner && FactionlessWar::AtPeace(targetPlayerOwner, this))
+        return REP_FRIENDLY;
+
     bool b_IsPossessed = HasFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_POSSESSED) || target->HasFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_POSSESSED);
     if (IsUnit() && (HasFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_PLAYER_CONTROLLED) || b_IsPossessed))
     {
@@ -3802,6 +3814,38 @@ namespace
     // for a player who has one of them in the log.
     std::unordered_map<uint32, std::vector<uint32>> s_campEnds;
     uint32 s_warQuestCount = 0;
+    // Peace list creature entry -> the quests that make it friendly.
+    std::unordered_map<uint32, std::vector<uint32>> s_peaceQuests;
+
+    bool WorldTableExists(char const* table)
+    {
+        // A SELECT on a missing table is ASSERT(false) in HandleMySQLError.
+        bool present = false;
+        if (QueryResult* probe = WorldDatabase.PQuery(
+                "SELECT COUNT(*) FROM information_schema.tables "
+                "WHERE table_schema = DATABASE() AND table_name = '%s'", table))
+        {
+            present = probe->Fetch()[0].GetUInt32() > 0;
+            delete probe;
+        }
+        return present;
+    }
+
+    // True when who, or the owner of who if it is a companion, has one of
+    // the quests in the log, not yet handed in. The owner must be on the
+    // same map.
+    bool HoldsAnyOrOwnerDoes(Player const* who, std::vector<uint32> const& quests)
+    {
+        for (uint32 questId : quests)
+            if (who->IsCurrentQuest(questId))
+                return true;
+        if (uint32 owner = Playerbot_CompanionOwner(who->GetGUIDLow()))
+            if (Player const* master = who->GetMap()->GetPlayer(ObjectGuid(HIGHGUID_PLAYER, owner)))
+                for (uint32 questId : quests)
+                    if (master->IsCurrentQuest(questId))
+                        return true;
+        return false;
+    }
 
     uint64 CampKey(uint32 factionTemplate, uint32 zone)
     {
@@ -3850,17 +3894,30 @@ bool FactionlessWar::Load()
     s_spawnZone.clear();
     s_campEnds.clear();
     s_warQuestCount = 0;
+    s_peaceQuests.clear();
 
-    // A SELECT on a missing table is ASSERT(false) in HandleMySQLError.
-    bool present = false;
-    if (QueryResult* probe = WorldDatabase.Query(
-            "SELECT COUNT(*) FROM information_schema.tables "
-            "WHERE table_schema = DATABASE() AND table_name = 'factionless_war_creature'"))
+    if (WorldTableExists("factionless_peace_creature"))
     {
-        present = probe->Fetch()[0].GetUInt32() > 0;
-        delete probe;
+        if (QueryResult* result = WorldDatabase.Query("SELECT entry, quest FROM factionless_peace_creature"))
+        {
+            do
+            {
+                Field* fields = result->Fetch();
+                uint32 entry = fields[0].GetUInt32();
+                uint32 questId = fields[1].GetUInt32();
+                if (!sObjectMgr.GetCreatureTemplate(entry))
+                    sLog.outErrorDb("Table `factionless_peace_creature` has nonexistent creature entry %u, skipped.", entry);
+                else if (!sObjectMgr.GetQuestTemplate(questId))
+                    sLog.outErrorDb("Table `factionless_peace_creature` has nonexistent quest %u for creature %u, skipped.", questId, entry);
+                else
+                    s_peaceQuests[entry].push_back(questId);
+            }
+            while (result->NextRow());
+            delete result;
+        }
     }
-    if (!present)
+
+    if (!WorldTableExists("factionless_war_creature"))
         return false;
 
     if (QueryResult* result = WorldDatabase.Query("SELECT entry FROM factionless_war_creature"))
@@ -4063,9 +4120,36 @@ bool FactionlessWar::AtWar(Player const* player, WorldObject const* target)
     return false;
 }
 
-bool FactionlessWar::IsWarCreature(Creature const* creature)
+bool FactionlessWar::AtPeace(Player const* player, WorldObject const* target)
 {
-    return s_warCreatures.count(creature->GetEntry()) != 0 || WarSummoner(creature);
+    if (!player || !target || s_peaceQuests.empty() || !sWorld.getConfig(CONFIG_BOOL_FACTIONLESS_ENABLE))
+        return false;
+
+    Creature const* creature = target->ToCreature();
+    if (!creature)
+        return false;
+    auto quests = s_peaceQuests.find(creature->GetEntry());
+    if (quests == s_peaceQuests.end())
+        return false;
+
+    // A script that sets the creature a faction of its own wins, as for the war.
+    CreatureInfo const* info = creature->GetCreatureInfo();
+    if (!info || creature->GetFactionTemplateId() != info->faction)
+        return false;
+
+    return HoldsAnyOrOwnerDoes(player, quests->second);
+}
+
+bool FactionlessWar::IsListedCreature(Creature const* creature)
+{
+    return s_warCreatures.count(creature->GetEntry()) != 0
+        || s_peaceQuests.count(creature->GetEntry()) != 0
+        || WarSummoner(creature);
+}
+
+uint32 FactionlessWar::PeaceCount()
+{
+    return uint32(s_peaceQuests.size());
 }
 
 uint32 FactionlessWar::CreatureCount()
@@ -4351,6 +4435,9 @@ float WorldObject::MeleeSpellMissChance(Unit* pVictim, WeaponAttackType attType,
             hitChance += pUnit->m_modRangedHitChance;
         else
             hitChance += pUnit->m_modMeleeHitChance;
+
+        if (attType == OFF_ATTACK)
+            hitChance += pUnit->m_modOffhandHitChance;
 
         if (pUnit->IsPet())
         {

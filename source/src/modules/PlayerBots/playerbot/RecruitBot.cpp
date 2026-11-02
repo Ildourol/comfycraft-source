@@ -284,3 +284,69 @@ bool Playerbot_RecruitBotForPlayer(Player* player, uint32 role, uint32 classId, 
     chat.PSendSysMessage("%s will be along shortly.", created.c_str());
     return true;
 }
+
+// The classes with a premade spec for a hire role, for ComfyUI's stone window
+// (Handlers/LFGHandler.cpp): lower case, comma separated, in class id order.
+// The test is the one the hire makes on a named class above, so the window
+// offers exactly the classes a hire accepts.
+std::string Playerbot_HireClasses(uint32 role)
+{
+    if (!sPlayerbotAIConfig.enabled)
+        return std::string();
+
+    static uint8 const CLASSES[] =
+    {
+        CLASS_WARRIOR, CLASS_PALADIN, CLASS_HUNTER, CLASS_ROGUE, CLASS_PRIEST,
+        CLASS_SHAMAN, CLASS_MAGE, CLASS_WARLOCK, CLASS_DRUID,
+    };
+
+    const BotRoles wanted = RoleFromScriptOption(role);
+    std::string out;
+    for (uint8 cls : CLASSES)
+    {
+        if (ChangeTalentsAction::getPremadePaths(cls, "", wanted).empty())
+            continue;
+        if (!out.empty())
+            out += ",";
+        out += ChatHelper::formatClass(cls);
+    }
+    return out;
+}
+
+// One companion sent home by name, from the stone window's Send home button
+// (`.stone home <name>`). The same DeleteBot as DismissAll, for one guid.
+// Returns true if somebody left.
+bool Playerbot_SendCompanionHome(Player* player, char const* name)
+{
+    if (!player || !name || !*name || !sPlayerbotAIConfig.enabled)
+        return false;
+
+    ChatHandler chat(player);
+
+    PlayerbotMgr* mgr = GetBotMgr(player);
+    if (!mgr)
+        return false;
+
+    std::string wanted = name;
+    strToLower(wanted);
+
+    for (uint32 guid : CompanionOwnership::CompanionsOf(player->GetGUIDLow()))
+    {
+        std::string have;
+        if (!sObjectMgr.GetPlayerNameByGUID(ObjectGuid(HIGHGUID_PLAYER, guid), have))
+            continue;
+
+        std::string lower = have;
+        strToLower(lower);
+        if (lower != wanted)
+            continue;
+
+        // The name is copied before DeleteBot, which destroys the Player.
+        mgr->DeleteBot(ObjectGuid(HIGHGUID_PLAYER, guid));
+        chat.PSendSysMessage("%s takes their leave.", have.c_str());
+        return true;
+    }
+
+    chat.PSendSysMessage("%s is not travelling with you.", name);
+    return false;
+}

@@ -44,6 +44,7 @@
 -- ============================================================================
 
 SET @VENDOR := 100027;   -- 100000-100026 are taken; see CLAUDE.md
+SET @WITCHCAT := 100046; -- the crated Witch Cat, a copy of creature 89005
 SET @SCRIPT := 'item_house_furniture';
 SET @DESC   := 'Right-click to let it out in your house.';
 
@@ -96,6 +97,20 @@ DELETE FROM house_critter_item WHERE item_entry BETWEEN 100300 AND 100399;
 DELETE FROM item_template      WHERE entry      BETWEEN 100300 AND 100399;
 DELETE FROM npc_vendor         WHERE entry = @VENDOR;
 DELETE FROM creature_template  WHERE entry = @VENDOR;
+DELETE FROM creature_template  WHERE entry = @WITCHCAT;
+
+-- ---------------------------------------------------------------------------
+--  The Witch Cat
+-- ---------------------------------------------------------------------------
+--  A copy of Turtle's Midnight (89005: display 18628, the Hallow's End cat with
+--  a witch hat, scale 0.8) under a name of its own. A creature's name comes
+--  from creature_template, so the crate's cat would otherwise come out as
+--  "Midnight". The copy leaves 89005 and its companion pet item (80010) alone.
+--  Players can still rename their cat with `.house critter name`.
+CREATE TEMPORARY TABLE witch_cat AS SELECT * FROM creature_template WHERE entry = 89005;
+UPDATE witch_cat SET entry = @WITCHCAT, name = 'Witch Cat', subname = '';
+INSERT INTO creature_template SELECT * FROM witch_cat;
+DROP TEMPORARY TABLE witch_cat;
 
 -- ---------------------------------------------------------------------------
 --  The stock
@@ -132,7 +147,8 @@ VALUES
   (100308,0,0,'Crated Hare',         @DESC,@ICON,1,0, 10000, 2000,0,-1,-1,1,0,1,0,0,2,0,@USE,0,0,@SCRIPT),
   (100309,0,0,'Crated Fawn',         @DESC,@ICON,1,0, 25000, 5000,0,-1,-1,1,0,1,0,0,2,0,@USE,0,0,@SCRIPT),
   (100310,0,0,'Crated Sheep',        @DESC,@ICON,1,0, 15000, 3000,0,-1,-1,1,0,1,0,0,2,0,@USE,0,0,@SCRIPT),
-  (100311,0,0,'Crated Whelpling',    @DESC,@ICON,1,0,150000,30000,0,-1,-1,1,0,1,0,0,2,0,@USE,0,0,@SCRIPT);
+  (100311,0,0,'Crated Whelpling',    @DESC,@ICON,1,0,150000,30000,0,-1,-1,1,0,1,0,0,2,0,@USE,0,0,@SCRIPT),
+  (100312,0,0,'Crated Witch Cat',    @DESC,@ICON,1,0, 20000, 4000,0,-1,-1,1,0,1,0,0,2,0,@USE,0,0,@SCRIPT);
 
 --  A LARGER ANIMAL GETS A SMALLER RADIUS, not a larger one. A sheep covers
 --  three yards in about the time a toad covers one, so matching radius to size
@@ -149,7 +165,10 @@ INSERT INTO house_critter_item (item_entry, critter_entry, wander) VALUES
   (100308,  5951, 3),  -- Hare
   (100309,   890, 2),  -- Fawn
   (100310,  1933, 2),  -- Sheep
-  (100311, 50635, 2);  -- Onyxian Whelpling ships at scale 0.4
+  (100311, 50635, 2),  -- Onyxian Whelpling ships at scale 0.4
+  (100312, @WITCHCAT, 3);  -- Witch Cat     a copy of Turtle's Midnight, below. Hallow's End,
+                           --               not in Wren's stock. Reforged clients need patch-R
+                           --               (patches/lib/cat-hallowsend.js)
 
 -- ---------------------------------------------------------------------------
 --  The vendor

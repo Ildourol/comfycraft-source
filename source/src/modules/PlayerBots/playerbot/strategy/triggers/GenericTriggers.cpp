@@ -6,6 +6,7 @@
 #include "playerbot/PlayerbotAIConfig.h"
 #include "playerbot/strategy/values/PositionValue.h"
 #include "playerbot/strategy/values/AoeValues.h"
+#include "playerbot/strategy/values/PossibleAttackTargetsValue.h"
 #include "playerbot/strategy/values/CcTargetValue.h"
 #include "playerbot/strategy/generic/PullStrategy.h"
 
@@ -117,6 +118,43 @@ bool NeedsFoodTrigger::IsActive()
 bool AlmostFullManaTrigger::IsActive()
 {
     return AI_VALUE2(bool, "has mana", "self target") && AI_VALUE2(uint8, "mana", "self target") > 85;
+}
+
+// No pet out, not mounted, and not in a teleport: the core puts a pet back
+// after a teleport (ResummonPetTemporaryUnSummonedIfAny), so a summon then
+// would waste a Soul Shard. With `debug` on, each change of this state is one
+// "pet:" line to the owner, with what GetPet() gave.
+bool NoPetTrigger::IsActive()
+{
+    Unit* pet = AI_VALUE(Unit*, "pet target");
+    const bool mounted = AI_VALUE2(bool, "mounted", "self target");
+    const bool teleporting = bot->IsBeingTeleported();
+
+    if (Player* master = ai->GetMaster())
+    {
+        if (ai->HasStrategy("debug", BotState::BOT_STATE_NON_COMBAT))
+        {
+            std::string state;
+            if (pet)
+            {
+                state = std::string("pet: ") + pet->GetName() + " (" + std::to_string(pet->GetEntry()) + ")" +
+                    (sServerFacade.IsAlive(pet) ? " alive" : " dead") + (pet->IsInWorld() ? "" : ", not in world");
+            }
+            else
+            {
+                state = std::string("pet: none, ") +
+                    (mounted ? "mounted, no summon" : teleporting ? "teleporting, no summon" : "summon wanted");
+            }
+
+            if (state != lastDebugState)
+            {
+                lastDebugState = state;
+                ai->TellDebug(master, state);
+            }
+        }
+    }
+
+    return !pet && !mounted && !teleporting;
 }
 
 bool RageAvailable::IsActive()
@@ -394,6 +432,35 @@ bool AoeTrigger::IsActive()
 {
     std::list<ObjectGuid> aoeEnemies = AoeCountValue::FindMaxDensity(bot, range);
     return aoeEnemies.size() >= amount;
+}
+
+uint32 MeleeAoeTrigger::CountAttackersInMeleeReach(PlayerbotAI* ai, float reachBonus)
+{
+    Player* bot = ai->GetBot();
+    if (!bot)
+        return 0;
+
+    uint32 count = 0;
+    const std::list<ObjectGuid> attackers = ai->GetAiObjectContext()->GetValue<std::list<ObjectGuid>>("attackers")->Get();
+    for (const ObjectGuid& guid : attackers)
+    {
+        Unit* unit = ai->GetUnit(guid);
+        if (!unit || !unit->IsAlive())
+            continue;
+
+        if (PossibleAttackTargetsValue::HasDamageBreakableCC(unit))
+            continue;
+
+        if (bot->CanReachWithMeleeAutoAttack(unit, reachBonus))
+            ++count;
+    }
+
+    return count;
+}
+
+bool MeleeAoeTrigger::IsActive()
+{
+    return CountAttackersInMeleeReach(ai) >= uint32(amount);
 }
 
 bool DebuffTrigger::IsActive()

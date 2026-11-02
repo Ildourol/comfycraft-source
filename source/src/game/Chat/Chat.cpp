@@ -1182,6 +1182,8 @@ ChatCommand * ChatHandler::getCommandTable()
         { "moonstone",      SEC_PLAYER,           false, &ComfyCommands::HandleMoonstoneCommand,         "", nullptr },
         { "compact",        SEC_PLAYER,           false, &ComfyCommands::HandleCompactCommand,           "", nullptr },
         { "companions",     SEC_PLAYER,           false, &ComfyCommands::HandleCompanionsCommand,        "", nullptr },
+        // ComfyUI's stone window sends it. It hires, so the hire keeps its own checks.
+        { "stone",          SEC_PLAYER,           false, &ComfyCommands::HandleStoneCommand,             "", nullptr },
         // Before "ccdebug": the first row that `.cc` abbreviates wins.
         { "cc",             SEC_PLAYER,           false, &ComfyCommands::HandleCompanionOrderCommand,    "", nullptr },
         { "ccdebug",        SEC_PLAYER,           true,  &ComfyCommands::HandleCompanionDebugCommand,    "", nullptr },

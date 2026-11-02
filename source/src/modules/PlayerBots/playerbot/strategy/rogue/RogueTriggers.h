@@ -24,6 +24,22 @@ namespace ai
         virtual bool IsActive() override { if (ai->HasAura("stealth", bot)) return false; return BoostTrigger::IsActive(); }
     };
 
+    // Blade Flurry on this server is a toggle: it lasts until cancelled and
+    // cuts the rogue's damage and Energy regeneration by 20%. It is cast on
+    // "melee light aoe" (two attackers in melee reach). This trigger cancels
+    // it when fewer than two attackers are within melee reach plus a margin.
+    // The margin stops a recast and cancel loop when a mob steps in and out
+    // of reach; each recast costs 25 Energy and has a 4 second cooldown.
+    class BladeFlurryNoAoeTrigger : public Trigger
+    {
+    public:
+        BladeFlurryNoAoeTrigger(PlayerbotAI* ai) : Trigger(ai, "blade flurry no aoe", 2) {}
+        bool IsActive() override
+        {
+            return ai->HasAura("blade flurry", bot) && MeleeAoeTrigger::CountAttackersInMeleeReach(ai, 3.0f) < 2;
+        }
+    };
+
     class RuptureTrigger : public NoDebuffAndComboPointsAvailableTrigger
     {
     public:

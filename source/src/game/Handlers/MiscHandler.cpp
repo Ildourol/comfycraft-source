@@ -55,6 +55,7 @@
 #include "BotNpc.h"             // bot NPCs are left out of /who
 #include "Announcements.h"
 #include "DungeonRun.h"
+#include "DungeonBosses.h"      // DungeonFinderMaxLevel, the level rule's cap
 
 #include <map>                 // the bug-report cooldown table
 #include <mutex>
@@ -1394,6 +1395,9 @@ void WorldSession::HandleCompleteCinematic(WorldPacket & /*recv_data*/)
     Announce::CinematicEnded(GetPlayer());
 }
 
+// ChatHandler.cpp: an announcement to the Discord bridge (docs/ai/tools/discord-bridge.md).
+void SendAnnouncementToDiscord(std::string const& text);
+
 // The new character welcome and the level announcements
 // (Objects/Announcements.h).
 namespace
@@ -1463,6 +1467,7 @@ namespace
         AnnounceReplace(text, "{name}", AnnouncePlayerLink(name, classId));
         AnnounceReplace(text, "{level}", std::to_string(level));
         sWorld.SendGlobalText(text.c_str(), nullptr);
+        SendAnnouncementToDiscord(text);
     }
 
     // One message of `kind` from announce_message (219), when the switch of
@@ -1537,23 +1542,26 @@ namespace
     }
 
     // The best ranked time before this run, as the /charts board ranks it: the
-    // level rule, and at least one member who is not a bot, not on a GM
-    // account and not deleted. The board also leaves out a player who
+    // level rule (the group finder's top level for the dungeon or wing, else
+    // the run's boss_level), and at least one member who is not a bot, not
+    // on a GM account and not deleted. The board also leaves out a player who
     // unticked "List my characters in the Armory"; tw_web is not read here.
     // False when there is none.
     bool DungeonBest(AnnounceDungeonClear const& clear, bool full, std::string const& gmAccounts, uint32& best)
     {
         char const* const ms = full ? "full_ms" : "last_boss_ms";
         char const* const level = full ? "max_level" : "last_max_level";
+        uint8 const finder = DungeonFinderMaxLevel(clear.mapId, clear.wing);
+        std::string const cap = finder ? std::to_string(finder) : "r.`boss_level`";
         bool found = false;
         if (QueryResult* result = CharacterDatabase.PQuery(
                 "SELECT MIN(r.`%s`) FROM `dungeon_run` r "
                 "WHERE r.`map` = %u AND r.`wing` = %u AND r.`id` <> %u "
-                "AND r.`%s` IS NOT NULL AND r.`%s` <= r.`boss_level` "
+                "AND r.`%s` IS NOT NULL AND r.`%s` <= %s "
                 "AND EXISTS (SELECT 1 FROM `dungeon_run_member` m JOIN `characters` c ON c.`guid` = m.`guid` "
                 "WHERE m.`run_id` = r.`id` AND m.`is_bot` = 0 AND c.`account` NOT IN (%s) "
                 "AND (c.`deleteDate` IS NULL OR c.`deleteDate` = 0))",
-                ms, clear.mapId, uint32(clear.wing), clear.runId, ms, level, gmAccounts.c_str()))
+                ms, clear.mapId, uint32(clear.wing), clear.runId, ms, level, cap.c_str(), gmAccounts.c_str()))
         {
             if (!result->Fetch()[0].IsNULL())
             {
@@ -1604,6 +1612,7 @@ namespace
         AnnounceReplace(text, "{dungeon}", clear.dungeon);
         AnnounceReplace(text, "{time}", fullRecord ? clear.fullClock : clear.lastClock);
         sWorld.SendGlobalText(text.c_str(), nullptr);
+        SendAnnouncementToDiscord(text);
     }
 
     void HouseAnnounce(std::string name, uint8 classId, std::string zone)

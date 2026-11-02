@@ -213,6 +213,7 @@ namespace ai
                 creators["killing spree"] = [](PlayerbotAI* ai) { return new RogueBoostBuffTrigger(ai, "killing spree"); };
                 creators["eviscerate"] = [](PlayerbotAI* ai) { return new EviscerateTrigger(ai); };
                 creators["blade flurry"] = [](PlayerbotAI* ai) { return new RogueBoostBuffTrigger(ai, "blade flurry"); };
+                creators["blade flurry no aoe"] = [](PlayerbotAI* ai) { return new BladeFlurryNoAoeTrigger(ai); };
                 //creators["tricks of the trade on tank"] = [](PlayerbotAI* ai) { return new TricksOfTheTradeOnTankTrigger(ai); };
                 creators["cloak of shadows"] = [](PlayerbotAI* ai) { return new CloakOfShadowsTrigger(ai); };
                 creators["fan of knives"] = [](PlayerbotAI* ai) { return new SpellCanBeCastedTrigger(ai, "fan of knives"); };
@@ -256,6 +257,7 @@ namespace ai
                 creators["expose armor"] = [](PlayerbotAI* ai) { return new CastExposeArmorAction(ai); };
                 creators["kick on enemy healer"] = [](PlayerbotAI* ai) { return new CastKickOnEnemyHealerAction(ai); };
                 creators["blade flurry"] = [](PlayerbotAI* ai) { return new CastBladeFlurryAction(ai); };
+                creators["remove blade flurry"] = [](PlayerbotAI* ai) { return new RemoveBuffAction(ai, "blade flurry"); };
                 creators["adrenaline rush"] = [](PlayerbotAI* ai) { return new CastAdrenalineRushAction(ai); };
                 creators["ambush"] = [](PlayerbotAI* ai) { return new CastAmbushAction(ai); };
                 creators["stealth"] = [](PlayerbotAI* ai) { return new CastStealthAction(ai); };

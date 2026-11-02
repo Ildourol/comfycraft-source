@@ -4101,10 +4101,12 @@ void RandomPlayerbotMgr::OnPlayerLogout(Player* player)
 
     ForEachPlayerbot([&](Player* bot) {
         PlayerbotAI* ai = GetBotAI(bot);
-        if (player == ai->GetMaster())
+        if (ai && player == ai->GetMaster())
         {
             ai->SetMaster(NULL);
-            if (!bot->InBattleGround())
+            // Not for a companion: the reset drops stay and guard, and its next
+            // tick takes a new master with the strategies it has.
+            if (!bot->InBattleGround() && !CompanionOwnership::IsCompanion(bot->GetGUIDLow()))
             {
                 ai->ResetStrategies();
             }
@@ -4141,6 +4143,12 @@ void RandomPlayerbotMgr::OnPlayerLogin(Player* player)
     ForEachPlayerbot([&](Player* bot)
     {
         if (player == bot)
+            return;
+
+        // A companion takes its master in PlayerbotAI::UpdateCompanionMaster:
+        // the leader if a real player leads, else its owner. Never the first
+        // member to log in.
+        if (CompanionOwnership::IsCompanion(bot->GetGUIDLow()))
             return;
 
         Group* group = bot->GetGroup();

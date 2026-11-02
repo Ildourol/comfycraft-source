@@ -5141,6 +5141,15 @@ void Aura::HandleModHitChance(bool apply, bool /*Real*/)
 {
     Unit *target = GetTarget();
 
+    // Warrior Dual Wield Specialization, ranks 1-5: the tooltip gives hit "with your
+    // offhand weapon" only. Read in MeleeMissChanceCalc and MeleeSpellMissChance for
+    // OFF_ATTACK; main hand, abilities and ranged get nothing from it.
+    if (GetId() >= 23584 && GetId() <= 23588)
+    {
+        target->m_modOffhandHitChance += apply ? m_modifier.m_amount : (-m_modifier.m_amount);
+        return;
+    }
+
     if (GetId() != 22780) // [Ranged Hit Bonus +3] as stated in name ...
         target->m_modMeleeHitChance += apply ? m_modifier.m_amount : (-m_modifier.m_amount);
     target->m_modRangedHitChance += apply ? m_modifier.m_amount : (-m_modifier.m_amount);

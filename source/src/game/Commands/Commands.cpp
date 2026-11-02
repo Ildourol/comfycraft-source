@@ -3873,6 +3873,23 @@ bool ComfyCommands::HandleGearCommand(ChatHandler* handler, char* args)
 // gossip (SCRIPT_COMMAND_RECRUIT_BOT); it sends its own answers to the player.
 extern bool Playerbot_RecruitBotForPlayer(Player* player, uint32 role, uint32 classId, char const* spec);
 
+// The class names `.hire` and `.stone hire` take; ChatHelper::formatClass
+// gives the same lower-case names, so Playerbot_HireClasses can be read back.
+uint32 ComfyCommands::ExtractHireClass(ChatHandler* handler, char** args)
+{
+    static struct { char const* name; uint32 id; } const CLASSES[] =
+    {
+        { "warrior", CLASS_WARRIOR }, { "paladin", CLASS_PALADIN }, { "hunter", CLASS_HUNTER },
+        { "rogue", CLASS_ROGUE }, { "priest", CLASS_PRIEST }, { "shaman", CLASS_SHAMAN },
+        { "mage", CLASS_MAGE }, { "warlock", CLASS_WARLOCK }, { "druid", CLASS_DRUID },
+    };
+
+    for (auto const& c : CLASSES)
+        if (handler->ExtractLiteralArg(args, c.name))
+            return c.id;
+    return 0;
+}
+
 // .hire tank | healer | dps [class [spec]], .hire dismiss
 //
 // Elowen's hire without the gossip: a companion of the role made at your level,
@@ -3891,13 +3908,6 @@ bool ComfyCommands::HandleHireCommand(ChatHandler* handler, char* args)
         { "tank", SO_RECRUIT_TANK }, { "healer", SO_RECRUIT_HEALER },
         { "dps", SO_RECRUIT_DPS }, { "dismiss", SO_RECRUIT_DISMISS },
     };
-    static struct { char const* name; uint32 id; } const CLASSES[] =
-    {
-        { "warrior", CLASS_WARRIOR }, { "paladin", CLASS_PALADIN }, { "hunter", CLASS_HUNTER },
-        { "rogue", CLASS_ROGUE }, { "priest", CLASS_PRIEST }, { "shaman", CLASS_SHAMAN },
-        { "mage", CLASS_MAGE }, { "warlock", CLASS_WARLOCK }, { "druid", CLASS_DRUID },
-    };
-
     uint32 role = SO_RECRUIT_MAX;
     for (auto const& r : ROLES)
         if (handler->ExtractLiteralArg(&args, r.name))
@@ -3914,12 +3924,7 @@ bool ComfyCommands::HandleHireCommand(ChatHandler* handler, char* args)
     {
         if (role == SO_RECRUIT_DISMISS)
             return false;
-        for (auto const& c : CLASSES)
-            if (handler->ExtractLiteralArg(&args, c.name))
-            {
-                classId = c.id;
-                break;
-            }
+        classId = ExtractHireClass(handler, &args);
         if (!classId)
             return false;
         if (*args)
@@ -3932,6 +3937,105 @@ bool ComfyCommands::HandleHireCommand(ChatHandler* handler, char* args)
 
     // A refusal is already said, in the hire's own words.
     if (!Playerbot_RecruitBotForPlayer(player, role, classId, spec))
+        handler->SetSentErrorMessage(true);
+    return true;
+}
+
+// RecruitBot.cpp, stubbed in PlayerbotStubs.cpp. One companion of the player's
+// sent home by name; it says so itself, or why not.
+extern bool Playerbot_SendCompanionHome(Player* player, char const* name);
+
+// Handlers/ChatHandler.cpp: the chat type of the line being parsed, 0 when
+// the command did not come from chat.
+extern uint32 ChatCommandChatType();
+
+// .stone ready | hire tank | healer | dps [class] | home <name>
+//
+// ComfyUI's stone window (addon/ComfyUI/StoneWindow.lua) sends these; a player
+// does not type them. `ready` marks the session, and a stone click then opens
+// the window (Handlers/LFGHandler.cpp). `hire` is Elowen's hire, allowed only
+// while the player can still use the stone the window was opened from; away
+// from it the window is told to close. `home` sends one companion home, from
+// anywhere, as removing it from the party does.
+//
+// The hire's own checks apply (leader only, party full, two each, not while
+// invading): this is the same call as Elowen's gossip and `.hire`.
+bool ComfyCommands::HandleStoneCommand(ChatHandler* handler, char* args)
+{
+    WorldSession* session = handler->m_session;
+    Player* player = session ? session->GetPlayer() : nullptr;
+    if (!player)
+        return false;
+
+    if (handler->ExtractLiteralArg(&args, "ready"))
+    {
+        session->SetStoneWindowReady();
+        return true;
+    }
+
+    // Hiring and sending home run bot code. The addon sends them in /say,
+    // which runs on the player's map thread, as Elowen's gossip does. A
+    // player's party line or whisper runs on AsyncPackets, which must not
+    // reach bot code (companion-crash-audit.md). A GM's chat runs on the
+    // world thread.
+    if (session->GetSecurity() == SEC_PLAYER)
+    {
+        uint32 const type = ChatCommandChatType();
+        if (type != CHAT_MSG_SAY && type != CHAT_MSG_YELL && type != CHAT_MSG_EMOTE)
+        {
+            handler->SendSysMessage("Use the stone window.");
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+    }
+
+    if (handler->ExtractLiteralArg(&args, "home"))
+    {
+        char const* name = handler->ExtractArg(&args);
+        if (!name || *args)
+            return false;
+        if (!Playerbot_SendCompanionHome(player, name))
+            handler->SetSentErrorMessage(true);
+        return true;
+    }
+
+    if (!handler->ExtractLiteralArg(&args, "hire"))
+        return false;
+
+    static struct { char const* name; uint32 role; } const ROLES[] =
+    {
+        { "tank", SO_RECRUIT_TANK }, { "healer", SO_RECRUIT_HEALER }, { "dps", SO_RECRUIT_DPS },
+    };
+
+    uint32 role = SO_RECRUIT_MAX;
+    for (auto const& r : ROLES)
+        if (handler->ExtractLiteralArg(&args, r.name))
+        {
+            role = r.role;
+            break;
+        }
+    if (role == SO_RECRUIT_MAX)
+        return false;
+
+    uint32 classId = 0;
+    if (*args)
+    {
+        classId = ExtractHireClass(handler, &args);
+        if (!classId || *args)
+            return false;
+    }
+
+    ObjectGuid const stone = session->GetStoneWindowGuid();
+    if (stone.IsEmpty() || !player->GetGameObjectIfCanInteractWith(stone, GAMEOBJECT_TYPE_MEETINGSTONE))
+    {
+        handler->SendSysMessage("Stand at the summoning stone to hire.");
+        player->SendAddonMessage("CSTONE", "C");
+        handler->SetSentErrorMessage(true);
+        return false;
+    }
+
+    // A refusal is already said, in the hire's own words.
+    if (!Playerbot_RecruitBotForPlayer(player, role, classId, nullptr))
         handler->SetSentErrorMessage(true);
     return true;
 }
@@ -6955,6 +7059,121 @@ bool ComfyCommands::HandleGMTicketRespondCommand(ChatHandler* handler, char* arg
 extern uint32 WorldDiscord_Guid(std::string const& discordId);
 extern void WorldDiscord_SetName(uint32 lowGuid, std::string const& name);
 
+// The address of an item or quest page in the website's database, pasted in Discord, becomes a link
+// in World. This is done in the core because the bridge has no database, and because worldsay
+// doubles every | the bridge sends.
+//
+// `text` has its | already doubled. An address is http:// or https://, any host (only the id is
+// used), /database/item/<digits> or /database/quest/<digits>, and an optional /. It runs to a space,
+// a <, a >, a | or the end. Out of Discord's <...>, a stop, comma or bracket at its end belongs to the
+// sentence. In <...> the brackets go with it.
+//
+// An item is |cff<colour>|Hitem:<entry>:0:0:0|h[<Name1>]|h|r, the 1.12 client's own form in the
+// quality colour, which isValidChatMessage (ChatStrictLinkChecking) accepts when a player
+// shift-clicks it back into chat. It stays as typed when the item has a random property (a link
+// without its suffix fails the strict check).
+// A quest is |cffffff00|Hquest:<id>:<level>|h[<Title>]|h|r, pfQuest's form. The 1.12 client has no
+// quest links: with pfQuest a click shows the quest tooltip, and without it the name does nothing.
+// A level of 0 or below is written 0, and pfQuest then takes the level from its own data.
+//
+// The address stays as typed when the id is not an item or a quest or is over a uint32, when the
+// name is empty or holds | [ or ], or when the link would end past `limit` bytes. So a cut at
+// `limit` never splits a link. The end offset of each link goes into `linkEnds`.
+static std::string WorldSay_DatabaseAddressLinks(std::string const& text, size_t limit, std::vector<size_t>& linkEnds)
+{
+    auto lower = [](char c) { return (c >= 'A' && c <= 'Z') ? char(c - 'A' + 'a') : c; };
+    auto isAlnum = [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); };
+    // Case-insensitive: does `word` (lower case) start at text[at], before `stop`?
+    auto startsWith = [&](size_t at, size_t stop, char const* word)
+    {
+        for (size_t k = 0; word[k]; ++k)
+            if (at + k >= stop || lower(text[at + k]) != word[k])
+                return false;
+        return true;
+    };
+    std::string const sentenceEnd = ".,;:!?)'\"";
+
+    std::string out;
+    size_t i = 0;
+    while (i < text.size())
+    {
+        if ((i > 0 && isAlnum(text[i - 1])) || !startsWith(i, text.size(), "http"))
+        {
+            out += text[i++];
+            continue;
+        }
+
+        size_t end = i;
+        while (end < text.size() && text[end] != ' ' && text[end] != '<' && text[end] != '>' && text[end] != '|')
+            ++end;
+        bool const bracketed = i > 0 && text[i - 1] == '<' && end < text.size() && text[end] == '>';
+        size_t addrEnd = end;
+        if (!bracketed)
+            while (addrEnd > i && sentenceEnd.find(text[addrEnd - 1]) != std::string::npos)
+                --addrEnd;
+
+        size_t p = i;
+        if (startsWith(p, addrEnd, "https://"))
+            p += 8;
+        else if (startsWith(p, addrEnd, "http://"))
+            p += 7;
+        else
+            p = addrEnd;
+        size_t const hostStart = p;
+        while (p < addrEnd && text[p] != '/')
+            ++p;
+
+        std::string link;
+        bool const isItem = p > hostStart && startsWith(p, addrEnd, "/database/item/");
+        bool const isQuest = p > hostStart && !isItem && startsWith(p, addrEnd, "/database/quest/");
+        if (isItem || isQuest)
+        {
+            p += isItem ? 15 : 16;
+            size_t const digits = p;
+            uint64 value = 0;
+            while (p < addrEnd && text[p] >= '0' && text[p] <= '9' && value <= 0xFFFFFFFF)
+                value = value * 10 + uint64(text[p++] - '0');
+            bool const whole = p > digits && value <= 0xFFFFFFFF &&
+                               (p == addrEnd || (p + 1 == addrEnd && text[p] == '/'));
+            if (ItemPrototype const* proto = whole && isItem ? sObjectMgr.GetItemPrototype(uint32(value)) : nullptr)
+            {
+                if (proto->Quality < MAX_ITEM_QUALITY && !proto->RandomProperty && !proto->Name1.empty() &&
+                    proto->Name1.find_first_of("|[]") == std::string::npos)
+                {
+                    char colour[16];
+                    snprintf(colour, sizeof(colour), "%08x", ItemQualityColors[proto->Quality]);
+                    link = std::string("|c") + colour + "|Hitem:" + std::to_string(proto->ItemId) + ":0:0:0|h[" +
+                           proto->Name1 + "]|h|r";
+                }
+            }
+            if (Quest const* quest = whole && isQuest ? sObjectMgr.GetQuestTemplate(uint32(value)) : nullptr)
+            {
+                // QuestLevel is read with GetUInt32, so a -1 in the table arrives as 4294967295.
+                int32 const level = int32(quest->GetQuestLevel());
+                if (!quest->GetTitle().empty() && quest->GetTitle().find_first_of("|[]") == std::string::npos)
+                    link = "|cffffff00|Hquest:" + std::to_string(quest->GetQuestId()) + ":" +
+                           std::to_string(level > 0 ? level : 0) + "|h[" + quest->GetTitle() + "]|h|r";
+            }
+        }
+
+        // With brackets, the < is already in `out`.
+        size_t const before = out.size() - (bracketed ? 1 : 0);
+        if (!link.empty() && before + link.size() <= limit)
+        {
+            out.resize(before);
+            out += link;
+            linkEnds.push_back(out.size());
+            i = bracketed ? end + 1 : addrEnd;
+        }
+        else
+        {
+            out.append(text, i, end - i);
+            i = end;
+        }
+    }
+    return out;
+}
+
 bool ComfyCommands::HandleWorldSayCommand(ChatHandler* handler, char* args)
 {
     char* idArg = handler->ExtractArg(&args);
@@ -7024,7 +7243,12 @@ bool ComfyCommands::HandleWorldSayCommand(ChatHandler* handler, char* args)
     if (!WStrToUtf8(wclean, name) || !WStrToUtf8(wsaid, text))
         return false;
 
-    // The client's limit, 255 bytes, cut on a character boundary and never inside a doubled |.
+    // A database item or quest address becomes its link. Each link ends at or before byte 255.
+    std::vector<size_t> linkEnds;
+    text = WorldSay_DatabaseAddressLinks(text, 255, linkEnds);
+
+    // The client's limit, 255 bytes, cut on a character boundary and never inside a doubled |. The
+    // byte after a link starts a character, so the cut stops there at the latest and keeps the link.
     if (text.size() > 255)
     {
         size_t end = 255;
@@ -7045,7 +7269,20 @@ bool ComfyCommands::HandleWorldSayCommand(ChatHandler* handler, char* args)
     ObjectGuid const guid(HIGHGUID_PLAYER, lowGuid);
     ChannelMgr::AnnounceBothFactionsChannel("World", guid, text.c_str());
     // The moderators' copy of World, as a player's line has (ChatHandler.cpp), in Discord's colour.
-    ChannelMgr::AnnounceBothFactionsChannel("Global", guid, ("|cff7289da" + text + "|r").c_str());
+    // A link's |r ends that colour, so it opens again after each link.
+    std::string global = "|cff7289da";
+    size_t from = 0;
+    for (size_t at : linkEnds)
+    {
+        if (at > text.size())
+            break;
+        global.append(text, from, at - from);
+        global += "|cff7289da";
+        from = at;
+    }
+    global.append(text, from, std::string::npos);
+    global += "|r";
+    ChannelMgr::AnnounceBothFactionsChannel("Global", guid, global.c_str());
     return true;
 }
 
@@ -15644,6 +15881,7 @@ namespace
         { "soundlog",          ".soundlog [on | off]   a chat line for each sound the server sends you, with its source" },
         { "companions",        ".companions   name your companions" },
         { "hire",              ".hire tank | healer | dps [class [spec]], .hire dismiss   a companion at your level, as Elowen hires" },
+        { "stone",             ".stone hire tank | healer | dps [class] | home <name>   companions at a summoning stone (the addon sends this)" },
         { "cc",                ".cc attack | pull | follow | stay | flee | summon   an order to the companions in your group, with nothing in chat; .cc aggro | defend | mode   whether they wait for a pull to arrive" },
         { "ccdebug",           ".ccdebug [name] on | off | quiet   a companion's debug log, server\\companion-logs (your target if no name); quiet keeps it out of chat" },
         { "npcbot",            ".npcbot place | move | dress | menu | idle | emote | unplace | info <name>, .npcbot list" },
@@ -19397,6 +19635,7 @@ bool ChatHandler::HandleUnitStatInfoCommand(char* args)
     PSendSysMessage("Arcane spell crit chance: %g", pPlayer->GetSpellCritPercent(SPELL_SCHOOL_ARCANE));
     PSendSysMessage("Melee hit chance: %g", pPlayer->m_modMeleeHitChance);
     PSendSysMessage("Ranged hit chance: %g", pPlayer->m_modRangedHitChance);
+    PSendSysMessage("Off hand hit chance (extra): %g", pPlayer->m_modOffhandHitChance);
     PSendSysMessage("Spell hit chance: %g", pPlayer->m_modSpellHitChance);
     PSendSysMessage("Positive strength: %g", pPlayer->GetPosStat(STAT_STRENGTH));
     PSendSysMessage("Positive agility: %g", pPlayer->GetPosStat(STAT_AGILITY));

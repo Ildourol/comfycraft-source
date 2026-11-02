@@ -236,11 +236,16 @@ bool GreaterBlessingOnPartyTrigger::IsActive()
 
 bool NoPaladinAuraTrigger::IsActive()
 {
+    // Concentration Aura is manual only, so it is not in this list. A bot whose
+    // own Concentration Aura is up therefore counts as having no aura, and the
+    // spec's pick replaces it (a paladin holds one of its own auras at a time).
+    // This trigger runs only under the automatic "aura <spec> pve/pvp/raid"
+    // strategies, which require "aura". The manual "aura concentration" strategy
+    // is a sibling of "aura": setting it removes "aura", then those strategies.
     std::vector<std::string> altAuras;
     std::vector<std::string> haveAuras;
     altAuras.push_back("devotion aura");
     altAuras.push_back("retribution aura");
-    altAuras.push_back("concentration aura");
     altAuras.push_back("sanctity aura");
     altAuras.push_back("shadow resistance aura");
     altAuras.push_back("fire resistance aura");

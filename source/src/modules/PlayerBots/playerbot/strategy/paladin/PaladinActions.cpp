@@ -10,7 +10,8 @@ bool CastPaladinAuraAction::Execute(Event& event)
     std::vector<std::string> haveAuras;
     altAuras.push_back("devotion aura");
     altAuras.push_back("retribution aura");
-    altAuras.push_back("concentration aura");
+    // Concentration Aura is manual only ("aura concentration"). No spec picks it
+    // automatically, so it is not in this list. NoPaladinAuraTrigger skips it too.
     altAuras.push_back("sanctity aura");
     altAuras.push_back("shadow resistance aura");
     altAuras.push_back("fire resistance aura");

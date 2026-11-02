@@ -20,7 +20,9 @@
 --  boss_level is the last boss's level at the kill. max_level is the highest
 --  level any member had during the run (read at each entry and boss kill);
 --  last_max_level is the same when the last boss died. /charts ranks a time
---  only when that level is not above boss_level (no margin).
+--  only when that level is not above the group finder's top level for the
+--  dungeon or wing, else boss_level (no margin; DUNGEON_FINDER_LEVELS in
+--  DungeonBosses.h).
 --
 --  dungeon_run_boss holds the split for each listed boss, optional ones too.
 --  dungeon_run_member holds each player who entered during the run, in order

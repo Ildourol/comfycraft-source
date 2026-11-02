@@ -545,6 +545,14 @@ enum QuestSlotOffsets
 
 static constexpr uint8 MAX_QUEST_OFFSET = 3;
 
+// The quest log layout that Player::GetQuestSlotField writes. The client exe hard codes these.
+static_assert(PLAYER_QUEST_LOG_1_1 + QUEST_LOG_FIRST_BLOCK_SIZE * MAX_QUEST_OFFSET == PLAYER_VISIBLE_ITEM_1_CREATOR,
+              "the first quest log block is 20 slots and ends at the visible item fields");
+static_assert(PLAYER_FIELD_COMBAT_RATING_1 - PLAYER_DUEL_ARBITER == 0x10C8 / 4,
+              "the OctoWoW exe reads quest log slots 20-24 at player field 1074");
+static_assert(PLAYER_FIELD_COMBAT_RATING_1 + (MAX_QUEST_LOG_SIZE - QUEST_LOG_FIRST_BLOCK_SIZE) * MAX_QUEST_OFFSET <= PLAYER_FIELD_COMBAT_RATING_END + 1,
+              "quest log slots 20-24 fit in the 20 combat rating fields");
+
 enum QuestSlotStateMask
 {
     QUEST_STATE_NONE     = 0x0000,
@@ -1572,23 +1580,33 @@ class Player final: public Unit
 
     public:
         uint16 FindQuestSlot(uint32 quest_id) const;
-        uint32 GetQuestSlotQuestId(uint16 slot) const { return GetUInt32Value(PLAYER_QUEST_LOG_1_1 + slot * MAX_QUEST_OFFSET + QUEST_ID_OFFSET); }
+        // The first of the 3 fields of a quest log slot. Slots 0-19 are PLAYER_QUEST_LOG_1_1.
+        // Slots 20-24 are PLAYER_FIELD_COMBAT_RATING_1 + 0..14: the OctoWoW 1.18.1 WoW.exe reads
+        // them at player field 1074 (byte 0x10C8 from UNIT_END). A slot past 19 in the first
+        // block would write into PLAYER_VISIBLE_ITEM_1_CREATOR, the gear other players see.
+        static uint16 GetQuestSlotField(uint16 slot)
+        {
+            return slot < QUEST_LOG_FIRST_BLOCK_SIZE
+                ? uint16(PLAYER_QUEST_LOG_1_1 + slot * MAX_QUEST_OFFSET)
+                : uint16(PLAYER_FIELD_COMBAT_RATING_1 + (slot - QUEST_LOG_FIRST_BLOCK_SIZE) * MAX_QUEST_OFFSET);
+        }
+        uint32 GetQuestSlotQuestId(uint16 slot) const { return GetUInt32Value(GetQuestSlotField(slot) + QUEST_ID_OFFSET); }
         void SetQuestSlot(uint16 slot, uint32 quest_id, uint32 timer = 0)
         {
-            SetUInt32Value(PLAYER_QUEST_LOG_1_1 + slot*MAX_QUEST_OFFSET + QUEST_ID_OFFSET, quest_id);
-            SetUInt32Value(PLAYER_QUEST_LOG_1_1 + slot*MAX_QUEST_OFFSET + QUEST_COUNT_STATE_OFFSET, 0);
-            SetUInt32Value(PLAYER_QUEST_LOG_1_1 + slot*MAX_QUEST_OFFSET + QUEST_TIME_OFFSET, timer);
+            SetUInt32Value(GetQuestSlotField(slot) + QUEST_ID_OFFSET, quest_id);
+            SetUInt32Value(GetQuestSlotField(slot) + QUEST_COUNT_STATE_OFFSET, 0);
+            SetUInt32Value(GetQuestSlotField(slot) + QUEST_TIME_OFFSET, timer);
         }
         void SetQuestSlotCounter(uint16 slot, uint8 counter, uint8 count)
         {
-            uint32 val = GetUInt32Value(PLAYER_QUEST_LOG_1_1 + slot*MAX_QUEST_OFFSET + QUEST_COUNT_STATE_OFFSET);
+            uint32 val = GetUInt32Value(GetQuestSlotField(slot) + QUEST_COUNT_STATE_OFFSET);
             val &= ~(0x3F << (counter * 6));
             val |= ((uint32)count << (counter * 6));
-            SetUInt32Value(PLAYER_QUEST_LOG_1_1 + slot*MAX_QUEST_OFFSET + QUEST_COUNT_STATE_OFFSET, val);
+            SetUInt32Value(GetQuestSlotField(slot) + QUEST_COUNT_STATE_OFFSET, val);
         }
-        void SetQuestSlotState(uint16 slot, uint8 state) { SetByteFlag(PLAYER_QUEST_LOG_1_1 + slot*MAX_QUEST_OFFSET + QUEST_COUNT_STATE_OFFSET, 3, state); }
-        void RemoveQuestSlotState(uint16 slot, uint8 state) { RemoveByteFlag(PLAYER_QUEST_LOG_1_1 + slot*MAX_QUEST_OFFSET + QUEST_COUNT_STATE_OFFSET, 3, state); }
-        void SetQuestSlotTimer(uint16 slot, uint32 timer) { SetUInt32Value(PLAYER_QUEST_LOG_1_1 + slot*MAX_QUEST_OFFSET + QUEST_TIME_OFFSET, timer); }
+        void SetQuestSlotState(uint16 slot, uint8 state) { SetByteFlag(GetQuestSlotField(slot) + QUEST_COUNT_STATE_OFFSET, 3, state); }
+        void RemoveQuestSlotState(uint16 slot, uint8 state) { RemoveByteFlag(GetQuestSlotField(slot) + QUEST_COUNT_STATE_OFFSET, 3, state); }
+        void SetQuestSlotTimer(uint16 slot, uint32 timer) { SetUInt32Value(GetQuestSlotField(slot) + QUEST_TIME_OFFSET, timer); }
     public:
         uint32 GetQuestLevelForPlayer(Quest const* pQuest) const { return pQuest && (pQuest->GetQuestLevel() > 0) ? pQuest->GetQuestLevel() : GetLevel(); }
         void PrepareQuestMenu(ObjectGuid guid, uint32 exceptQuestId = 0);
@@ -1636,11 +1654,11 @@ class Player final: public Unit
         {
             for (int i = 0; i < MAX_QUEST_OFFSET ; ++i)
             {
-                uint32 temp1 = GetUInt32Value(PLAYER_QUEST_LOG_1_1 + MAX_QUEST_OFFSET *slot1 + i);
-                uint32 temp2 = GetUInt32Value(PLAYER_QUEST_LOG_1_1 + MAX_QUEST_OFFSET *slot2 + i);
+                uint32 temp1 = GetUInt32Value(GetQuestSlotField(slot1) + i);
+                uint32 temp2 = GetUInt32Value(GetQuestSlotField(slot2) + i);
 
-                SetUInt32Value(PLAYER_QUEST_LOG_1_1 + MAX_QUEST_OFFSET *slot1 + i, temp2);
-                SetUInt32Value(PLAYER_QUEST_LOG_1_1 + MAX_QUEST_OFFSET *slot2 + i, temp1);
+                SetUInt32Value(GetQuestSlotField(slot1) + i, temp2);
+                SetUInt32Value(GetQuestSlotField(slot2) + i, temp1);
             }
         }
 

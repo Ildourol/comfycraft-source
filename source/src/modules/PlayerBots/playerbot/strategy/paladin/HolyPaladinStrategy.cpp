@@ -457,7 +457,7 @@ void HolyPaladinAuraStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& tri
 
     triggers.push_back(new TriggerNode(
         "no paladin aura",
-        NextAction::array(0, new NextAction("concentration aura", ACTION_NORMAL + 1), NULL)));
+        NextAction::array(0, new NextAction("devotion aura", ACTION_NORMAL + 1), NULL)));
 }
 
 void HolyPaladinAuraPveStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
@@ -1002,7 +1002,7 @@ void HolyPaladinAuraStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& tri
 
     triggers.push_back(new TriggerNode(
         "no paladin aura",
-        NextAction::array(0, new NextAction("concentration aura", ACTION_NORMAL + 1), NULL)));
+        NextAction::array(0, new NextAction("devotion aura", ACTION_NORMAL + 1), NULL)));
 }
 
 void HolyPaladinAuraPveStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
@@ -1529,7 +1529,7 @@ void HolyPaladinAuraStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& tri
 
     triggers.push_back(new TriggerNode(
         "no paladin aura",
-        NextAction::array(0, new NextAction("concentration aura", ACTION_NORMAL + 1), NULL)));
+        NextAction::array(0, new NextAction("devotion aura", ACTION_NORMAL + 1), NULL)));
 }
 
 void HolyPaladinAuraPveStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)

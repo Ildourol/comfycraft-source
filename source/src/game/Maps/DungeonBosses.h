@@ -97,6 +97,80 @@ inline constexpr DungeonLastBoss DUNGEON_LAST_BOSSES[] = {
     {  35, 0, 93107 },  // Arc'tiras
 };
 
+struct DungeonFinderLevel
+{
+    uint16 mapId;
+    uint8 wing;
+    uint8 maxLevel;
+};
+
+// The level cap for a ranked time (the level rule, DungeonRun.cpp): the
+// group finder's top level (maxLevel) for the dungeon or wing. A time is
+// ranked when no member was above it. A dungeon or wing with no row here
+// keeps the last boss's level at the kill as its cap.
+//
+// Copied from LFT_Instances in the client's Interface\FrameXML\LFT\LFT_Data.lua
+// (patch-4 in octow, patch-9 in octow - Copy; the two are the same file) on
+// 2026-11-01. The finder code is in each comment; StoneInstances in
+// LFT/LFTQeueue.cpp ties each code to its area. Where the finder lists
+// one map or wing in several parts (Maraudon, Blackrock Depths, Stormwrought
+// Ruins, Dire Maul North), the row takes the highest top level of the parts.
+// website/lib/charts.js holds a copy (FINDER_LEVELS): change both together.
+inline constexpr DungeonFinderLevel DUNGEON_FINDER_LEVELS[] = {
+    { 389, 0, 19 },  // rfc
+    {  43, 0, 25 },  // wc
+    {  36, 0, 24 },  // dm
+    {  33, 0, 28 },  // sfk
+    {  34, 0, 32 },  // stocks
+    {  48, 0, 31 },  // bfd
+    {  90, 0, 37 },  // gnomer
+    {  47, 0, 36 },  // rfk
+    { 189, 1, 37 },  // smgy
+    { 189, 2, 40 },  // smlib
+    { 189, 3, 42 },  // smarmory
+    { 189, 4, 45 },  // smcath
+    { 129, 0, 44 },  // rfd
+    {  70, 0, 50 },  // ulda
+    { 209, 0, 51 },  // zf
+    { 349, 0, 54 },  // maraorange 51, marapurple 52, maraprincess 54
+    { 109, 0, 58 },  // st
+    { 230, 0, 60 },  // brd, brdarena, brdemp
+    { 229, 1, 60 },  // lbrs (Upper Blackrock Spire has no finder entry)
+    { 289, 0, 60 },  // scholo
+    { 329, 1, 60 },  // stratlive
+    { 329, 2, 60 },  // stratud
+    { 429, 1, 60 },  // dme
+    { 429, 2, 60 },  // dmw
+    { 429, 3, 60 },  // dmn, dmt
+    { 802, 0, 39 },  // tcg
+    { 816, 0, 35 },  // dmr
+    { 818, 0, 44 },  // swc 40, swd 44
+    { 820, 0, 33 },  // windhorn
+    { 822, 0, 20 },  // fmh
+    { 815, 0, 52 },  // gilneas
+    { 808, 0, 60 },  // hfq
+    { 800, 0, 60 },  // kc
+    { 269, 0, 60 },  // cotbm
+    {  35, 0, 60 },  // swv
+};
+
+// The finder's top level for a dungeon or wing. 0: the finder has no entry.
+inline uint8 DungeonFinderMaxLevel(uint32 mapId, uint8 wing)
+{
+    for (DungeonFinderLevel const& row : DUNGEON_FINDER_LEVELS)
+        if (row.mapId == mapId && row.wing == wing)
+            return row.maxLevel;
+    return 0;
+}
+
+// The level cap for a ranked time in a dungeon or wing: the finder's top
+// level, else bossLevel (the last boss's level at the kill).
+inline uint8 DungeonRankLevel(uint32 mapId, uint8 wing, uint8 bossLevel)
+{
+    uint8 const finder = DungeonFinderMaxLevel(mapId, wing);
+    return finder ? finder : bossLevel;
+}
+
 // Maps with isolated parts. The first boss kill of a run picks its wing.
 inline constexpr DungeonBossWing DUNGEON_BOSS_WINGS[] = {
     { 189, 1, "Graveyard" },
@@ -177,10 +251,9 @@ inline constexpr DungeonBoss DUNGEON_BOSSES[] = {
     {  90, 0, 0, false,  6235 },  // Electrocutioner 6000
     {  90, 0, 0, false,  6229 },  // Crowd Pummeler 9-60
     {  90, 0, 0, false,  7800 },  // Mekgineer Thermaplugg
-    {  90, 0, 0, true,  7361 },  // Grubbis (optional)
+    {  90, 0, 0, false,  7361 },  // Grubbis
 
     // Razorfen Kraul (map 47)
-    {  47, 0, 0, false,  6168 },  // Roogug
     {  47, 0, 0, false,  4424 },  // Aggem Thorncurse
     {  47, 0, 0, false,  4428 },  // Death Speaker Jargba
     {  47, 0, 0, false,  4420 },  // Overlord Ramtusk

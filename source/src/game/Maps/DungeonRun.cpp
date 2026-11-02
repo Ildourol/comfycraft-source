@@ -131,9 +131,10 @@ namespace
         bool lastDone = false;     // the last boss is dead
         bool done = false;         // every required boss is dead (the full run)
         uint32 required = 0;       // required slots with a kill
-        // The board ranks a time only when no member was above the last
-        // boss's level. maxLevel is the highest seen so far, at an entry or
-        // a boss kill; lastMaxLevel is maxLevel when the last boss died.
+        // The board ranks a time only when no member was above the cap:
+        // DungeonRankLevel, the group finder's top level, else bossLevel.
+        // maxLevel is the highest seen so far, at an entry or a boss kill;
+        // lastMaxLevel is maxLevel when the last boss died.
         uint8 maxLevel = 0;
         uint8 lastMaxLevel = 0;
         uint8 bossLevel = 0;       // the last boss's level at the kill
@@ -395,8 +396,9 @@ void DungeonRun::OnCreatureKilled(Creature* creature)
             std::string const group = ", group of " + std::to_string(run.members.size()) + ".";
             char const* what = lastNow && fullNow ? "last boss and full run" : lastNow ? "last boss" : "full run";
             clearLine = name + ": " + what + " in " + Clock(ms) + group;
-            if ((lastNow ? run.lastMaxLevel : run.maxLevel) > run.bossLevel)
-                clearLine += " Not ranked: a member was above level " + std::to_string(run.bossLevel) + ".";
+            uint8 const cap = DungeonRankLevel(map->GetId(), run.wing, run.bossLevel);
+            if ((lastNow ? run.lastMaxLevel : run.maxLevel) > cap)
+                clearLine += " Not ranked: a member was above level " + std::to_string(cap) + ".";
             Save(map->GetId(), run, lastNow ? ms : 0, fullNow ? ms : 0);
 
             // A record is checked for ranked times only (Announcements.h).
@@ -404,12 +406,12 @@ void DungeonRun::OnCreatureKilled(Creature* creature)
             clear.mapId = map->GetId();
             clear.wing = run.wing;
             clear.dungeon = name;
-            if (lastNow && run.lastMaxLevel <= run.bossLevel)
+            if (lastNow && run.lastMaxLevel <= cap)
             {
                 clear.lastMs = ms;
                 clear.lastClock = Clock(ms);
             }
-            if (fullNow && run.maxLevel <= run.bossLevel)
+            if (fullNow && run.maxLevel <= cap)
             {
                 clear.fullMs = ms;
                 clear.fullClock = Clock(ms);

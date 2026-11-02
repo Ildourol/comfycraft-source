@@ -80,8 +80,9 @@ namespace ai
         virtual bool isUseful() { return true; }
         virtual bool isUsefulWhenStunned() { return false; }
         // True when the last isPossible or isUseful said no because the bot does
-        // not know the spell. The engine writes no debug line for that.
-        virtual bool RefusedAsUnknownSpell() const { return false; }
+        // not know the spell, or because the target is immune to it. The engine
+        // writes no debug line for that; an immune refusal writes its own once.
+        virtual bool RefusedQuietly() const { return false; }
         virtual NextAction** getPrerequisites() { return NULL; }
         virtual NextAction** getAlternatives() { return NULL; }
         virtual NextAction** getContinuers() { return NULL; }

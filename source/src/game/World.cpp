@@ -2372,6 +2372,9 @@ void LoadPlayerEggLoot();
     else
         sLog.outString(">> Factionless war: %u creatures in %u camps, at war with whoever holds one of %u quests.",
             FactionlessWar::CreatureCount(), FactionlessWar::CampCount(), FactionlessWar::QuestCount());
+    if (FactionlessWar::PeaceCount())
+        sLog.outString(">> Factionless peace: %u hostile creatures are friendly to whoever holds their quest.",
+            FactionlessWar::PeaceCount());
     sLog.outString("Loading loot luck...");
     if (LootLuck::Load())
         sLog.outString(">> Loot luck: PRD on quest drops is on.");

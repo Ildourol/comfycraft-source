@@ -33,6 +33,10 @@ struct ComfyCommands
     static bool HandleSetLevelCommand(ChatHandler* handler, char* args);
     static bool HandleGearCommand(ChatHandler* handler, char* args);
     static bool HandleHireCommand(ChatHandler* handler, char* args);
+    static bool HandleStoneCommand(ChatHandler* handler, char* args);
+    // A class name for `.hire` and `.stone hire`, 0 when none. A member for
+    // the friend access to ChatHandler::ExtractLiteralArg.
+    static uint32 ExtractHireClass(ChatHandler* handler, char** args);
     static bool HandleSetSpeedCommand(ChatHandler* handler, char* args);
     static bool HandleLevelCapCommand(ChatHandler* handler, char* args);
     static bool HandleDungeonTuningCommand(ChatHandler* handler, char* args);

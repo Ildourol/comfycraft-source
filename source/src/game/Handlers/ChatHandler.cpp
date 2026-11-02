@@ -68,17 +68,45 @@
 // is bridge/server.js, a node process beside the game.
 //
 // Game to Discord: one UDP packet per World line, "name<TAB>text" in UTF-8, to 127.0.0.1 on
-// DiscordBridge.Port (mangosd.conf, 0 is off). The socket is non-blocking and nothing waits for an
+// DiscordBridge.Port (mangosd.conf, 0 is off). An announcement is "<TAB>text": the name field is
+// empty, and no character has an empty name. The socket is non-blocking and nothing waits for an
 // answer. A bridge that is down loses the line, and the game does not notice.
 //
+// Map threads, the AntispamAsync thread and world async tasks call this at the same time. The
+// statics are made once, under the C++11 rule for a function-local static. A send on one UDP
+// socket from several threads is safe.
+static void SendPacketToDiscordBridge(std::string const& packet)
+{
+    static int32 const port = sConfig.GetIntDefault("DiscordBridge.Port", 0);
+    if (port <= 0 || port > 65535)
+        return;
+
+    static ACE_SOCK_Dgram* const sock = []()
+    {
+        // Bound to loopback, not to every address: nothing outside the machine is ever involved.
+        ACE_SOCK_Dgram* s = new ACE_SOCK_Dgram(ACE_INET_Addr(u_short(0), ACE_UINT32(INADDR_LOOPBACK)));
+        if (s->get_handle() == ACE_INVALID_HANDLE)
+        {
+            sLog.outError("DiscordBridge: no UDP socket, World lines and announcements do not reach Discord");
+            return static_cast<ACE_SOCK_Dgram*>(nullptr);
+        }
+        s->enable(ACE_NONBLOCK);
+        return s;
+    }();
+    if (!sock)
+        return;
+
+    static ACE_INET_Addr const to(u_short(port), ACE_UINT32(INADDR_LOOPBACK));
+    sock->send(packet.data(), packet.size(), to);
+}
+
 // Called once a World line is said: from HandleMessagechatOpcode, or from Antispam::ProcessMessages
 // (the AntispamAsync thread) for a line the antispam held, which is every line from a character at
 // or under Antispam.MaxRestrictionLevel (20). Not for a bot or a companion, and not for a line
 // that Channel::Say shows to its sender only (the same test as there).
 void SendWorldLineToDiscord(WorldSession const* session, std::string const& msg)
 {
-    static int32 const port = sConfig.GetIntDefault("DiscordBridge.Port", 0);
-    if (port <= 0 || port > 65535 || !session || msg.empty())
+    if (!session || msg.empty())
         return;
 
     Player const* player = session->GetPlayer();
@@ -91,24 +119,16 @@ void SendWorldLineToDiscord(WorldSession const* session, std::string const& msg)
     if (shownToSelfOnly || Script_IsMachineDriven(player))
         return;
 
-    static ACE_SOCK_Dgram* const sock = []()
-    {
-        // Bound to loopback, not to every address: nothing outside the machine is ever involved.
-        ACE_SOCK_Dgram* s = new ACE_SOCK_Dgram(ACE_INET_Addr(u_short(0), ACE_UINT32(INADDR_LOOPBACK)));
-        if (s->get_handle() == ACE_INVALID_HANDLE)
-        {
-            sLog.outError("DiscordBridge: no UDP socket, World lines do not reach Discord");
-            return static_cast<ACE_SOCK_Dgram*>(nullptr);
-        }
-        s->enable(ACE_NONBLOCK);
-        return s;
-    }();
-    if (!sock)
-        return;
+    SendPacketToDiscordBridge(std::string(player->GetName()) + '\t' + msg);
+}
 
-    static ACE_INET_Addr const to(u_short(port), ACE_UINT32(INADDR_LOOPBACK));
-    std::string const packet = std::string(player->GetName()) + '\t' + msg;
-    sock->send(packet.data(), packet.size(), to);
+// An announcement (Announcements.h: the welcome, a level, a dungeon record, a housewarming), from
+// the world async task that sent it with SendGlobalText. The bridge posts it under ComfyCraft.
+// Other SendGlobalText callers, such as the chat broadcast, do not call this.
+void SendAnnouncementToDiscord(std::string const& text)
+{
+    if (!text.empty())
+        SendPacketToDiscordBridge('\t' + text);
 }
 
 // Discord users in World (`worldsay`, Commands.cpp). Each one has a player guid in
@@ -175,6 +195,18 @@ bool WorldSession::CheckChatMessageValidity(std::string& msg, uint32 lang, uint3
     return true;
 }
 
+// The chat type of the line ParseCommands is reading on this thread, 0 when
+// the command did not come from chat (the console, the website). A player's
+// party line or whisper runs on AsyncPackets, /say on the player's map thread
+// (WorldSession::QueuePacket), so a command that runs bot code reads this to
+// refuse the async types (docs/ai/content/companion-crash-audit.md).
+static thread_local uint32 t_chatCommandType = 0;
+
+uint32 ChatCommandChatType()
+{
+    return t_chatCommandType;
+}
+
 bool WorldSession::ProcessChatMessageAfterSecurityCheck(std::string& msg, uint32& lang, uint32& msgType)
 {
     if (!CheckChatMessageValidity(msg, lang, msgType))
@@ -187,7 +219,10 @@ bool WorldSession::ProcessChatMessageAfterSecurityCheck(std::string& msg, uint32
 
     ChatHandler handler(this);
 
-    return !handler.ParseCommands(msg.c_str());
+    t_chatCommandType = msgType;
+    bool const command = handler.ParseCommands(msg.c_str());
+    t_chatCommandType = 0;
+    return !command;
 }
 
 bool WorldSession::IsLanguageAllowedForChatType(uint32 lang, uint32 msgType)

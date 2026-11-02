@@ -39,6 +39,28 @@
 #include "LFGMgr.h"
 #include "LFTMgr.h"
 
+// RecruitBot.cpp, stubbed in PlayerbotStubs.cpp: the classes with a premade
+// spec for a hire role (SO_RECRUIT_*), lower case and comma separated, in
+// class id order. The same classes Helper Elowen's second page offers.
+extern std::string Playerbot_HireClasses(uint32 role);
+
+// Opens ComfyUI's stone window. Prefix CSTONE:
+//
+//   O;<tank classes>;<healer classes>;<damage classes>   open it
+//   C                                                     close it
+//
+// The class lists come from the premade specs, so the addon keeps no list
+// of its own. An empty list (no bot module) leaves "Anyone" only.
+static void SendStoneWindowOpen(Player* player)
+{
+    static uint32 const ROLES[] = { SO_RECRUIT_TANK, SO_RECRUIT_HEALER, SO_RECRUIT_DPS };
+
+    std::string msg = "O";
+    for (uint32 role : ROLES)
+        msg += ";" + Playerbot_HireClasses(role);
+    player->SendAddonMessage("CSTONE", msg);
+}
+
 void WorldSession::HandleMeetingStoneJoinOpcode(WorldPacket& recv_data)
 {
     ObjectGuid guid;
@@ -60,6 +82,17 @@ void WorldSession::HandleMeetingStoneJoinOpcode(WorldPacket& recv_data)
     if (obj->GetGoType() != GAMEOBJECT_TYPE_MEETINGSTONE)
     {
         sLog.outError("HandleMeetingStoneJoinOpcode: CMSG_MEETINGSTONE_JOIN for not allowed GameObject type %u (Entry %u), didn't expect this to happen.", obj->GetGoType(), obj->GetEntry());
+        return;
+    }
+
+    // ComfyUI's stone window: hire companions here, or open the group finder
+    // from it. A client without ComfyUI never sent `.stone ready` and gets the
+    // role check below. The window has no party refusals of its own: the
+    // hire says its own (leader only, party full, two each).
+    if (HasStoneWindow())
+    {
+        SetStoneWindowGuid(obj->GetObjectGuid());
+        SendStoneWindowOpen(_player);
         return;
     }
 

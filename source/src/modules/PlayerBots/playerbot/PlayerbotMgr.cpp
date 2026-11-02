@@ -52,6 +52,12 @@ class CharacterHandler;
 
 // Pending logins: maps holder pointer to (botGuid, masterAccountId) so the callback can
 // resolve which bot is being added. Cleared on callback completion.
+//
+// The load callback is a free function (OnPendingBotLoginLoaded below), not a
+// method of the holder that queued it. A master's PlayerbotMgr is deleted at the
+// master's logout (RemoveBotMgr), and a logout inside the one database round
+// trip left the callback running on a freed manager. The callback carries the
+// master's guid instead and finds the manager again.
 namespace {
     struct PendingBotLogin {
         ObjectGuid botGuid;
@@ -243,6 +249,75 @@ void DrainDeferredBotWork()
     }
 }
 
+// Called from PlayerbotPlayerScript::OnReleaseToClient, before the AI goes. A
+// client is logging the character in while a holder runs it as a bot. The
+// Player object stays and moves to the client's session; the holders must
+// forget it, or they keep a pointer to a Player that the client's logout frees
+// (the master's UpdateSessions read it), and a Player with no AI
+// (RandomPlayerbotMgr::OnPlayerLogout read the AI).
+//
+// Every master's manager, not only the AI's master: an AI can lose its master
+// (SetMaster(nullptr) on a group leave, a battleground) while a master's
+// manager still holds it. Runs in HandlePlayerLogin, on the world thread, with
+// no map updating, so no holder is mid-update.
+void ReleaseBotFromHolders(Player* bot)
+{
+    if (!bot)
+        return;
+
+    const uint32 guid = bot->GetGUIDLow();
+    uint32 released = 0;
+    {
+        HashMapHolder<Player>::ReadGuard g(HashMapHolder<Player>::GetLock());
+        for (const auto& itr : sObjectAccessor.GetPlayers())
+            if (PlayerbotMgr* mgr = GetBotMgr(itr.second))
+                if (mgr->ReleasePlayerBot(guid))
+                    ++released;
+    }
+    if (sRandomPlayerbotMgr.ReleasePlayerBot(guid))
+        ++released;
+
+    sLog.outBasic("[Bots] %s (guid %u) taken over by its client. Released from %u holder(s).",
+                  bot->GetName(), guid, released);
+}
+
+namespace {
+    // The load queued by AddPlayerBot is back. masterGuid 0 is the random
+    // manager, which lives for the whole run. Otherwise the master's manager
+    // is found again by guid: the master may have logged out (and its
+    // manager been deleted) while the load was out.
+    void OnPendingBotLoginLoaded(QueryResult* /*dummy*/, SqlQueryHolder* holder, uint32 masterGuid)
+    {
+        if (!holder)
+            return;
+
+        PlayerbotHolder* owner = &sRandomPlayerbotMgr;
+        if (masterGuid)
+        {
+            // Not in world is fine: a master between maps keeps its manager.
+            Player* master = sObjectAccessor.FindPlayerNotInWorld(ObjectGuid(HIGHGUID_PLAYER, masterGuid));
+            PlayerbotMgr* mgr = master ? GetBotMgr(master) : nullptr;
+            if (!mgr)
+            {
+                // No session was made yet: the callback makes it. Dropping the
+                // query holder is the whole cleanup.
+                auto it = m_pendingBotLogins.find(holder);
+                if (it != m_pendingBotLogins.end())
+                {
+                    sLog.outBasic("[Bots] %u: login dropped, its master %u logged out while it loaded.",
+                                  it->second.botGuid.GetCounter(), masterGuid);
+                    m_pendingBotLogins.erase(it);
+                }
+                delete holder;
+                return;
+            }
+            owner = mgr;
+        }
+
+        owner->HandlePlayerBotLoginCallback(nullptr, holder);
+    }
+}
+
 void PlayerbotHolder::AddPlayerBot(uint32 guidLow, uint32 masterAccountId)
 {
     if (!sPlayerbotAIConfig.enabled)
@@ -352,7 +427,10 @@ void PlayerbotHolder::AddPlayerBot(uint32 guidLow, uint32 masterAccountId)
     // — none of which is thread-safe. Concurrent map erase corrupts the RB-tree (SIGSEGV in
     // _Rb_tree_rebalance_for_erase) when many bots log in at once. The engine's own player login
     // uses DelayQueryHolderUnsafe for exactly this reason (see CharacterHandler.cpp:493).
-    CharacterDatabase.DelayQueryHolderUnsafe(this, &PlayerbotHolder::HandlePlayerBotLoginCallback, holder);
+    //
+    // No `this` in the callback: see m_pendingBotLogins at the top of the file.
+    const uint32 masterGuid = MasterGuidOf(this);
+    CharacterDatabase.DelayQueryHolderUnsafe(&OnPendingBotLoginLoaded, holder, masterGuid);
 }
 
 // Called when CharacterDatabase finishes the holder's queries. Allocates a fresh WorldSession
@@ -820,6 +898,13 @@ void PlayerbotHolder::LogoutPlayerBot(uint32 guid, bool allowInstant, bool forDe
 void PlayerbotHolder::DisablePlayerBot(uint32 guid, bool logOutPlayer)
 {
     Player* bot = GetPlayerBot(guid);
+    if (bot && !GetBotAI(bot))
+    {
+        // Not ours to save or tear down: a Player with no AI belongs to a
+        // client (ReleaseBotFromHolders should already have dropped it).
+        playerBots[guid] = nullptr;
+        return;
+    }
     if (bot)
     {
         if (logOutPlayer && GetBotAI(bot)->IsRealPlayer() && bot->GetGroup() && sPlayerbotAIConfig.IsFreeAltBot(guid))
@@ -857,6 +942,17 @@ Player* PlayerbotHolder::GetPlayerBot(uint32 playerGuid) const
 {
     PlayerBotMap::const_iterator it = playerBots.find(playerGuid);
     return (it == playerBots.end()) ? nullptr : it->second ? it->second : nullptr;
+}
+
+// Null, not erase: a caller may be inside ForEachPlayerbot. Cleanup erases it.
+bool PlayerbotHolder::ReleasePlayerBot(uint32 guid)
+{
+    auto it = playerBots.find(guid);
+    if (it == playerBots.end() || !it->second)
+        return false;
+
+    it->second = nullptr;
+    return true;
 }
 
 void PlayerbotHolder::JoinChatChannels(Player* bot)

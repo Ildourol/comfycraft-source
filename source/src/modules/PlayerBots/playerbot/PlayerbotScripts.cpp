@@ -32,6 +32,7 @@
 #include "Group/Group.h"
 
 void DrainDeferredBotWork();    // PlayerbotMgr.cpp
+void ReleaseBotFromHolders(Player* bot);    // PlayerbotMgr.cpp
 
 class PlayerbotWorldScript : public WorldScript
 {
@@ -316,8 +317,13 @@ class PlayerbotPlayerScript : public PlayerScript
         // A real client is taking the character over. Stop driving it: an AI
         // still ticking on the new owner fights the login handshake and the
         // client hangs on the loading screen.
+        //
+        // Every holder that lists the character forgets it first, with no save
+        // and no logout (ReleaseBotFromHolders). The Player now belongs to the
+        // client's session, and its logout frees it.
         void OnReleaseToClient(Player* player) override
         {
+            ReleaseBotFromHolders(player);
             RemoveBotAI(player);
         }
 

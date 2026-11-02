@@ -1634,6 +1634,11 @@ AutoAttackCheckResult Player::CanAutoAttackTarget(Unit const* pVictim) const
     return Unit::CanAutoAttackTarget(pVictim);
 }
 
+// Rest earned online in a town inn caps at 1.5 visible levels, the same cap
+// SetRestBonus applies to all other rest. Player.h keeps RESTED_XP_TAVERN_CAP
+// at 1.0 so this change does not rebuild the whole core.
+static constexpr float COMFY_TOWN_INN_REST_CAP = 1.5f;
+
 void Player::Update(uint32 update_diff, uint32 p_time)
 {
     if (!IsInWorld())
@@ -1767,7 +1772,7 @@ void Player::Update(uint32 update_diff, uint32 p_time)
             if (time_inn >= 10)                             // Freeze update
             {
                 if (GetRestType() == REST_TYPE_IN_TAVERN)
-                    AddRestBonus(sObjectMgr.GetXPForLevel(GetLevel()) * RESTED_XP_TENT_RATE * sWorld.getConfig(CONFIG_FLOAT_RATE_REST_INGAME_IN_TAVERN) * time_inn, GetRestBonusCap(RESTED_XP_TAVERN_CAP));
+                    AddRestBonus(sObjectMgr.GetXPForLevel(GetLevel()) * RESTED_XP_TENT_RATE * sWorld.getConfig(CONFIG_FLOAT_RATE_REST_INGAME_IN_TAVERN) * time_inn, GetRestBonusCap(COMFY_TOWN_INN_REST_CAP));
                 else
                     SetRestBonus(GetRestBonus() + ComputeRest(time_inn));
                 UpdateInnerTime(now);
@@ -17649,10 +17654,19 @@ void Player::SendQuestUpdateAddItem(Quest const* pQuest, uint32 item_idx, uint32
     data << count;
     GetSession()->SendPacket(&data);
 
-    // Update player field and fire UNIT_QUEST_LOG_CHANGED for self
+    // Update player field and fire UNIT_QUEST_LOG_CHANGED for self.
+    // The write goes to a counter of this quest's own slot that no kill objective uses.
+    // Upstream wrote slot + kill objective count: that changed another quest's kill counts,
+    // and from the last slots it wrote past the quest log (into the visible item fields).
     uint16 slot = FindQuestSlot(pQuest->GetQuestId());
     if (slot < MAX_QUEST_LOG_SIZE)
-        SetQuestSlotCounter(slot + pQuest->GetReqCreatureOrGOcount(), uint8(item_idx), uint8(current + count));
+    {
+        uint8 counter = uint8(item_idx);
+        while (counter < QUEST_OBJECTIVES_COUNT && pQuest->ReqCreatureOrGOId[counter] != 0)
+            ++counter;
+        if (counter < QUEST_OBJECTIVES_COUNT)
+            SetQuestSlotCounter(slot, counter, uint8((current + count) & 0x3F));
+    }
 }
 
 void Player::SendQuestUpdateAddCreatureOrGo(Quest const* pQuest, ObjectGuid guid, uint32 creatureOrGO_idx, uint32 count)
@@ -23437,8 +23451,8 @@ void Player::UpdateForQuestWorldObjects()
      */
     std::vector<ObjectGuid> botNpcs;
 
-    // ComfyCraft: a quest mob at war with whoever holds its quest
-    // (FactionlessWar.h). The client reads the faction field only when the
+    // ComfyCraft: a quest mob at war, or at peace, with whoever holds its
+    // quest (FactionlessWar.h). The client reads the faction field only when the
     // creature comes into view, so it is sent again on every quest change.
     std::vector<ObjectGuid> warCreatures;
 
@@ -23466,7 +23480,7 @@ void Player::UpdateForQuestWorldObjects()
 
     for (const auto& guid : warCreatures)
         if (Creature* creature = GetMap()->GetAnyTypeCreature(guid))
-            if (FactionlessWar::IsWarCreature(creature))
+            if (FactionlessWar::IsListedCreature(creature))
                 creature->ForceValuesUpdateAtIndex(UNIT_FIELD_FACTIONTEMPLATE);
 
     /*

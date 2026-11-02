@@ -359,7 +359,7 @@ bool Engine::DoNextAction(Unit* unit, int depth, bool minimal, bool isStunned)
                     }
                     else
                     {
-                        if (!action->RefusedAsUnknownSpell() && sPlayerbotAIConfig.CanLogAction(ai,actionNode->getName(), false, ""))
+                        if (!action->RefusedQuietly() && sPlayerbotAIConfig.CanLogAction(ai,actionNode->getName(), false, ""))
                         {
                             std::ostringstream out;
                             out << "try: ";
@@ -387,7 +387,7 @@ bool Engine::DoNextAction(Unit* unit, int depth, bool minimal, bool isStunned)
                 }
                 else
                 {
-                    if (!action->RefusedAsUnknownSpell() && sPlayerbotAIConfig.CanLogAction(ai,actionNode->getName(), false, ""))
+                    if (!action->RefusedQuietly() && sPlayerbotAIConfig.CanLogAction(ai,actionNode->getName(), false, ""))
                     {
                         std::ostringstream out;
                         out << "try: ";

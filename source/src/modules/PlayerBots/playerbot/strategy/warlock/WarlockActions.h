@@ -286,94 +286,72 @@ namespace ai
         virtual std::string getName() override { return GetSpellName() + " on enemy healer"; }
     };
 
-	class CastSummonImpAction : public CastBuffSpellAction
-	{
-	public:
-		CastSummonImpAction(PlayerbotAI* ai) : CastBuffSpellAction(ai, "summon imp") {}
-        std::string GetTargetName() override { return "self target"; }
-
-        bool isUseful() override
-        {
-            Unit* pet = AI_VALUE(Unit*, "pet target");
-            if (pet)
-            {
-                return pet->GetEntry() != 416;
-            }
-
-            return true;
-        }
-	};
-
-    class CastSummonSuccubusAction : public CastSpellAction
+    // One base for the demon summons. The "no pet" trigger pushes Voidwalker
+    // (pve) and Imp, and the engine takes the next one in the queue when a
+    // summon is useless, impossible or fails. What makes a demon useless here:
+    // - that demon is already out;
+    // - a Soul Shard is missing. The item cheat does not cover it: the bot's
+    //   HasSpellItems says yes, but Spell::CheckItems in the core refuses with
+    //   SPELL_FAILED_ITEM_NOT_READY. Without this check the engine asked for the
+    //   cast on every check and wrote "impossible";
+    // - a cast of it started in the last RetrySeconds and no demon came (an
+    //   interrupt, a pushback, a move). The next demon in the queue gets the
+    //   tick. The Imp is the last resort and never steps aside.
+    // With `debug` on, each new state is told to the owner once ("pet: ...").
+    class CastSummonDemonAction : public CastSpellAction
     {
     public:
-        CastSummonSuccubusAction(PlayerbotAI* ai) : CastSpellAction(ai, "summon succubus") {}
+        CastSummonDemonAction(PlayerbotAI* ai, std::string spell, uint32 entry, bool isLastResort = false)
+            : CastSpellAction(ai, spell), demonEntry(entry), lastResort(isLastResort) {}
+
         std::string GetTargetName() override { return "self target"; }
 
-        bool isUseful() override
-        {
-            Unit* pet = AI_VALUE(Unit*, "pet target");
-            if (pet)
-            {
-                return pet->GetEntry() != 1863;
-            }
+        bool isUseful() override;
+        bool isPossible() override;
+        bool Execute(Event& event) override;
 
-            return true;
-        }
+    protected:
+        static constexpr time_t RetrySeconds = 20;
+
+        // The first reagent the bags lack, or 0.
+        uint32 MissingReagent();
+        void TellPetDebug(const std::string& text);
+
+        uint32 demonEntry;
+        bool lastResort;
+        time_t lastCastStart = 0;
+        std::string lastDebugText;
+        time_t lastDebugTime = 0;
     };
 
-	class CastSummonFelhunterAction : public CastSpellAction
-	{
-	public:
-		CastSummonFelhunterAction(PlayerbotAI* ai) : CastSpellAction(ai, "summon felhunter") {}
-        std::string GetTargetName() override { return "self target"; }
-
-        bool isUseful() override
-        {
-            Unit* pet = AI_VALUE(Unit*, "pet target");
-            if (pet)
-            {
-                return pet->GetEntry() != 417;
-            }
-
-            return true;
-        }
-	};
-
-    class CastSummonVoidwalkerAction : public CastSpellAction
+    class CastSummonImpAction : public CastSummonDemonAction
     {
     public:
-        CastSummonVoidwalkerAction(PlayerbotAI* ai) : CastSpellAction(ai, "summon voidwalker") {}
-        std::string GetTargetName() override { return "self target"; }
-
-        bool isUseful() override
-        {
-            Unit* pet = AI_VALUE(Unit*, "pet target");
-            if (pet)
-            {
-                return pet->GetEntry() != 1860;
-            }
-
-            return true;
-        }
+        CastSummonImpAction(PlayerbotAI* ai) : CastSummonDemonAction(ai, "summon imp", 416, true) {}
     };
 
-    class CastSummonFelguardAction : public CastSpellAction
+    class CastSummonSuccubusAction : public CastSummonDemonAction
     {
     public:
-        CastSummonFelguardAction(PlayerbotAI* ai) : CastSpellAction(ai, "summon felguard") {}
-        std::string GetTargetName() override { return "self target"; }
+        CastSummonSuccubusAction(PlayerbotAI* ai) : CastSummonDemonAction(ai, "summon succubus", 1863) {}
+    };
 
-        bool isUseful() override
-        {
-            Unit* pet = AI_VALUE(Unit*, "pet target");
-            if (pet)
-            {
-                return pet->GetEntry() != 17252;
-            }
+    class CastSummonFelhunterAction : public CastSummonDemonAction
+    {
+    public:
+        CastSummonFelhunterAction(PlayerbotAI* ai) : CastSummonDemonAction(ai, "summon felhunter", 417) {}
+    };
 
-            return true;
-        }
+    class CastSummonVoidwalkerAction : public CastSummonDemonAction
+    {
+    public:
+        CastSummonVoidwalkerAction(PlayerbotAI* ai) : CastSummonDemonAction(ai, "summon voidwalker", 1860) {}
+    };
+
+    class CastSummonFelguardAction : public CastSummonDemonAction
+    {
+    public:
+        CastSummonFelguardAction(PlayerbotAI* ai) : CastSummonDemonAction(ai, "summon felguard", 17252) {}
     };
 
 	class CastSummonInfernoAction : public CastSpellAction

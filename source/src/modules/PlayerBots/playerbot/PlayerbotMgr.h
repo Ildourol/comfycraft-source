@@ -32,6 +32,10 @@ public:
     void LogoutPlayerBot(uint32 guid, bool allowInstant = true, bool forDelete = false);
     void DisablePlayerBot(uint32 guid, bool logOutPlayer = true);
     Player* GetPlayerBot (uint32 guid) const;
+    // A client took the character over (OnReleaseToClient). Forget it with no
+    // save and no logout: the Player now belongs to the client's session.
+    // True if this holder listed it.
+    bool ReleasePlayerBot(uint32 guid);
 
     virtual void UpdateAIInternal(uint32 elapsed, bool minimal = false) override;
     void UpdateSessions(uint32 elapsed);
