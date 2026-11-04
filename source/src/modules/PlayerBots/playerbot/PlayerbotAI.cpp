@@ -4956,7 +4956,8 @@ static std::vector<std::string> WriteDebugLogLine(Player* bot, const std::string
 static bool IsEngineDebugLine(const std::string& text)
 {
     return text.rfind("try: ", 0) == 0 || text.rfind("do: ", 0) == 0 || text.rfind("why: ", 0) == 0 ||
-        text.rfind("reach: ", 0) == 0 || text.rfind("slow: ", 0) == 0 || text.rfind("target: ", 0) == 0;
+        text.rfind("reach: ", 0) == 0 || text.rfind("slow: ", 0) == 0 || text.rfind("target: ", 0) == 0 ||
+        text.rfind("heal reach: ", 0) == 0 || text.rfind("heal follow: ", 0) == 0 || text.rfind("heal flee: ", 0) == 0;
 }
 
 bool PlayerbotAI::TellPlayerNoFacing(Player* player, std::string text, PlayerbotSecurityLevel securityLevel, bool isPrivate, bool noRepeat, bool ignoreSilent)

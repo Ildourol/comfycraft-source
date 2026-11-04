@@ -2649,7 +2649,9 @@ MeleeHitOutcome Unit::RollMeleeOutcomeAgainst(Unit const* pVictim, WeaponAttackT
     // Dodge chance
 
     // only players can't dodge if attacker is behind
-    if (!pVictim->IsPlayer() || !from_behind)
+    // CREATURE_FLAG_EXTRA_NO_DODGE: the skill bonus below can push a 0 chance above 0, so skip the roll
+    if ((!pVictim->IsPlayer() || !from_behind) &&
+        !(pVictim->IsCreature() && ((Creature const*)pVictim)->HasExtraFlag(CREATURE_FLAG_EXTRA_NO_DODGE)))
     {
         dodge_chance -= dodgeSkillBonus;
 
@@ -3087,7 +3089,7 @@ float Unit::GetUnitDodgeChance() const
         return GetFloatValue(PLAYER_DODGE_PERCENTAGE);
     else
     {
-        if (((Creature const*)this)->IsTotem())
+        if (((Creature const*)this)->IsTotem() || ((Creature const*)this)->HasExtraFlag(CREATURE_FLAG_EXTRA_NO_DODGE))
             return 0.0f;
         else
         {

@@ -135,6 +135,12 @@ namespace ai
 
         bool isUseful() override
         {
+            // The health gate is the bloodrage trigger's. It is here too because
+            // Battle Shout asks for Bloodrage when it has no rage, and that path
+            // has no trigger.
+            if (AI_VALUE2(uint8, "health", "self target") < sPlayerbotAIConfig.mediumHealth)
+                return false;
+
             Unit* target = AI_VALUE(Unit*, "current target");
             return target && sServerFacade.IsAlive(target) && bot->IsValidAttackTarget(target) &&
                 CastBuffSpellAction::isUseful();
@@ -180,6 +186,14 @@ namespace ai
     MELEE_DEBUFF_ACTION_R(CastShockwaveAction, "shockwave", 8.0f);
     SNARE_ACTION(CastShockwaveSnareAction, "shockwave");
 
+    // BATTLE SHOUT IS RENEWED BEFORE IT ENDS (2026-11-03, bug #138). The check
+    // was "no Battle Shout aura", so the buff dropped and the shout waited for a
+    // free global cooldown after that. Now the bot shouts again when no Battle
+    // Shout on it has more than BATTLE_SHOUT_REFRESH_MS left. The trigger and
+    // the action both ask BattleShoutWanted (WarriorActions.cpp).
+    constexpr int32 BATTLE_SHOUT_REFRESH_MS = 15000;
+    bool BattleShoutWanted(PlayerbotAI* ai);
+
     class CastBattleShoutAction : public CastBuffSpellAction
     {
     public:
@@ -187,15 +201,7 @@ namespace ai
 
         bool isUseful() override
         {
-            static const std::vector<uint32> battleShoutIds = {6673, 5242, 6192, 11549, 11550, 11551, 25289, 2048, 47436};
-
-            for (uint32 id : battleShoutIds)
-            {
-                if (bot->HasAura(id))
-                    return false;
-            }
-
-            return CastSpellAction::isUseful();
+            return BattleShoutWanted(ai) && CastSpellAction::isUseful();
         }
     };
 

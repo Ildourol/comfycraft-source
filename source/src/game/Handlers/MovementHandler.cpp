@@ -40,6 +40,7 @@
 #include "SuspiciousStatisticMgr.h"
 #include "ScriptObjects.h"
 #include "ArrivalFloor.h"
+#include "Housing/HouseMgr.h"
 
 // Bot diagnostic logging — flag-gated via AiPlayerbot.EnableActionLog. We
 // can't #include "BotDiagnostics.h" here because the playerbot/ dir isn't
@@ -213,6 +214,13 @@ void WorldSession::HandleMoveWorldportAckOpcode()
     }
 
     GetPlayer()->SendInitialPacketsAfterAddToMap();
+
+    // Tell the /house panel where the player now stands (CHOUSE M). Every map
+    // change passes here, house visits included, so a GM in world mode is moved
+    // back to house mode on arrival. Before the flight return below, which would
+    // skip it. Bots have no addon.
+    if (!isBot)
+        HouseSendWhere(GetPlayer());
 
     // flight fast teleport case
     if (GetPlayer()->GetMotionMaster()->GetCurrentMovementGeneratorType() == FLIGHT_MOTION_TYPE)

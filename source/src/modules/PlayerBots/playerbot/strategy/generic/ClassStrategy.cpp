@@ -1443,3 +1443,30 @@ void SpecPlaceholderStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& tri
         "in raid fight",
         NextAction::array(0, new NextAction("update raid strats", ACTION_PASSTROUGH), NULL)));
 }
+
+// A HEALER WALKS TO ITS PATIENT (bug #139, 2026-11-03). A priest stood 35 yd
+// behind its tank in Wailing Caverns and did not heal. The trigger is true when
+// "party member to heal" is past the heal spells' range (40 yd,
+// PartyMemberToHeal::HealSpellRange) or out of sight, and hurt enough to walk to
+// (PartyMemberToHeal::WorthWalkingTo). The walk stops 5 yd inside that range.
+//
+// In combat 35: above damage and the wand (10 to 20) and the ranged flee (30),
+// below `avoid patrol` (40), the heals (59 and up) and the panic flee (95 and up).
+// Out of combat 25: above follow (20), below the patrol watch.
+void HealerPlaceholderStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
+{
+    SpecPlaceholderStrategy::InitCombatTriggers(triggers);
+
+    triggers.push_back(new TriggerNode(
+        "party member to heal out of spell range",
+        NextAction::array(0, new NextAction("reach party member to heal", ACTION_MOVE + 5), NULL)));
+}
+
+void HealerPlaceholderStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
+{
+    SpecPlaceholderStrategy::InitNonCombatTriggers(triggers);
+
+    triggers.push_back(new TriggerNode(
+        "party member to heal out of spell range",
+        NextAction::array(0, new NextAction("reach party member to heal", ACTION_HIGH + 5), NULL)));
+}

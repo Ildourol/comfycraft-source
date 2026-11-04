@@ -39,6 +39,8 @@
  *
  * The words are `.house object`'s, so the panel swaps only the prefix. House
  * furniture is not a world spawn here: tw_char.house_object owns it.
+ * On the housing map (28) `place` refuses: a world spawn there loads in every
+ * house and template, so the panel's world mode places nothing in a house.
  * The selected object carries housing's glow (HOUSE_SELECT_MARK_ENTRY).
  *
  * THE RESPAWN TIME IS PER COPY in this core (`gameobject.spawntimesecsmin`) and
@@ -750,6 +752,9 @@ bool ComfyCommands::HandleObjCommand(ChatHandler* handler, char* args)
 
         if (forAddon)
         {
+            // The mode first: a GM in world mode sends only this, so it is the
+            // line that moves the panel back to house mode in a house.
+            HouseSendWhere(me);
             SendWorldSync(me, range);
             return true;
         }
@@ -841,6 +846,10 @@ bool ComfyCommands::HandleObjCommand(ChatHandler* handler, char* args)
     // ------------------------------------------------------------- place
     if (action == "place")
     {
+        // A world spawn on map 28 shows in every house (Commands.cpp).
+        if (ComfyCommands::RefuseWorldSpawnOnHouseMap(handler, false))
+            return false;
+
         // `e<entry>` places any gameobject: the panel's catalogue in world mode.
         Ref ref;
         uint32 anyEntry = 0;

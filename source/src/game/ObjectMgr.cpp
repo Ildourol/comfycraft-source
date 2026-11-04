@@ -2643,6 +2643,9 @@ void ObjectMgr::LoadItemPrototypes()
                 sLog.outErrorDb("Item #%u also starts quest #%u.", i, proto->StartQuest);
         }
     }
+
+    // A reload builds the prototypes again from the rows, with their stock race masks.
+    OpenQuestStarterRaces();
 }
 
 void ObjectMgr::LoadItemLocales()
@@ -6942,6 +6945,54 @@ void ObjectMgr::LoadQuestRaceVariants()
     // Three callers run this at start-up; only the last one has every relation.
     if (!m_CreatureQuestRelations.empty())
         sLog.outString(">> %u class quests are race variants of one another, %u side copies of one quest are race variants, %u keep their race for a racial", grouped, sideCopies, racial);
+
+    OpenQuestStarterRaces();
+}
+
+// ComfyCraft: Factionless.IgnoreQuestRaces opens a quest to both sides, but the item
+// that starts it keeps its AllowableRace. The client draws that mask as a red race line
+// and refuses to use the item, and Player::CanUseItem refuses it too. A Horde player
+// looted the Foul Effigy (61153, Alliance mask 589) and could not start A Foul Effigy.
+// While the switch is on, each item with StartQuest gets every playable race that its
+// quest admits (Quest::SatisfiesRaceRequirements). A quest that keeps its gate (a
+// racial, a race variant) keeps the item to its races. The class mask and the rows in
+// item_template stay as they are. 5 of the 276 starters in the stock dump exclude a side.
+//
+// The race variant marks need every quest relation, so this runs only once the creature
+// relations are in: from LoadQuestRaceVariants, and from LoadItemPrototypes on a reload.
+void ObjectMgr::OpenQuestStarterRaces()
+{
+    if (!sWorld.getConfig(CONFIG_BOOL_FACTIONLESS_IGNORE_QUEST_RACES) || m_CreatureQuestRelations.empty())
+        return;
+
+    uint32 opened = 0;
+    for (auto& itr : m_itemPrototypesMap)
+    {
+        ItemPrototype& proto = itr.second;
+        if (!proto.StartQuest)
+            continue;
+
+        Quest const* quest = GetQuestTemplate(proto.StartQuest);
+        if (!quest)
+            continue;
+
+        uint32 races = 0;
+        for (uint32 race = 1; race < MAX_RACES; ++race)
+        {
+            uint32 raceMask = 1 << (race - 1);
+            if ((raceMask & RACEMASK_ALL_PLAYABLE) && quest->SatisfiesRaceRequirements(raceMask))
+                races |= raceMask;
+        }
+
+        if ((proto.AllowableRace & races) == races)
+            continue;
+
+        proto.AllowableRace |= races;
+        ++opened;
+    }
+
+    if (opened)
+        sLog.outString(">> %u quest starting items opened to every race their quest admits (Factionless.IgnoreQuestRaces)", opened);
 }
 
 void ObjectMgr::LoadCreatureInvolvedRelations()

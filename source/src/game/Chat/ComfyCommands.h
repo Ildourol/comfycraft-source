@@ -62,6 +62,11 @@ struct ComfyCommands
     static bool HandleGMTicketRespondCommand(ChatHandler* handler, char* args);
     static bool HandleSendLetterCommand(ChatHandler* handler, char* args);
     static bool HandleWorldSayCommand(ChatHandler* handler, char* args);
+    // Not a command. True, with one line sent, when the player stands on the
+    // housing map (HOUSE_MAP_ID): a world spawn there loads in every house.
+    // `.gobject add`, `.obj place` and `.npc add` call it before they create
+    // anything. The console has no player and is never refused here.
+    static bool RefuseWorldSpawnOnHouseMap(ChatHandler* handler, bool creature);
 
     // Commands/ObjCommands.cpp
     static bool HandleObjCommand(ChatHandler* handler, char* args);

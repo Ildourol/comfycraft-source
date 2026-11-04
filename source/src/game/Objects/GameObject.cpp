@@ -21,6 +21,7 @@
 
 #include "GameObject.h"
 #include "BarbershopMgr.h"
+#include "Chat.h"
 #include "QuestDef.h"
 #include "ObjectMgr.h"
 #include "PoolManager.h"
@@ -204,6 +205,10 @@ bool GameObject::Create(uint32 guidlow, uint32 name_id, Map *map, float x, float
 {
     MANGOS_ASSERT(map);
     Relocate(x, y, z, ang);
+    // A type 11 transport sends this as its base in the create packet, and the client adds
+    // the TransportAnimation offsets to it. Left at zero, a car spawned far from the viewer
+    // ran from the map origin: the far Deeprun Tram cars stacked on one path in the ground.
+    m_stationaryPosition = Position(x, y, z, ang);
     SetMap(map);
 
     if (!IsPositionValid())
@@ -1589,9 +1594,15 @@ void GameObject::Use(Unit* user)
 
             Player* player = (Player*)user;
 
-            // a chair may have n slots. we have to calculate their positions and teleport the player to the nearest one
+            // a chair may have n slots. we have to calculate their positions and teleport the player to the nearest free one
             float slotX, slotY;
-            GetClosestChairSlotPosition(user->GetPositionX(), user->GetPositionY(), slotX, slotY);
+            int32 slot = GetClosestChairSlotPosition(user, slotX, slotY);
+            if (slot < 0)
+            {
+                ChatHandler(player).SendSysMessage("This seat is taken.");
+                return;
+            }
+            SetChairSlotUser(slot, user->GetObjectGuid());
             user->NearTeleportTo(slotX, slotY, GetPositionZ(), GetOrientation(), TELE_TO_NOT_LEAVE_COMBAT | TELE_TO_NOT_UNSUMMON_PET);
             user->SetStandState(UNIT_STAND_STATE_SIT_LOW_CHAIR + info->chair.height);
 
@@ -2305,7 +2316,7 @@ bool GameObject::PlayerCanUse(Player* pPlayer)
         case GAMEOBJECT_TYPE_CHAIR:
         {
             float x, y;
-            GetClosestChairSlotPosition(pPlayer->GetPositionX(), pPlayer->GetPositionY(), x, y);
+            GetClosestChairSlotPosition(pPlayer, x, y);
             if (pPlayer->GetDistance(x, y, GetPositionZ(), SizeFactor::None) > MAX_SITCHAIRUSE_DISTANCE)
                 return false;
             break;
@@ -2587,15 +2598,22 @@ bool GameObject::IsAtInteractDistance(Player const* player, uint32 maxRange) con
     return IsAtInteractDistance(player->GetPosition(), GetGOInfo()->GetInteractionDistance());
 }
 
-void GameObject::GetClosestChairSlotPosition(float userX, float userY, float& outX, float& outY) const
+int32 GameObject::GetClosestChairSlotPosition(Unit const* user, float& outX, float& outY) const
 {
+    float const userX = user->GetPositionX();
+    float const userY = user->GetPositionY();
+
     // check if the db is sane
     if (GetGOInfo()->chair.slots > 0)
     {
         float lowestDist = DEFAULT_VISIBILITY_DISTANCE;
+        float lowestFreeDist = DEFAULT_VISIBILITY_DISTANCE;
+        int32 freeSlot = -1;
 
         float x_lowest = GetPositionX();
         float y_lowest = GetPositionY();
+        float x_free = x_lowest;
+        float y_free = y_lowest;
 
         // the object orientation + 1/2 pi
         // every slot will be on that straight line
@@ -2625,14 +2643,66 @@ void GameObject::GetClosestChairSlotPosition(float userX, float userY, float& ou
                 x_lowest = x_i;
                 y_lowest = y_i;
             }
+
+            if (thisDistance <= lowestFreeDist && !IsChairSlotHeld(i, x_i, y_i, user))
+            {
+                lowestFreeDist = thisDistance;
+                freeSlot = int32(i);
+                x_free = x_i;
+                y_free = y_i;
+            }
         }
-        outX = x_lowest;
-        outY = y_lowest;
-        return;
+
+        if (freeSlot >= 0)
+        {
+            outX = x_free;
+            outY = y_free;
+        }
+        else
+        {
+            outX = x_lowest;
+            outY = y_lowest;
+        }
+        return freeSlot;
     }
 
     outX = GetPositionX();
     outY = GetPositionY();
+    return 0;
+}
+
+// A seat is held while the player who last took it still sits on it. The seat
+// counts as held during the near teleport onto it, before the player's position
+// is the seat.
+bool GameObject::IsChairSlotHeld(uint32 slot, float slotX, float slotY, Unit const* user) const
+{
+    auto itr = m_chairSlotUsers.find(slot);
+    if (itr == m_chairSlotUsers.end() || itr->second == user->GetObjectGuid())
+        return false;
+
+    Player* holder = GetMap()->GetPlayer(itr->second);
+    if (!holder || !holder->IsInWorld() || !holder->IsAlive())
+        return false;
+
+    if (holder->IsBeingTeleportedNear())
+    {
+        WorldLocation const& dest = holder->GetTeleportDest();
+        return Geometry::GetDistance2D(dest.x, dest.y, slotX, slotY) < 0.5f;
+    }
+
+    switch (holder->GetStandState())
+    {
+        case UNIT_STAND_STATE_SIT:
+        case UNIT_STAND_STATE_SIT_CHAIR:
+        case UNIT_STAND_STATE_SIT_LOW_CHAIR:
+        case UNIT_STAND_STATE_SIT_MEDIUM_CHAIR:
+        case UNIT_STAND_STATE_SIT_HIGH_CHAIR:
+            break;
+        default:
+            return false;
+    }
+
+    return Geometry::GetDistance2D(holder->GetPositionX(), holder->GetPositionY(), slotX, slotY) < 0.5f;
 }
 
 bool GameObject::IsAtInteractDistance(Position const& pos, float radius) const

@@ -34,6 +34,7 @@ public:
         */
 
         creators["berserker rage"] = &berserker_rage;
+        creators["battle shout"] = &battle_shout;
     }
 
 private:
@@ -72,6 +73,11 @@ private:
     */
 
     ACTION_NODE_P(berserker_rage, "berserker rage", "berserker stance");
+
+    // Not enough rage for Battle Shout: Bloodrage gives 10 at once, and the
+    // shout goes out on a later tick. Without it, rage under 10 went to Revenge
+    // (5 rage) and the shout waited.
+    ACTION_NODE_A(battle_shout, "battle shout", "bloodrage");
 };
 
 WarriorStrategy::WarriorStrategy(PlayerbotAI* ai) : ClassStrategy(ai)
@@ -273,9 +279,16 @@ void WarriorBuffStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
         "berserker rage",
         NextAction::array(0, new NextAction("berserker rage", ACTION_INTERRUPT), NULL)));
 
+    // BATTLE SHOUT FIRST (2026-11-03, bug #138). At ACTION_HIGH + 1 a tank's
+    // rotation outranked it (demoralizing shout +6, shield block +5, shield slam
+    // +4, revenge +3), each spent the rage, and the buff lapsed for most of a
+    // fight. ACTION_HIGH + 7 is above all of these and below ACTION_MOVE (30):
+    // stance, charge, the pull, interrupts, taunts and the emergency actions
+    // still win. It fires once in about two minutes, so arms and fury lose one
+    // global cooldown for it.
     triggers.push_back(new TriggerNode(
         "battle shout",
-        NextAction::array(0, new NextAction("battle shout", ACTION_HIGH + 1), NULL)));
+        NextAction::array(0, new NextAction("battle shout", ACTION_HIGH + 7), NULL)));
 
     triggers.push_back(new TriggerNode(
         "bloodrage",

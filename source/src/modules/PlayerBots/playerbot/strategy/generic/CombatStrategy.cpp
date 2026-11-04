@@ -3,6 +3,7 @@
 #include "CombatStrategy.h"
 #include "playerbot/ServerFacade.h"
 #include "playerbot/PlayerbotAIConfig.h"
+#include "playerbot/strategy/values/PartyMemberToHeal.h"
 
 using namespace ai;
 
@@ -97,6 +98,12 @@ float HealBeforeFleeMultiplier::GetValue(Action* action)
     // mob beside it (2026-10-18).
     Unit* patient = AI_VALUE(Unit*, "party member to heal");
     if (!patient || patient->GetHealthPercent() >= (float)sPlayerbotAIConfig.almostFullHealth)
+        return 1.0f;
+
+    // In reach: a healer looks for patients past its heal range
+    // (PartyMemberToHeal::SearchRange), and one it cannot heal from here does
+    // not keep it from fleeing.
+    if (sServerFacade.GetDistance2d(bot, patient) > PartyMemberToHeal::HealSpellRange())
         return 1.0f;
 
     return 0.01f;

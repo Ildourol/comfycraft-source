@@ -3974,14 +3974,21 @@ bool FactionlessWar::Load()
             if (quest->ReqCreatureOrGOId[i] > 0 && !quest->ReqSpell[i]
                 && against(quest, uint32(quest->ReqCreatureOrGOId[i])))
                 targets.insert(uint32(quest->ReqCreatureOrGOId[i]));
-        for (int i = 0; i < QUEST_ITEM_OBJECTIVES_COUNT; ++i)
+        auto addDropTargets = [&](uint32 itemId)
         {
-            auto drop = droppedBy.find(quest->ReqItemId[i]);
+            auto drop = droppedBy.find(itemId);
             if (drop != droppedBy.end())
                 for (uint32 entry : drop->second)
                     if (against(quest, entry))
                         targets.insert(entry);
-        }
+        };
+        for (int i = 0; i < QUEST_ITEM_OBJECTIVES_COUNT; ++i)
+            addDropTargets(quest->ReqItemId[i]);
+        // A source item counts too: The Sacred Flame (1195) needs the Filled
+        // Etched Phial, made from the Etched Phial the Laughing Sisters drop
+        // (bug 143). SrcItemId is left out: the quest giver hands that over.
+        for (int i = 0; i < QUEST_SOURCE_ITEM_IDS_COUNT; ++i)
+            addDropTargets(quest->ReqSourceId[i]);
 
         for (uint32 entry : targets)
             s_warQuests[entry].push_back(itr.first);
@@ -4537,6 +4544,8 @@ SpellMissInfo WorldObject::MeleeSpellHitResult(Unit* pVictim, SpellEntry const* 
             canParry = false;
         if (pCreatureVictim->HasExtraFlag(CREATURE_FLAG_EXTRA_NO_BLOCK))
             canBlock = false;
+        if (pCreatureVictim->HasExtraFlag(CREATURE_FLAG_EXTRA_NO_DODGE))
+            canDodge = false;
     }
     // Check if the player can parry
     else

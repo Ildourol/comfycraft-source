@@ -5,6 +5,7 @@
 #include "Group/Group.h"
 #include "strategy/values/MoveStyleValue.h"
 #include "playerbot/ServerFacade.h"
+#include "strategy/values/PartyMemberToHeal.h"
 #include "Maps/PathFinder.h"
 #include <iomanip>
 #include <sstream>
@@ -90,6 +91,15 @@ static float angleBetween(float a, float b)
 // 10 yd from every mob in the fight, within 3 yd of the player's height, in the
 // player's sight, with a path at most 1.5 times the straight line + 5 yd, and
 // for a hunter 10 to 30 yd from his target, measured as the server does.
+//
+// A HEALER'S SPOT KEEPS ITS PATIENT IN REACH (2026-11-03). The 12 yd ring with a
+// 10 yd gap to the fight left a healer at the edge of the 10 yd flee trigger,
+// and a mob that shifted a yard fled it again. A spot could also be past heal
+// range of its patient, and `reach party member to heal` walked it back toward
+// the fight. A healer first tries rings at 18 and 24 yd, at least
+// HealerFightGap (15) from every mob in the fight, and within HealSpellRange
+// less HealChaseMargin (35) of "party member to heal" and in its sight. With no
+// such spot it takes one by the rules above.
 bool ai::FindMasterRingSpot(PlayerbotAI* ai, float& rx, float& ry, float& rz, std::string& note)
 {
     Player* bot = ai->GetBot();
@@ -130,60 +140,90 @@ bool ai::FindMasterRingSpot(PlayerbotAI* ai, float& rx, float& ry, float& rz, st
             offsets.push_back(-i * step);
     }
 
+    const bool isHealer = PlayerbotAI::IsHeal(bot);
+    Unit* patient = isHealer ? ai->GetAiObjectContext()->GetValue<Unit*>("party member to heal")->Get() : nullptr;
+    if (patient && (patient == bot || !patient->IsInWorld() || patient->GetMapId() != bot->GetMapId() || !sServerFacade.IsAlive(patient)))
+        patient = nullptr;
+
     const float own = atan2(bot->GetPositionY() - master->GetPositionY(), bot->GetPositionX() - master->GetPositionX());
-    for (float offset : offsets)
+
+    // One pass over the ring. healerPass: the healer's rules (see above).
+    auto search = [&](bool healerPass) -> bool
     {
-        for (float radius : { 12.0f, 18.0f })
+        const std::vector<float> radii = healerPass ? std::vector<float>{ 18.0f, 24.0f } : std::vector<float>{ 12.0f, 18.0f };
+        const float fightGap = healerPass ? PartyMemberToHeal::HealerFightGap() : 10.0f;
+        const float patientReach = PartyMemberToHeal::HealSpellRange() - PartyMemberToHeal::HealChaseMargin();
+
+        for (float offset : offsets)
         {
-            const float angle = own + offset;
-            float x = master->GetPositionX() + cos(angle) * radius;
-            float y = master->GetPositionY() + sin(angle) * radius;
-            float z = master->GetPositionZ() + CONTACT_DISTANCE;
-            bot->UpdateAllowedPositionZ(x, y, z);
-
-            if (std::fabs(z - master->GetPositionZ()) > 3.0f)
-                continue;
-
-            if (InIdleAggro(idle, bot, x, y, z, 5.0f))
-                continue;
-
-            bool crowded = false;
-            for (Unit* unit : fighting)
-                crowded = crowded || sServerFacade.GetDistance2d(unit, x, y) < 10.0f;
-            for (Player* other : others)
-                crowded = crowded || sServerFacade.GetDistance2d(other, x, y) < 5.0f;
-            if (crowded)
-                continue;
-
-            if (needsShot)
+            for (float radius : radii)
             {
-                const float shot = sServerFacade.GetDistance2d(target, x, y) - target->GetCombatReach() - bot->GetCombatReach();
-                if (shot < 10.0f || shot > 30.0f)
+                const float angle = own + offset;
+                float x = master->GetPositionX() + cos(angle) * radius;
+                float y = master->GetPositionY() + sin(angle) * radius;
+                float z = master->GetPositionZ() + CONTACT_DISTANCE;
+                bot->UpdateAllowedPositionZ(x, y, z);
+
+                if (std::fabs(z - master->GetPositionZ()) > 3.0f)
                     continue;
+
+                if (InIdleAggro(idle, bot, x, y, z, 5.0f))
+                    continue;
+
+                bool crowded = false;
+                for (Unit* unit : fighting)
+                    crowded = crowded || sServerFacade.GetDistance2d(unit, x, y) < fightGap;
+                for (Player* other : others)
+                    crowded = crowded || sServerFacade.GetDistance2d(other, x, y) < 5.0f;
+                if (crowded)
+                    continue;
+
+                if (needsShot)
+                {
+                    const float shot = sServerFacade.GetDistance2d(target, x, y) - target->GetCombatReach() - bot->GetCombatReach();
+                    if (shot < 10.0f || shot > 30.0f)
+                        continue;
+                }
+
+                if (!master->IsWithinLOS(x, y, z + bot->GetCollisionHeight(), true))
+                    continue;
+
+                if (healerPass && patient && patient != master)
+                {
+                    if (sServerFacade.GetDistance2d(patient, x, y) > patientReach)
+                        continue;
+
+                    if (!patient->IsWithinLOS(x, y, z + bot->GetCollisionHeight(), true))
+                        continue;
+                }
+
+                PathFinder path(bot);
+                path.calculate(x, y, z, false);
+                if (path.getPathType() & (PATHFIND_NOPATH | PATHFIND_INCOMPLETE))
+                    continue;
+                if ((path.getPathType() & PATHFIND_NORMAL) && path.Length() > 1.5f * bot->GetDistance(x, y, z) + 5.0f)
+                    continue;
+
+                std::ostringstream out;
+                out << std::fixed << std::setprecision(0) << radius << " yd from " << master->GetName() << ", "
+                    << (offset * 180.0f / M_PI_F) << " deg round from its own side";
+                if (healerPass && patient && patient != master)
+                    out << ", " << sServerFacade.GetDistance2d(patient, x, y) << " yd from " << patient->GetName();
+                note = out.str();
+                rx = x;
+                ry = y;
+                rz = z;
+                return true;
             }
-
-            if (!master->IsWithinLOS(x, y, z + bot->GetCollisionHeight(), true))
-                continue;
-
-            PathFinder path(bot);
-            path.calculate(x, y, z, false);
-            if (path.getPathType() & (PATHFIND_NOPATH | PATHFIND_INCOMPLETE))
-                continue;
-            if ((path.getPathType() & PATHFIND_NORMAL) && path.Length() > 1.5f * bot->GetDistance(x, y, z) + 5.0f)
-                continue;
-
-            std::ostringstream out;
-            out << std::fixed << std::setprecision(0) << radius << " yd from " << master->GetName() << ", "
-                << (offset * 180.0f / M_PI_F) << " deg round from its own side";
-            note = out.str();
-            rx = x;
-            ry = y;
-            rz = z;
-            return true;
         }
-    }
 
-    return false;
+        return false;
+    };
+
+    if (isHealer && search(true))
+        return true;
+
+    return search(false);
 }
 
 // A STEP AWAY FROM A ROOTED MOB (2026-10-22).

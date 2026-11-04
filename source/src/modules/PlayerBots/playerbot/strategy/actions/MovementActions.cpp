@@ -3113,7 +3113,37 @@ bool MovementAction::Flee(Unit *target)
         std::string note;
         if (FindMasterRingSpot(ai, rx, ry, rz, note))
         {
-            where("to a spot " + note);
+            // With `debug` on, a healer says each flee: the nearest mob in the
+            // fight and the spot (2026-11-03). "heal flee: <mob> <n> yd, to a
+            // spot <note>".
+            if (ai->IsHeal(bot) && ai->HasStrategy("debug", BotState::BOT_STATE_NON_COMBAT))
+            {
+                Unit* nearest = nullptr;
+                float nearestDist = 0.0f;
+                for (ObjectGuid const& guid : AI_VALUE(std::list<ObjectGuid>, "attackers"))
+                {
+                    Unit* attacker = ai->GetUnit(guid);
+                    if (!attacker || !sServerFacade.IsAlive(attacker))
+                        continue;
+
+                    const float d = sServerFacade.GetDistance2d(bot, attacker);
+                    if (!nearest || d < nearestDist)
+                    {
+                        nearest = attacker;
+                        nearestDist = d;
+                    }
+                }
+
+                std::ostringstream out;
+                out << std::fixed << std::setprecision(1) << "heal flee: ";
+                if (nearest)
+                    out << nearest->GetName() << " " << nearestDist << " yd, ";
+                out << "to a spot " << note;
+                ai->TellPlayerNoFacing(master, out.str(), PlayerbotSecurityLevel::PLAYERBOT_SECURITY_ALLOW_ALL, true, false);
+            }
+            else
+                where("to a spot " + note);
+
             if (!MoveTo(bot->GetMapId(), rx, ry, rz, false, false, false, true))
                 return false;
 

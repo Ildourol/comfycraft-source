@@ -7,6 +7,7 @@
 #include "playerbot/strategy/generic/PullStrategy.h"
 #include "playerbot/strategy/NamedObjectContext.h"
 #include "playerbot/strategy/values/MoveStyleValue.h"
+#include "playerbot/strategy/values/PartyMemberToHeal.h"
 #include "GenericSpellActions.h"
 #include "playerbot/PlayerbotFactory.h"
 
@@ -83,6 +84,14 @@ namespace ai
                     // worth calling a corner, and it turned the loop into a
                     // crawl rather than ending it.
                     chaseDist = inLos ? preferredDist : std::min(distanceToTarget * 0.5f, preferredDist);
+
+                    // A floor for the halving (GetMinChaseDistance), while the
+                    // bot is still well outside it. Inside it the halving goes
+                    // on: a corner must still be cleared.
+                    const float minChase = std::min(GetMinChaseDistance(), preferredDist);
+                    if (!inLos && minChase > 0.0f && distanceToTarget > minChase + 2.0f)
+                        chaseDist = std::max(chaseDist, minChase);
+
                     chaseDist = std::max(chaseDist - sPlayerbotAIConfig.contactDistance, 0.0f);
                 }
 
@@ -152,6 +161,10 @@ namespace ai
         // straight back out of range. ReachPullAction overrides it: a pull pays
         // for that buffer twice, once walking in and once walking back.
         virtual float GetChaseDistance(float chaseRange) const { return chaseRange * 0.75f; }
+
+        // The closest the halving for line of sight takes the bot, while it is
+        // more than 2 yd outside this. 0 is no floor.
+        virtual float GetMinChaseDistance() const { return 0.0f; }
 
         virtual bool isUseful() override
 		{
@@ -245,7 +258,7 @@ namespace ai
         // With `debug` on, each reach writes its target, the gap to it, how far
         // the bot and the target moved since the last reach, and how ChaseTo
         // moved the bot.
-        void ExplainReach(Unit* target, float gap, const std::string& how)
+        virtual void ExplainReach(Unit* target, float gap, const std::string& how)
         {
             Player* master = GetMaster();
             if (!master || !ai->HasStrategy("debug", BotState::BOT_STATE_NON_COMBAT))
@@ -358,8 +371,66 @@ namespace ai
     class ReachPartyMemberToHealAction : public ReachTargetAction
     {
     public:
-        ReachPartyMemberToHealAction(PlayerbotAI* ai) : ReachTargetAction(ai, "reach party member to heal", ai->GetRange("heal")) {}
+        ReachPartyMemberToHealAction(PlayerbotAI* ai) : ReachTargetAction(ai, "reach party member to heal", PartyMemberToHeal::HealSpellRange()) {}
         virtual std::string GetTargetName() override { return "party member to heal"; }
+
+        // A HEALER WALKS TO ITS PATIENT (bug #139, 2026-11-03). Unqualified, from
+        // the trigger "party member to heal out of spell range" at 35: range is
+        // HealSpellRange (40). As a heal's prerequisite, range is that spell's own
+        // (40 for every direct heal). Both walk only past that range or out of
+        // sight (isUseful), and stop HealChaseMargin (5 yd) inside it.
+        //
+        // The chase pauses the bot for the whole walk (WaitForReach). In sight,
+        // the bot wakes when the patient is 3 yd inside the range instead, and
+        // the heal then stops the walk there (PlayerbotAI::CastSpell stops a
+        // moving bot). MovementAction::isUseful keeps the bot still while it
+        // casts, and blocks this action while passive or stay is on.
+        virtual bool Execute(Event& event) override
+        {
+            Unit* target = GetTarget();
+            if (!target)
+                return false;
+
+            const float gap = bot->GetDistance(target, true, DIST_CALC_COMBAT_REACH);
+            const bool inLos = bot->IsWithinLOSInMap(target, true);
+            const bool moved = ReachTargetAction::Execute(event);
+            if (moved && inLos && gap > range)
+            {
+                const float toRange = std::max(gap - (range - 3.0f), 0.0f);
+                const uint32 wake = (uint32)(1000.0f * MoveDelay(toRange)) + sPlayerbotAIConfig.reactDelay;
+                if (GetDuration() > wake)
+                    SetDuration(wake);
+            }
+
+            return moved;
+        }
+
+    protected:
+        // 5 yd inside the range (35 of 40), not 75% of it (30). Until 2026-11-03
+        // the walk from the trigger ended at 75% of HealDistance (22.5 yd), which
+        // took a healer 15 yd closer to the fight than a heal needs.
+        float GetChaseDistance(float chaseRange) const override
+        {
+            return std::max(chaseRange - PartyMemberToHeal::HealChaseMargin(), chaseRange * 0.75f);
+        }
+
+        // Out of sight, the halving stops at 18 yd from the patient while the bot
+        // is farther than 20 yd. The mobs on a tank are within about 5 yd of it,
+        // and a healer within 10 yd of a mob flees (`enemy too close for spell`).
+        float GetMinChaseDistance() const override { return 18.0f; }
+
+        // With `debug` on: "heal reach: to <name>, <gap> yd (heal range <n>),
+        // <how>". <how> ends in ", no line of sight" for a patient out of sight.
+        void ExplainReach(Unit* target, float gap, const std::string& how) override
+        {
+            Player* master = GetMaster();
+            if (!master || !ai->HasStrategy("debug", BotState::BOT_STATE_NON_COMBAT))
+                return;
+
+            char text[220];
+            snprintf(text, sizeof(text), "heal reach: to %s, %.1f yd (heal range %.0f), %s", target->GetName(), gap, range, how.c_str());
+            ai->TellPlayerNoFacing(master, std::string(text), PlayerbotSecurityLevel::PLAYERBOT_SECURITY_ALLOW_ALL, true, false);
+        }
     };
 
     class ReachPartyMemberForTotemAction : public ReachTargetAction

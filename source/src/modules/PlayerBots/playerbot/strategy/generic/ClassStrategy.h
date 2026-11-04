@@ -326,6 +326,20 @@ namespace ai
         virtual void InitNonCombatTriggers(std::list<TriggerNode*>& triggers) override;
     };
 
+    // The spec placeholder of every healer spec (holy and discipline priest,
+    // restoration druid and shaman, holy paladin). It walks the healer to a
+    // patient out of heal range or out of sight (bug #139).
+    class HealerPlaceholderStrategy : public SpecPlaceholderStrategy
+    {
+    public:
+        HealerPlaceholderStrategy(PlayerbotAI* ai) : SpecPlaceholderStrategy(ai) {}
+        int GetType() override { return STRATEGY_TYPE_HEAL | STRATEGY_TYPE_RANGED; }
+
+    protected:
+        virtual void InitCombatTriggers(std::list<TriggerNode*>& triggers) override;
+        virtual void InitNonCombatTriggers(std::list<TriggerNode*>& triggers) override;
+    };
+
     // This strategy is used to hold the aoe strategy
     class AoePlaceholderStrategy : public PlaceholderStrategy
     {

@@ -871,7 +871,11 @@ class GameObject : public WorldObject
         float GetStationaryY() const { if (GetGOInfo()->type != GAMEOBJECT_TYPE_MO_TRANSPORT) return m_stationaryPosition.y; return 0.f; }
         float GetStationaryZ() const { if (GetGOInfo()->type != GAMEOBJECT_TYPE_MO_TRANSPORT) return m_stationaryPosition.z; return 0.f; }
         float GetStationaryO() const { if (GetGOInfo()->type != GAMEOBJECT_TYPE_MO_TRANSPORT) return m_stationaryPosition.o; return GetOrientation(); }
-        void GetClosestChairSlotPosition(float userX, float userY, float& outX, float& outY) const;
+        // Puts the nearest seat that no other player holds in outX/outY and returns its index.
+        // Returns -1 when every seat is held; outX/outY are then the nearest seat.
+        int32 GetClosestChairSlotPosition(Unit const* user, float& outX, float& outY) const;
+        bool IsChairSlotHeld(uint32 slot, float slotX, float slotY, Unit const* user) const;
+        void SetChairSlotUser(int32 slot, ObjectGuid guid) { if (slot >= 0) m_chairSlotUsers[uint32(slot)] = guid; }
 
         GameObjectData const * GetGOData() const;
 
@@ -915,6 +919,7 @@ class GameObject : public WorldObject
         GuidsSet m_SkillupSet;                              // players that already have skill-up at GO use
 
         uint32 m_useTimes;                                  // amount uses/charges triggered
+        std::map<uint32, ObjectGuid> m_chairSlotUsers;      // GAMEOBJECT_TYPE_CHAIR: who last sat on each seat
         uint32 m_chargeOverride;                            // per-instance max charges override (0 = use template)
 
         // collected only for GAMEOBJECT_TYPE_SUMMONING_RITUAL

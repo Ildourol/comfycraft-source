@@ -49,17 +49,7 @@ namespace ai
     public:
         BattleShoutTrigger(PlayerbotAI* ai) : Trigger(ai, "battle shout") {}
 
-        bool IsActive() override
-        {
-            static const std::vector<uint32> battleShoutIds = {6673, 5242, 6192, 11549, 11550, 11551, 25289, 2048, 47436};
-
-            for (uint32 id : battleShoutIds)
-            {
-                if (bot->HasAura(id))
-                    return false;
-            }
-            return true;
-        }
+        bool IsActive() override;
     };
 
     class BerserkerRageBuffTrigger : public TargetOfFearCastTrigger

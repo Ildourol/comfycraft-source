@@ -3,10 +3,10 @@
 
 namespace ai
 {
-    class HolyPriestPlaceholderStrategy : public SpecPlaceholderStrategy
+    class HolyPriestPlaceholderStrategy : public HealerPlaceholderStrategy
     {
     public:
-        HolyPriestPlaceholderStrategy(PlayerbotAI* ai) : SpecPlaceholderStrategy(ai) {}
+        HolyPriestPlaceholderStrategy(PlayerbotAI* ai) : HealerPlaceholderStrategy(ai) {}
         int GetType() override { return STRATEGY_TYPE_HEAL | STRATEGY_TYPE_RANGED; }
         std::string getName() override { return "holy"; }
     };

@@ -1870,6 +1870,28 @@ static void SendHouseObjectSync(Player* player, House* house)
     player->SendAddonMessage("CHOUSE", tail.str());
 }
 
+// WHERE THE PLAYER STANDS, for the panel's mode. The addon cannot ask the
+// client for a map id, and zone text is not proof: two tiles of map 28 carry an
+// area name (bits 1192 and 1193), so a house there has a zone name. The server
+// knows, so the server says. See HouseMgr.h for when this is sent.
+void HouseSendWhere(Player* player)
+{
+    if (!player || !player->GetSession())
+        return;
+
+    char const* where = "world";
+    if (player->GetMapId() == HOUSE_MAP_ID)
+    {
+        where = "housemap";
+        if (House* house = sHouseMgr.GetHouseAt(player))
+            where = house->authorsTemplate ? "template" : "house";
+    }
+
+    // The same rank test as the gm word in the sync header: .obj is SEC_DEVELOPER.
+    bool const gm = player->GetSession()->GetSecurity() >= SEC_DEVELOPER;
+    player->SendAddonMessage("CHOUSE", std::string("M ") + where + (gm ? " 1" : " 0"));
+}
+
 // The room, printed. Lifted out of the list command so the control panel on the
 // exit gear can show the same thing -- one implementation, so a menu and a
 // command can never describe the room two ways.
@@ -1961,6 +1983,12 @@ bool ComfyCommands::HandleHouseObjectListCommand(ChatHandler* handler, char* arg
     // own subcommand -- it is the same question, and `.commands` should not grow
     // an entry no human would ever type.
     bool const forAddon = handler->ExtractLiteralArg(&args, "addon") != nullptr;
+
+    // Every panel refresh confirms the mode first, so the list that follows is
+    // read in the right one. The addon also sends this on its first
+    // PLAYER_ENTERING_WORLD, which is how a login or a /reload learns the mode.
+    if (forAddon)
+        HouseSendWhere(player);
 
     House* house = sHouseMgr.GetHouseAt(player);
     if (!house)

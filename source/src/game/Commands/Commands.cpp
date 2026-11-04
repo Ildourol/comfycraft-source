@@ -11187,9 +11187,37 @@ bool ChatHandler::HandleGameObjectRotateCommand(char* args)
     return true;
 }
 
+/*
+ * NO WORLD SPAWNS ON THE HOUSING MAP.
+ *
+ * Every house and every template is an instance of map 28. A row in
+ * `gameobject` or `creature` with map 28 loads in EVERY one of them, even when
+ * the GM stood inside one house to place it. House furniture is a different
+ * thing: `.house object add` writes tw_char.house_object, which belongs to one
+ * house. So the commands that save a new world spawn refuse on map 28, for
+ * every rank. The /house panel's world mode sends `.obj place e<entry>`; a
+ * wrong mode read inside a house now gets this line and writes nothing.
+ */
+bool ComfyCommands::RefuseWorldSpawnOnHouseMap(ChatHandler* handler, bool creature)
+{
+    WorldSession* session = handler->GetSession();
+    Player* player = session ? session->GetPlayer() : nullptr;
+    if (!player || player->GetMapId() != HOUSE_MAP_ID)
+        return false;
+
+    handler->SendSysMessage(creature
+        ? "World NPCs show in every house. Not placed."
+        : "World spawns show in every house. Use .house object add.");
+    handler->SetSentErrorMessage(true);
+    return true;
+}
+
 //spawn go
 bool ChatHandler::HandleGameObjectAddCommand(char* args)
 {
+    if (ComfyCommands::RefuseWorldSpawnOnHouseMap(this, false))
+        return false;
+
     // number or [name] Shift-click form |color|Hgameobject_entry:go_id|h[name]|h|r
     uint32 id;
     if (!ExtractUint32KeyFromLink(&args, "Hgameobject_entry", id))
@@ -11788,6 +11816,9 @@ bool ChatHandler::HandleModifyRepCommand(char* args)
 //add spawn of creature
 bool ChatHandler::HandleNpcAddCommand(char* args)
 {
+    if (ComfyCommands::RefuseWorldSpawnOnHouseMap(this, true))
+        return false;
+
     if (!*args)
         return false;
 

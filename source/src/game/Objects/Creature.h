@@ -57,7 +57,7 @@ enum CreatureFlagsExtra
     CREATURE_FLAG_EXTRA_NO_CRUSH                     = 0x00000020,       // creature can't do crush attacks
     CREATURE_FLAG_EXTRA_FIXED_Z                      = 0x00000040,       // creature does not fall
     CREATURE_FLAG_EXTRA_INVISIBLE                    = 0x00000080,       // creature is always invisible for player (mostly trigger creatures)
-                                                                         // unused
+    CREATURE_FLAG_EXTRA_NO_DODGE                     = 0x00000100,       // creature can't dodge (ComfyCraft, bug 130: land mines)
     CREATURE_FLAG_EXTRA_AGGRO_ZONE                   = 0x00000200,       // creature sets itself in combat with zone on aggro
     CREATURE_FLAG_EXTRA_GUARD                        = 0x00000400,       // creature is a guard
     CREATURE_FLAG_EXTRA_NO_THREAT_LIST               = 0x00000800,       // creature does not select targets based on threat

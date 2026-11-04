@@ -3,6 +3,9 @@
 #include "PartyMemberToHeal.h"
 #include "playerbot/PlayerbotAIConfig.h"
 #include "playerbot/ServerFacade.h"
+#include "playerbot/strategy/Action.h"
+#include "playerbot/strategy/Strategy.h"
+#include "playerbot/strategy/generic/UseFoodStrategy.h"
 
 using namespace ai;
 
@@ -179,14 +182,62 @@ bool PartyMemberToHeal::CanHealPet(Pet* pet)
     return MINI_PET != pet->getPetType();
 }
 
-bool PartyMemberToHeal::Check(Unit* player)
+float PartyMemberToHeal::SearchRange(PlayerbotAI* ai)
 {
-    bool isBg = bot->InBattleGround();
+    Player* bot = ai->GetBot();
 
     // Battlegrounds get their own figure rather than a blanket halving: the two
     // situations want different distances, and halving whatever the open-world
     // value happens to be ties them together for no reason.
-    float maxDist = isBg ? sPlayerbotAIConfig.healDistanceBg : ai->GetRange("heal");
+    if (bot->InBattleGround())
+        return sPlayerbotAIConfig.healDistanceBg;
+
+    const float healRange = ai->GetRange("heal");
+    if (!bot->GetGroup() || !ai->ContainsStrategy(STRATEGY_TYPE_HEAL))
+        return healRange;
+
+    // MovementAction::isUseful blocks the reach while passive or stay is on.
+    const BotState state = ai->GetState();
+    if (ai->HasStrategy("passive", state) || ai->HasStrategy("stay", state))
+        return std::max(healRange, HealSpellRange());
+
+    // 5 yd short of SightDistance: past it, MovementAction::ChaseTo walks to the
+    // target's feet instead of chasing to a distance.
+    return std::max(healRange, sPlayerbotAIConfig.sightDistance - 5.0f);
+}
+
+bool PartyMemberToHeal::WorthWalkingTo(PlayerbotAI* ai, Unit* patient)
+{
+    if (!patient || !patient->IsAlive())
+        return false;
+
+    const float health = patient->GetHealthPercent();
+    if (health >= 100.0f)
+        return false;
+
+    if (health < (float)sPlayerbotAIConfig.almostFullHealth)
+        return true;
+
+    // 90 to 99 percent: worth a walk in a fight, not worth leaving a drink for.
+    if (HealerKeepsDrinking(ai))
+        return false;
+
+    return patient->IsInCombat() || ai->GetBot()->IsInCombat();
+}
+
+bool PartyMemberToHeal::HealerHasPatient(PlayerbotAI* ai)
+{
+    Player* bot = ai->GetBot();
+    if (!bot->IsAlive() || !bot->GetGroup() || bot->InBattleGround() || !ai->ContainsStrategy(STRATEGY_TYPE_HEAL))
+        return false;
+
+    Unit* patient = ai->GetAiObjectContext()->GetValue<Unit*>("party member to heal")->Get();
+    return WorthWalkingTo(ai, patient);
+}
+
+bool PartyMemberToHeal::Check(Unit* player)
+{
+    const float maxDist = SearchRange(ai);
 
     if (!player)
         return false;

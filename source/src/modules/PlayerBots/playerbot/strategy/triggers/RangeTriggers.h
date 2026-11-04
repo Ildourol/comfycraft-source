@@ -6,6 +6,7 @@
 #include "playerbot/strategy/values/PossibleAttackTargetsValue.h"
 #include "playerbot/strategy/values/Formations.h"
 #include "playerbot/strategy/values/LastMovementValue.h"
+#include "playerbot/strategy/values/PartyMemberToHeal.h"
 #include "playerbot/FleeManager.h"
 
 namespace ai
@@ -336,16 +337,24 @@ namespace ai
     class PartyMemberToHealOutOfSpellRangeTrigger : public OutOfRangeTrigger
     {
     public:
-        PartyMemberToHealOutOfSpellRangeTrigger(PlayerbotAI* ai) : OutOfRangeTrigger(ai, "party member to heal out of spell range", ai->GetRange("heal")) {}
+        PartyMemberToHealOutOfSpellRangeTrigger(PlayerbotAI* ai) : OutOfRangeTrigger(ai, "party member to heal out of spell range", PartyMemberToHeal::HealSpellRange()) {}
         virtual std::string GetTargetName() override { return "party member to heal"; }
-        
+
+        // Wired in HealerPlaceholderStrategy (bug #139). The patient is past the
+        // heal range or out of sight, and hurt enough to walk to: the tank is
+        // always "party member to heal", at full health too.
+        //
+        // The range is the heal spells' own (40), not AiPlayerbot.HealDistance
+        // (30), since 2026-11-03: a patient at 30 to 40 yd can be healed from
+        // where the healer stands, and the walk it started there was not needed.
         virtual bool IsActive() override
         {
             Unit* target = AI_VALUE(Unit*, GetTargetName());
-            if (!target)
+            if (!target || !PartyMemberToHeal::WorthWalkingTo(ai, target))
                 return false;
 
-            return target && (bot->GetDistance(target, true, DIST_CALC_COMBAT_REACH) > (distance - sPlayerbotAIConfig.contactDistance)) || !bot->IsWithinLOSInMap(target, true);
+            return bot->GetDistance(target, true, DIST_CALC_COMBAT_REACH) > (distance - sPlayerbotAIConfig.contactDistance) ||
+                !bot->IsWithinLOSInMap(target, true);
         }
     };
 

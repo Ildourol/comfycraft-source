@@ -16,8 +16,10 @@
 --
 --  A creature in this table is hostile to a player who has a quest against
 --  it in the log, and friendly to everyone else. A quest is against it when
---  the quest needs it killed, or needs its quest-only drop, and the quest's
---  stock races are born at war with its faction. The viewer at war is sent
+--  the quest needs it killed, or needs its quest-only drop as an objective
+--  item or a source item (The Sacred Flame, 1195, and the Laughing Sisters'
+--  Etched Phial, bug 143), and the quest's stock races are born at war with
+--  its faction. The viewer at war is sent
 --  faction template 14 (Monster), so the client draws it red and lets the
 --  player attack it (FactionlessWar.h). Every race can take every quest.
 --

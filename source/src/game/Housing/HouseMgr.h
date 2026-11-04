@@ -2224,6 +2224,14 @@ void HousePrintObjectList(Player* player);
 void HousePrintStorage(Player* player);
 void HousePrintHouseHelp(Player* player);
 
+// Tells the /house panel where the player stands, on prefix CHOUSE:
+//   M <where> <gm>
+// where is house, template, housemap (map 28, in no house) or world; gm is 1
+// when .obj answers this player. The panel takes its mode from this line and
+// never from zone text. Sent on every far teleport (HandleMoveWorldportAckOpcode)
+// and before each panel sync, in both modes. Defined in HouseCommands.cpp.
+void HouseSendWhere(Player* player);
+
 // Sends the shelf to the addon and asks it to open the window. Harmless with no
 // addon listening, which is why the gossip option prints the list beside it.
 void HouseOpenStorageWindow(Player* player);
