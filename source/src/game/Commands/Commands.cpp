@@ -15909,6 +15909,8 @@ namespace
         { "lootluck",          ".lootluck [on | off | log on | log off]   bad-luck protection on quest drops, or set it" },
         { "lootrates",         ".lootrates   re-read the gear drop rates and show them" },
         { "flightmode",        ".flightmode [on | off]   whether GM flight is on, or set it" },
+        { "floorbeat",         ".floorbeat [off | plain | lift] [seconds]   still creatures near players: position sent again, how and how often" },
+        { "floorprobe",        ".floorprobe [above]   the server's floor under the selected unit or you, and each gameobject under it" },
         { "soundlog",          ".soundlog [on | off]   a chat line for each sound the server sends you, with its source" },
         { "companions",        ".companions   name your companions" },
         { "hire",              ".hire tank | healer | dps [class [spec]], .hire dismiss   a companion at your level, as Elowen hires" },

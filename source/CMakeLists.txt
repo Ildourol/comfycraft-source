@@ -493,7 +493,12 @@ if(UNIX)
     #set(BUILD_ADDITIONAL_FLAGS "${BUILD_ADDITIONAL_FLAGS} -fsanitize=unsigned-integer-overflow")
   endif()
 
-  set(BUILD_ADDITIONAL_FLAGS "${BUILD_ADDITIONAL_FLAGS} --no-warnings -fexceptions -fnon-call-exceptions -march=native -O3 -pipe ")
+  # The CPU the binary may assume. native suits a binary that runs where it was
+  # built. deploy/build/build.sh sets a portable target: it compiles on the dev
+  # PC for another machine, and a native build there died with "Illegal
+  # instruction" on a CPU without AVX (2026-11-04).
+  set(COMFY_MARCH "native" CACHE STRING "-march value: native, or a portable level such as x86-64-v2")
+  set(BUILD_ADDITIONAL_FLAGS "${BUILD_ADDITIONAL_FLAGS} --no-warnings -fexceptions -fnon-call-exceptions -march=${COMFY_MARCH} -O3 -pipe ")
   # AllocatorWithCategory.h calls the sized operator delete, which GCC enables
   # by default and clang 18 does not.
   if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")

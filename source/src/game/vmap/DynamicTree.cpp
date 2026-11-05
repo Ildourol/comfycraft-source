@@ -150,14 +150,26 @@ void DynamicMapTree::update(uint32 t_diff)
     impl.update(t_diff);
 }
 
+// ComfyCraft: a miss no longer clears an earlier hit. The line was
+// `did_hit = obj.intersectRay(...)`, so a ray that crossed two grid cells and
+// hit an object in the first lost the hit when the second cell's object missed.
+//
+// stopAtFirst false makes the search test every object under the ray and keep
+// the nearest hit (each hit shortens `distance`). getHeight needs that: a
+// bench inside a house is in the house's bounds, and the first object tested
+// can be the house, whose floor is below the seat. Seen in the Darnassus zoo,
+// 2026-11-04 (docs/ai/content/arrival-floor.md).
 struct DynamicTreeIntersectionCallback
 {
     bool did_hit;
-    DynamicTreeIntersectionCallback() : did_hit(false) {}
+    bool stopAtFirst;
+    explicit DynamicTreeIntersectionCallback(bool stopAtFirstHit = true) : did_hit(false), stopAtFirst(stopAtFirstHit) {}
     bool operator()(const G3D::Ray& r, const GameObjectModel& obj, float& distance)
     {
-        did_hit = obj.intersectRay(r, distance, true);
-        return did_hit;
+        bool const hit = obj.intersectRay(r, distance, stopAtFirst);
+        if (hit)
+            did_hit = true;
+        return hit;
     }
     bool didHit() const
     {
@@ -281,8 +293,8 @@ float DynamicMapTree::getHeight(float x, float y, float z, float maxSearchDist) 
 {
     Vector3 v(x, y, z);
     G3D::Ray r(v, Vector3(0, 0, -1));
-    DynamicTreeIntersectionCallback callback;
-    impl.intersectZAllignedRay(r, callback, maxSearchDist);
+    DynamicTreeIntersectionCallback callback(false);
+    impl.intersectZAllignedRay(r, callback, maxSearchDist, false);
 
     if (callback.didHit())
         return v.z - maxSearchDist;

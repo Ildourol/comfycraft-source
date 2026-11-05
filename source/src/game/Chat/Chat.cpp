@@ -1076,6 +1076,8 @@ ChatCommand * ChatHandler::getCommandTable()
         { "lootluck",       SEC_DEVELOPER,       true,  &ComfyCommands::HandleLootLuckCommand,          "Syntax: .lootluck [on | off | log on | log off]\r\nShows bad-luck protection on quest drops, or sets it.", nullptr },
         { "lootrates",      SEC_DEVELOPER,       true,  &ComfyCommands::HandleLootRatesCommand,         "Syntax: .lootrates\r\nRe-reads the gear drop rates and shows them.", nullptr },
         { "flightmode",     SEC_DEVELOPER,       false, &ComfyCommands::HandleFlightModeCommand,        "", nullptr },
+        { "floorbeat",      SEC_DEVELOPER,       true,  &ComfyCommands::HandleFloorBeatCommand,         "Syntax: .floorbeat [off | plain | lift] [seconds]\r\nShows how often still creatures near players get their position sent again, or sets it.", nullptr },
+        { "floorprobe",     SEC_DEVELOPER,       false, &ComfyCommands::HandleFloorProbeCommand,        "Syntax: .floorprobe [above]\r\nShows the server's floor height under the selected unit or you, and each gameobject under it.", nullptr },
         { "soundlog",       SEC_DEVELOPER,       false, &ComfyCommands::HandleSoundLogCommand,          "Syntax: .soundlog [on | off]\r\nOne chat line for each sound the server sends you, with its source.", nullptr },
         { "showarea",       SEC_ADMINISTRATOR,   false, &ChatHandler::HandleShowAreaCommand,            "", nullptr },
         { "hidearea",       SEC_ADMINISTRATOR,   false, &ChatHandler::HandleHideAreaCommand,            "", nullptr },

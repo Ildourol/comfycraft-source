@@ -224,13 +224,13 @@ class RegularGrid2D
 
         // Optimized verson of intersectRay function for rays with vertical directions
         template<typename RayCallback>
-        void intersectZAllignedRay(const Ray& ray, RayCallback& intersectCallback, float& max_dist)
+        void intersectZAllignedRay(const Ray& ray, RayCallback& intersectCallback, float& max_dist, bool stopAtFirst = true)
         {
             Cell cell = Cell::ComputeCell(ray.origin().x, ray.origin().y);
             if (!cell.isValid())
                 return;
             if (Node* node = nodes[cell.x][cell.y])
-                node->intersectRay(ray, intersectCallback, max_dist);
+                node->intersectRay(ray, intersectCallback, max_dist, stopAtFirst);
         }
 };
 

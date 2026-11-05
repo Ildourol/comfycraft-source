@@ -96,11 +96,11 @@ class BIHWrap
         }
 
         template<typename RayCallback>
-        void intersectRay(const Ray& r, RayCallback& intersectCallback, float& maxDist)
+        void intersectRay(const Ray& r, RayCallback& intersectCallback, float& maxDist, bool stopAtFirst = true)
         {
             balance();
             MDLCallback<RayCallback> temp_cb(intersectCallback, m_objects.getCArray(), m_objects.size());
-            m_tree.intersectRay(r, temp_cb, maxDist, true);
+            m_tree.intersectRay(r, temp_cb, maxDist, stopAtFirst);
         }
 
         template<typename IsectCallback>

@@ -721,7 +721,8 @@ void WorldSession::HandleSellItemOpcode(WorldPacket & recv_data)
         _player->AddItemToBuyBackSlot(pItem, money, vendorGuid);
     }
 
-    _player->LogModifyMoney(money, "SellItem", pCreature->GetObjectGuid(), pItem->GetEntry());
+    // pCreature is nullptr for a bot NPC: vendorGuid holds for both.
+    _player->LogModifyMoney(money, "SellItem", vendorGuid, pItem->GetEntry());
 }
 
 void WorldSession::HandleBuybackItem(WorldPacket & recv_data)

@@ -71,6 +71,10 @@ struct ComfyCommands
     // Commands/ObjCommands.cpp
     static bool HandleObjCommand(ChatHandler* handler, char* args);
 
+    // Maps/ArrivalFloor.cpp
+    static bool HandleFloorBeatCommand(ChatHandler* handler, char* args);
+    static bool HandleFloorProbeCommand(ChatHandler* handler, char* args);
+
     // Chat/SoundLog.cpp
     static bool HandleSoundLogCommand(ChatHandler* handler, char* args);
 
